@@ -1,0 +1,146 @@
+import os
+import warnings
+from datetime import datetime
+
+import numpy as np
+from astroquery.exceptions import NoResultsWarning
+from astroquery.mast import Observations
+
+
+def get_time():
+    """Get current time as a string"""
+    now = datetime.now()
+    current_time = now.strftime("%H:%M:%S")
+
+    return current_time
+
+
+warnings.simplefilter('error', NoResultsWarning)
+
+
+class ArchiveDownload:
+
+    def __init__(self,
+                 target=None,
+                 telescope='JWST',
+                 prop_id=None,
+                 instrument_name=None,
+                 calib_level=None,
+                 extension=None,
+                 do_filter=True,
+                 product_type=None,
+                 login=False,
+                 api_key=None,
+                 verbose=False,
+                 overwrite=False,
+                 ):
+        """Query and download data from MAST"""
+
+        if not target:
+            raise Warning('Target should be specified!')
+
+        if calib_level is None:
+            calib_level = [2, 3]
+
+        if product_type is None:
+            product_type = [
+                'SCIENCE',
+                'PREVIEW',
+                'INFO',
+                # 'AUXILIARY',
+            ]
+
+        self.target = target
+        self.telescope = telescope
+        self.prop_id = prop_id
+        self.instrument_name = instrument_name
+        self.calib_level = calib_level
+        self.extension = extension
+        self.do_filter = do_filter
+        self.product_type = product_type
+        self.verbose = verbose
+        self.overwrite = overwrite
+
+        self.obs_list = None
+
+        self.observations = Observations()
+
+        if login:
+            if api_key is None:
+                raise Warning('If logging in, supply an API key!')
+            self.observations.login(token=api_key)
+
+    def archive_download(self):
+        """Run everything"""
+
+        self.run_archive_query()
+
+        if self.obs_list is None:
+            return False
+
+        if self.overwrite:
+            os.system('rm -rf mastDownload')
+
+        self.run_download()
+
+    def run_archive_query(self):
+        """Query archive, trimming down as requested on instrument etc."""
+
+        if self.verbose:
+            print('[%s] Beginning archive query:' % get_time())
+            print('[%s] -> Target: %s' % self.target)
+            print('[%s] -> Telescope: %s' % self.telescope)
+            print('[%s] -> Proposal ID: %s' % self.proposal_id)
+            print('[%s] -> Instrument name: %s' % self.instrument_name)
+
+        self.obs_list = self.observations.query_object(self.target)
+
+        if np.all(self.obs_list['calib_level'] < 0):
+            print('[%s] No available data' % get_time())
+            self.obs_list = None
+            return False
+
+        self.obs_list = self.obs_list[self.obs_list['calib_level'] >= 0]
+
+        if self.telescope is not None:
+            self.obs_list = self.obs_list[self.obs_list['obs_collection'] == self.telescope]
+        if self.prop_id is not None:
+            self.obs_list = self.obs_list[self.obs_list['proposal_id'] == self.prop_id]
+        if self.instrument_name is not None:
+            self.obs_list = self.obs_list[self.obs_list['instrument_name'] == self.instrument_name]
+
+        if len(self.obs_list) == 0:
+            print('[%s] No available data' % get_time())
+            self.obs_list = None
+            return False
+
+        return True
+
+    def run_download(self):
+        """Download a list of observations"""
+
+        for obs in self.obs_list:
+            try:
+                product_list = self.observations.get_product_list(obs)
+            except NoResultsWarning:
+                print('[%s] Data not available for %s' % (get_time(), obs['obs_id']))
+                continue
+
+            if self.verbose:
+                print('[%s] Downloading %s' % (get_time(), obs['obs_id']))
+
+            if self.do_filter:
+                products = self.observations.filter_products(product_list,
+                                                             calib_level=self.calib_level,
+                                                             productType=self.product_type,
+                                                             extension=self.extension,
+                                                             )
+                if len(products) > 0:
+                    self.observations.download_products(products)
+                else:
+                    print('[%s] Filtered data not available' % get_time())
+                    continue
+            else:
+                self.observations.download_products(product_list)
+
+        return True
