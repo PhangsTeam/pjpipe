@@ -11,6 +11,11 @@ PHANGS-JWST processing scripts
 * `nircam_destriping` contains various routines for destriping NIRCAM data
 * `run_nircam_destriping` is a wrapper to run the destriping for one NIRCAM frame
 
+## MIRI tools
+
+* `jwst_miri_reprocess` is used to associate OFF and science MIRI exposures and 
+to reprocess the level2 and level3 MIRI data reduction 
+
 ## Data homogenisation tools
 
 * `jwst_pypherise` uses pypher to produce PSF kernels to convert from JWST to JWST or JWST to gaussian/moffat
