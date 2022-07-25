@@ -20,12 +20,21 @@ prop_id = '2107'
 
 targets = [
     # 'ngc7496',
-    # 'ic5332',
+    'ic5332',
     'ngc0628',
 ]
 
 login = True
-overwrite = False
+overwrite = True
+
+product_type = [
+                'SCIENCE',
+                'PREVIEW',
+                'INFO',
+                'AUXILIARY',
+]
+
+calib_level = [1, 2, 3]
 
 if login:
     api_key = getpass.getpass('Input API key: ')
@@ -42,6 +51,8 @@ for target in targets:
                                  prop_id=prop_id,
                                  login=login,
                                  api_key=api_key,
+                                 calib_level=calib_level,
+                                 product_type=product_type,
                                  overwrite=overwrite)
     archive_dl.archive_download()
 
