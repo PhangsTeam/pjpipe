@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
@@ -146,9 +148,38 @@ class NircamDestriper:
 
         zero_idx = np.where(self.hdu['SCI'].data == 0)
 
-        for scale in scales:
-            med = np.median(self.hdu['SCI'].data, axis=1)
-            noise = med - median_filter(med, scale)
-            self.hdu['SCI'].data -= noise[:, np.newaxis]
+        if self.quadrants:
+
+            quadrant_size = int(self.hdu['SCI'].data.shape[1] / 4)
+
+            quadrants = {}
+
+            # Calculate medians and apply
+            for i in range(4):
+                quadrants[i] = {}
+
+                quadrants[i]['data'] = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
+
+                for scale in scales:
+                    med = np.median(quadrants[i]['data'], axis=1)
+                    noise = med - median_filter(med, scale)
+                    quadrants[i]['data'] -= noise[:, np.newaxis]
+
+            # Match quadrants in the overlaps
+            for i in range(3):
+                quadrants[i + 1]['data'] += \
+                    np.nanmedian(quadrants[i]['data'][:, quadrant_size - 20:quadrant_size]) - \
+                    np.nanmedian(quadrants[i + 1]['data'][:, 0:20])
+
+            # Reconstruct the data
+            for i in range(4):
+                self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size] = quadrants[i]['data']
+
+        else:
+
+            for scale in scales:
+                med = np.median(self.hdu['SCI'].data, axis=1)
+                noise = med - median_filter(med, scale)
+                self.hdu['SCI'].data -= noise[:, np.newaxis]
 
         self.hdu['SCI'].data[zero_idx] = 0
