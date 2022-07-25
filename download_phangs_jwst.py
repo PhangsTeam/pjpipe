@@ -19,7 +19,7 @@ os.chdir(base_dir)
 prop_id = '2107'
 
 targets = [
-    'ngc7496',
+    # 'ngc7496',
     'ic5332',
     'ngc0628',
 ]

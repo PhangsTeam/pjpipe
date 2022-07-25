@@ -5,6 +5,7 @@ from datetime import datetime
 import numpy as np
 from astroquery.exceptions import NoResultsWarning
 from astroquery.mast import Observations
+from requests.exceptions import ConnectionError, ChunkedEncodingError
 
 
 def get_time():
@@ -13,6 +14,21 @@ def get_time():
     current_time = now.strftime("%H:%M:%S")
 
     return current_time
+
+
+def download(observations, product, max_retries=5):
+    """Wrap around astroquery download with retry option"""
+    retry = 0
+
+    while retry < max_retries:
+
+        try:
+            observations.download_products(product)
+            return True
+        except (ConnectionResetError, ConnectionError, ChunkedEncodingError):
+            retry += 1
+
+    raise Warning('Max retries exceeded!')
 
 
 warnings.simplefilter('error', NoResultsWarning)
@@ -136,11 +152,13 @@ class ArchiveDownload:
                                                              extension=self.extension,
                                                              )
                 if len(products) > 0:
-                    self.observations.download_products(products)
+                    # self.observations.download_products(products)
+                    download(self.observations, products)
                 else:
                     print('[%s] Filtered data not available' % get_time())
                     continue
             else:
-                self.observations.download_products(product_list)
+                # self.observations.download_products(product_list)
+                download(self.observations, product_list)
 
         return True
