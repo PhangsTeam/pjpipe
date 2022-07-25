@@ -26,8 +26,8 @@ hdu_name = os.path.join(galaxy,
                         )
 
 nc_destripe = NircamDestriper(hdu_name=hdu_name,
-                              destriping_method='row_median',
-                              quadrants=False,
+                              destriping_method='median_filter',
+                              quadrants=True,
                               )
 nc_destripe.run_destriping()
 
