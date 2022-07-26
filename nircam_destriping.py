@@ -13,8 +13,15 @@ class NircamDestriper:
 
     def __init__(self,
                  hdu_name=None,
+                 hdu_out_name=None,
+                 quadrants=True,
                  destriping_method='row_median',
-                 quadrants=True
+                 median_filter_scales=None,
+                 sigma=3,
+                 npixels=3,
+                 max_iters=20,
+                 dilate_size=2,
+                 just_sci_hdu=False,
                  ):
         """NIRCAM Destriping routines
 
@@ -23,10 +30,16 @@ class NircamDestriper:
 
         Args:
             * hdu_name (str): Input name for fits HDU
-            * destriping_method (str): Method to use for destriping. Allowed options are given by DESTRIPING_METHODS
+            * hdu_out_name (str): Output name for HDU
             * quadrants (bool): Whether to split the chip into 512 pixel segments, and destripe each (mostly)
-                separately. Defaults to True.
-
+                separately. Defaults to True
+            * destriping_method (str): Method to use for destriping. Allowed options are given by DESTRIPING_METHODS
+            * median_filter_scales (list): Scales for median filtering
+            * sigma (float): Sigma for sigma-clipping. Defaults to 3
+            * npixels (int): Pixels to grow for masking. Defaults to 5
+            * max_iters (int): Maximum sigma-clipping iterations. Defaults to 20
+            * dilate_size (int): make_source_mask dilation size. Defaults to 2
+            * just_sci_hdu (bool): Write full fits HDU, or just SCI? Useful for testing, defaults to False
         """
 
         if hdu_name is None:
@@ -37,7 +50,23 @@ class NircamDestriper:
 
         self.hdu_name = hdu_name
         self.hdu = fits.open(self.hdu_name)
+
+        if hdu_out_name is None:
+            hdu_out_name = self.hdu_name.replace('.fits', '_destriped.fits')
+        self.hdu_out_name = hdu_out_name
+
+        self.just_sci_hdu = just_sci_hdu
+
         self.destriping_method = destriping_method
+
+        if median_filter_scales is None:
+            median_filter_scales = [3, 7, 15, 31, 63, 127]
+        self.median_filter_scales = median_filter_scales
+        self.sigma = sigma
+        self.npixels = npixels
+        self.max_iters = max_iters
+        self.dilate_size = dilate_size
+
         self.quadrants = quadrants
 
     def run_destriping(self):
@@ -49,20 +78,25 @@ class NircamDestriper:
         else:
             raise NotImplementedError('Destriping method %s not yet implemented!' % self.destriping_method)
 
-        self.hdu.writeto(self.hdu_name.replace('.fits', '_destriped.fits'),
-                         overwrite=True)
+        if self.just_sci_hdu:
+            self.hdu['SCI'].writeto(self.hdu_out_name,
+                                    overwrite=True)
+        else:
+            self.hdu.writeto(self.hdu_out_name,
+                             overwrite=True)
 
     def run_row_median(self,
-                       sigma=3,
-                       npixels=5,
-                       max_iters=20,
                        ):
         """Calculate sigma-clipped median for each row. From Tom Williams."""
 
         zero_idx = np.where(self.hdu['SCI'].data == 0)
         self.hdu['SCI'].data[zero_idx] = np.nan
 
-        mask = make_source_mask(self.hdu['SCI'].data, nsigma=sigma, npixels=npixels)
+        mask = make_source_mask(self.hdu['SCI'].data,
+                                nsigma=self.sigma,
+                                npixels=self.npixels,
+                                dilate_size=self.dilate_size,
+                                )
 
         if self.quadrants:
 
@@ -87,8 +121,8 @@ class NircamDestriper:
 
                 quadrants[i]['median'] = sigma_clipped_stats(quadrants[i]['data'],
                                                              mask=quadrants[i]['mask'],
-                                                             sigma=sigma,
-                                                             maxiters=max_iters,
+                                                             sigma=self.sigma,
+                                                             maxiters=self.max_iters,
                                                              axis=1,
                                                              )[1]
 
@@ -115,8 +149,8 @@ class NircamDestriper:
             # Match quadrants in the overlaps
             for i in range(3):
                 quadrants[i + 1]['data_corr'] += \
-                    np.nanmedian(quadrants[i]['data_corr'][:, quadrant_size - 20:quadrant_size]) - \
-                    np.nanmedian(quadrants[i + 1]['data_corr'][:, 0:20])
+                    np.nanmedian(quadrants[i]['data_corr'][:, quadrant_size - 10:]) - \
+                    np.nanmedian(quadrants[i + 1]['data_corr'][:, 0:10])
 
             # Reconstruct the data
             for i in range(4):
@@ -126,8 +160,8 @@ class NircamDestriper:
 
             median_arr = sigma_clipped_stats(self.hdu['SCI'].data,
                                              mask=mask,
-                                             sigma=sigma,
-                                             maxiters=max_iters,
+                                             sigma=self.sigma,
+                                             maxiters=self.max_iters,
                                              axis=1,
                                              )[1]
 
@@ -139,14 +173,20 @@ class NircamDestriper:
         self.hdu['SCI'].data[zero_idx] = 0
 
     def run_median_filter(self,
-                          scales=None,
+                          use_mask=True
                           ):
         """Run a series of filters over the row medians. From Mederic Boquien."""
 
-        if scales is None:
-            scales = [3, 7, 15, 31, 63, 127]
-
         zero_idx = np.where(self.hdu['SCI'].data == 0)
+        self.hdu['SCI'].data[zero_idx] = np.nan
+
+        mask = None
+        if use_mask:
+            mask = make_source_mask(self.hdu['SCI'].data,
+                                    nsigma=self.sigma,
+                                    npixels=self.npixels,
+                                    dilate_size=self.dilate_size,
+                                    )
 
         if self.quadrants:
 
@@ -158,18 +198,35 @@ class NircamDestriper:
             for i in range(4):
                 quadrants[i] = {}
 
-                quadrants[i]['data'] = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
+                if use_mask:
+                    quadrants[i]['data'] = np.ma.array(
+                        self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size],
+                        mask=mask[:, i * quadrant_size: (i + 1) * quadrant_size]
+                    )
+                else:
+                    quadrants[i]['data'] = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
 
-                for scale in scales:
-                    med = np.median(quadrants[i]['data'], axis=1)
+                for scale in self.median_filter_scales:
+
+                    med = np.nanmedian(quadrants[i]['data'], axis=1)
+                    med[~np.isfinite(med)] = 0
                     noise = med - median_filter(med, scale)
-                    quadrants[i]['data'] -= noise[:, np.newaxis]
+
+                    if use_mask:
+                        quadrants[i]['data'] = np.ma.array(quadrants[i]['data'].data - noise[:, np.newaxis],
+                                                           mask=quadrants[i]['data'].mask)
+                    else:
+                        quadrants[i]['data'] -= noise[:, np.newaxis]
+
+                # Remove the mask since we don't need it any more
+                if use_mask:
+                    quadrants[i]['data'] = quadrants[i]['data'].data
 
             # Match quadrants in the overlaps
             for i in range(3):
                 quadrants[i + 1]['data'] += \
-                    np.nanmedian(quadrants[i]['data'][:, quadrant_size - 20:quadrant_size]) - \
-                    np.nanmedian(quadrants[i + 1]['data'][:, 0:20])
+                    np.nanmedian(quadrants[i]['data'][:, quadrant_size - 10:]) - \
+                    np.nanmedian(quadrants[i + 1]['data'][:, 0:10])
 
             # Reconstruct the data
             for i in range(4):
@@ -177,8 +234,18 @@ class NircamDestriper:
 
         else:
 
-            for scale in scales:
-                med = np.median(self.hdu['SCI'].data, axis=1)
+            for scale in self.median_filter_scales:
+
+                if use_mask:
+                    data = np.ma.array(
+                        self.hdu['SCI'].data,
+                        mask=mask
+                    )
+                else:
+                    data = copy.deepcopy(self.hdu['SCI'].data)
+
+                med = np.nanmedian(data, axis=1)
+                med[~np.isfinite(med)] = 0
                 noise = med - median_filter(med, scale)
                 self.hdu['SCI'].data -= noise[:, np.newaxis]
 
