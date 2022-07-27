@@ -246,6 +246,7 @@ class NircamReprocess:
 
             # Background matching settings
             nircam_im3.skymatch.skymethod = 'global+match'
+            nircam_im3.skymatch.subtract = True  # False is the default
 
             # Source catalogue settings
             nircam_im3.source_catalog.kernel_fwhm = 2.5  # pixels
