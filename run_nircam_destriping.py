@@ -9,7 +9,7 @@ host = socket.gethostname()
 if 'node' in host:
     base_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data'
 else:
-    base_dir = '/Users/williams/Documents/phangs/jwst'
+    base_dir = '/Users/williams/Documents/phangs/jwst_data'
 
 if not os.path.exists(base_dir):
     os.makedirs(base_dir)
