@@ -12,10 +12,10 @@ host = socket.gethostname()
 
 if 'node' in host:
     webbpsf_path = '/data/beegfs/astro-storage/groups/schinnerer/williams/webbpsf-data'
-    base_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data/kernels'
+    base_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_working/kernels'
 else:
     webbpsf_path = '/Users/williams/Documents/webbpsf-data'
-    base_dir = '/Users/williams/Documents/phangs/jwst/kernels'
+    base_dir = '/Users/williams/Documents/phangs/jwst_working/kernels'
 
 os.environ['WEBBPSF_PATH'] = webbpsf_path
 
