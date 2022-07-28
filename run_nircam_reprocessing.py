@@ -1,22 +1,22 @@
-import os
-
 import socket
+from datetime import datetime
 
 from jwst_nircam_reprocess import NircamReprocess
 
 host = socket.gethostname()
 
 if 'node' in host:
-    lv2_root_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data'
-    working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_working/nircam_lev3_reprocessed'
+    raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data'
+    reprocess_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_working/nircam_lev3_reprocessed'
     crds_path = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_working/crds'
 else:
-    lv2_root_dir = '/Users/williams/Documents/phangs/jwst_data'
-    working_dir = '/Users/williams/Documents/phangs/jwst_working/nircam_lev3_reprocessed'
+    raw_dir = '/Users/williams/Documents/phangs/jwst_data'
+    reprocess_dir = '/Users/williams/Documents/phangs/jwst_working/nircam_lev3_reprocessed_hdr_testing'
     crds_path = '/Users/williams/Documents/phangs/jwst_working/crds'
 
-if not os.path.exists(working_dir):
-    os.makedirs(working_dir)
+date_str = datetime.today().strftime('%Y%m%d')
+
+reprocess_dir += '_%s' % date_str
 
 galaxies = [
     'ngc7496',
@@ -29,8 +29,9 @@ for galaxy in galaxies:
 
     nc_reproc = NircamReprocess(crds_path=crds_path,
                                 galaxy=galaxy,
-                                lv2_root_dir=lv2_root_dir,
-                                working_dir=working_dir,
+                                raw_dir=raw_dir,
+                                reprocess_dir=reprocess_dir,
+                                do_all=True,
                                 )
     nc_reproc.run_all()
 
