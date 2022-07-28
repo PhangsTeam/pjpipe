@@ -19,12 +19,11 @@ date_str = datetime.today().strftime('%Y%m%d')
 reprocess_dir += '_%s' % date_str
 
 galaxies = [
-    'ngc7496',
     'ngc0628',
+    'ngc7496',
 ]
 
 for galaxy in galaxies:
-
     print('Reprocessing %s' % galaxy)
 
     nc_reproc = NircamReprocess(crds_path=crds_path,

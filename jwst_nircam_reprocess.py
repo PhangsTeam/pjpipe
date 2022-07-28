@@ -64,6 +64,8 @@ class NircamReprocess:
         os.environ['CRDS_PATH'] = crds_path
 
         global jwst, calwebb_detector1, calwebb_image2, calwebb_image3
+        import jwst
+        from jwst.pipeline import calwebb_detector1, calwebb_image2, calwebb_image3
 
         self.galaxy = galaxy
 
@@ -127,7 +129,7 @@ class NircamReprocess:
                     uncal_fits_name = uncal_file.split(os.path.sep)[-1]
                     hdu_out_name = os.path.join(uncal_dir, uncal_fits_name)
 
-                    if not os.path.exists(hdu_out_name) or overwrite:
+                    if not os.path.exists(hdu_out_name) or self.overwrite:
 
                         hdu = fits.open(uncal_file)
                         if hdu[0].header['FILTER'].strip() == band:
@@ -546,6 +548,11 @@ class NircamReprocess:
                 # Background matching settings
                 nircam_im3.skymatch.skymethod = 'global+match'  # 'match' is the default
                 nircam_im3.skymatch.subtract = True  # False is the default
+
+                nircam_im3.skymatch.skystat = 'median'  # mode is the default
+                nircam_im3.skymatch.nclip = 20  # 5 is the default
+                nircam_im3.skymatch.lsigma = 3  # 4 is the default
+                nircam_im3.skymatch.usigma = 3  # 4 is the default
 
                 # Source catalogue settings
                 nircam_im3.source_catalog.kernel_fwhm = 2.5  # pixels
