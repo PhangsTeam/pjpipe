@@ -17,6 +17,8 @@ PHANGS-JWST processing scripts
 
 * `jwst_miri_reprocess` is used to associate OFF and science MIRI exposures and 
 to reprocess the level2 and level3 MIRI data reduction 
+* `miri_destriping` contains routines for destriping MIRI data
+* `run_miri_destriping` wraps around `miri_destriping`
 
 ## Data homogenisation tools
 
