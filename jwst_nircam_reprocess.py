@@ -308,7 +308,7 @@ class NircamReprocess:
                                               hdu_out_name=out_file,
                                               destriping_method='median_filter',
                                               median_filter_scales=median_filter_scales,
-                                              quadrants=True,
+                                              quadrants=False,
                                               )
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore')

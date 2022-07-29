@@ -1,4 +1,5 @@
 import copy
+import warnings
 
 import numpy as np
 from astropy.io import fits
@@ -20,7 +21,7 @@ class NircamDestriper:
                  sigma=3,
                  npixels=3,
                  max_iters=20,
-                 dilate_size=2,
+                 dilate_size=11,
                  just_sci_hdu=False,
                  ):
         """NIRCAM Destriping routines
@@ -126,20 +127,6 @@ class NircamDestriper:
                                                              axis=1,
                                                              )[1]
 
-            # # For highly masked rows, take the average corrections before and after
-            # for i in range(4):
-            #     idx = quadrants[i]['highly_masked']
-            #     if i == 0:
-            #         quadrants[i]['median'][idx] = quadrants[i + 1]['median'][idx]
-            #
-            #     elif 0 < i < 3:
-            #         quadrants[i]['median'][idx] = np.nanmean(np.vstack([quadrants[i - 1]['median'][idx],
-            #                                                             quadrants[i + 1]['median'][idx]]),
-            #                                                  axis=0)
-            #
-            #     else:
-            #         quadrants[i]['median'][idx] = quadrants[i - 1]['median'][idx]
-
             # Apply this to the data
             for i in range(4):
                 quadrants[i]['data_corr'] = \
@@ -187,6 +174,7 @@ class NircamDestriper:
                                     npixels=self.npixels,
                                     dilate_size=self.dilate_size,
                                     )
+            mask = mask | ~np.isfinite(self.hdu['SCI'].data)
 
         if self.quadrants:
 
@@ -199,16 +187,32 @@ class NircamDestriper:
                 quadrants[i] = {}
 
                 if use_mask:
-                    quadrants[i]['data'] = np.ma.array(
-                        self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size],
-                        mask=mask[:, i * quadrant_size: (i + 1) * quadrant_size]
-                    )
+
+                    data_quadrant = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
+                    mask_quadrant = mask[:, i * quadrant_size: (i + 1) * quadrant_size]
+
+                    quadrants[i]['data'] = np.ma.array(data_quadrant, mask=mask_quadrant)
                 else:
                     quadrants[i]['data'] = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
 
+            for i in range(4):
+
                 for scale in self.median_filter_scales:
 
-                    med = np.nanmedian(quadrants[i]['data'], axis=1)
+                    if use_mask:
+                        med = np.ma.median(quadrants[i]['data'], axis=1)
+                        mask_idx = np.where(med.mask)
+                        med = med.data
+                        med[mask_idx] = np.nan
+                    else:
+                        med = np.nanmedian(quadrants[i]['data'], axis=1)
+                    nan_idx = np.where(~np.isfinite(med))
+
+                    # We expect there to be 8 NaNs here, if there's more it's an issue and we fall back to the full
+                    # row median
+                    if len(nan_idx[0]) > 8:
+                        raise Warning('Median filter failing on quadrants -- likely large extended source')
+
                     med[~np.isfinite(med)] = 0
                     noise = med - median_filter(med, scale)
 
@@ -217,6 +221,8 @@ class NircamDestriper:
                                                            mask=quadrants[i]['data'].mask)
                     else:
                         quadrants[i]['data'] -= noise[:, np.newaxis]
+
+            for i in range(4):
 
                 # Remove the mask since we don't need it any more
                 if use_mask:
@@ -234,19 +240,49 @@ class NircamDestriper:
 
         else:
 
+            quadrant_size = self.hdu['SCI'].data.shape[1] // 4
+
             for scale in self.median_filter_scales:
 
                 if use_mask:
                     data = np.ma.array(
-                        self.hdu['SCI'].data,
-                        mask=mask
+                        copy.deepcopy(self.hdu['SCI'].data),
+                        mask=copy.deepcopy(mask)
                     )
                 else:
                     data = copy.deepcopy(self.hdu['SCI'].data)
 
-                med = np.nanmedian(data, axis=1)
+                # Subtract off any lingering median quadrants
+                quadrant_medians = []
+                for i in range(4):
+
+                    if use_mask:
+                        quadrant_median = np.ma.median(data[:, i * quadrant_size: (i + 1) * quadrant_size])
+                        quadrant_medians.append(quadrant_median)
+
+                    else:
+                        quadrant_median = np.nanpercentile(data[:, i * quadrant_size: (i + 1) * quadrant_size])
+                        quadrant_medians.append(quadrant_median)
+
+                    data[:, i * quadrant_size: (i + 1) * quadrant_size] -= quadrant_median
+
+                if use_mask:
+                    med = np.ma.median(data, axis=1)
+                    mask_idx = np.where(med.mask)
+                    med = med.data
+                    med[mask_idx] = np.nan
+                else:
+                    med = np.nanmedian(data, axis=1)
                 med[~np.isfinite(med)] = 0
                 noise = med - median_filter(med, scale)
+
                 self.hdu['SCI'].data -= noise[:, np.newaxis]
+
+            # Finally, level things between quadrants
+            for i in range(3):
+                self.hdu['SCI'].data[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size] += \
+                    np.nanmedian(
+                        self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size][:, quadrant_size - 10:]) - \
+                    np.nanmedian(self.hdu['SCI'].data[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size][:, 0:10])
 
         self.hdu['SCI'].data[zero_idx] = 0
