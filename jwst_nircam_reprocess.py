@@ -58,6 +58,10 @@ class NircamReprocess:
             * overwrite (bool): Whether to overwrite destriping/reprocessing. Defaults to False
             * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds-pub.stsci.edu'
 
+        TODO:
+            * Update destriping algorithm as we improve it
+            * Print out some useful info as stuff runs
+
         """
 
         os.environ['CRDS_SERVER_URL'] = crds_url
@@ -536,14 +540,18 @@ class NircamReprocess:
                     os.makedirs(nircam_im3.output_dir)
                 nircam_im3.save_results = True
 
-                # Alignment settings
-                nircam_im3.tweakreg.snr_threshold = 5.0  # 5.0 is the default
-                nircam_im3.tweakreg.kernel_fwhm = 2.5  # 2.5 is the default
-                nircam_im3.tweakreg.brightest = 200  # 100 is the default
-                nircam_im3.tweakreg.minobj = 10  # 15 is default
+                # Alignment settings edited to roughly match the HST setup
+                # nircam_im3.tweakreg.snr_threshold = 5.0  # 5.0 the default
+                nircam_im3.tweakreg.snr_threshold = 300.0  # 5.0 the default
+                nircam_im3.tweakreg.kernel_fwhm = 2.5  # 2.5 is default
+                nircam_im3.tweakreg.separation = 0.0  # 1.0 is default
+                nircam_im3.tweakreg.brightest = 200  # 100 is default
+                # nircam_im3.tweakreg.minobj = 10  # 15 is default
+                nircam_im3.tweakreg.minobj = 1  # 15 is default
+                nircam_im3.tweakreg.searchrad = 10  # 2.0 is default
                 nircam_im3.tweakreg.expand_refcat = True  # False is the default
-                nircam_im3.tweakreg.fitgeometry = 'general'  # rshift is the default
-                nircam_im3.tweakreg.align_to_gaia = True  # False is the default
+                # nircam_im3.tweakreg.fitgeometry = 'general'  # rshift is the default
+                # nircam_im3.tweakreg.align_to_gaia = True  # False is the default
 
                 # Background matching settings
                 nircam_im3.skymatch.skymethod = 'global+match'  # 'match' is the default
