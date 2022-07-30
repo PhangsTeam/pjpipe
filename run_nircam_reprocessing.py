@@ -1,6 +1,5 @@
 import os
 import socket
-from datetime import datetime
 
 from jwst_nircam_reprocess import NircamReprocess
 
@@ -16,7 +15,6 @@ else:
 reprocess_dir = os.path.join(working_dir, 'nircam_lev3_reprocessed')
 crds_path = os.path.join(working_dir, 'crds')
 
-# reprocess_dir_ext = datetime.today().strftime('%Y%m%d')
 reprocess_dir_ext = 'v0p2'
 
 reprocess_dir += '_%s' % reprocess_dir_ext
@@ -27,7 +25,6 @@ galaxies = [
 ]
 
 for galaxy in galaxies:
-    print('Reprocessing %s' % galaxy)
 
     alignment_image = {'ngc0628': os.path.join(working_dir,
                                                'alignment_images',
@@ -43,7 +40,6 @@ for galaxy in galaxies:
                                 reprocess_dir=reprocess_dir,
                                 do_all=True,
                                 astrometric_alignment_image=alignment_image,
-                                overwrite_lv3=True,
                                 overwrite_astrometric_alignment=True
                                 )
     nc_reproc.run_all()

@@ -1,6 +1,7 @@
 import copy
 import glob
 import json
+import logging
 import os
 import time
 import warnings
@@ -71,12 +72,11 @@ class NircamReprocess:
             * do_destriping (bool): Run destriping algorithm on lv2 data
             * do_lv3 (bool): Run lv3 pipeline
             * do_astrometric_alignment (bool): Run astrometric alignment on lv3 data
-            * overwrite (bool): Whether to overwrite destriping/reprocessing. Defaults to False
+            * overwrite_all (bool): Whether to everything. Defaults to False
             * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds-pub.stsci.edu'
 
         TODO:
             * Update destriping algorithm as we improve it
-            * Print out some useful info as stuff runs
 
         """
 
@@ -126,10 +126,17 @@ class NircamReprocess:
         self.overwrite_lv3 = overwrite_lv3
         self.overwrite_astrometric_alignment = overwrite_astrometric_alignment
 
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.INFO)
+
     def run_all(self):
         """Run the whole pipeline reprocess"""
 
+        self.logger.info('Reprocessing %s' % self.galaxy)
+
         for band in self.bands:
+
+            self.logger.info('-> %s' % band)
 
             if self.overwrite_all:
                 os.system('rm -rf %s' % os.path.join(self.reprocess_dir,
@@ -137,6 +144,9 @@ class NircamReprocess:
                                                      band))
 
             if self.do_lv1:
+
+                self.logger.info('-> Level 1')
+
                 uncal_dir = os.path.join(self.reprocess_dir,
                                          self.galaxy,
                                          band,
@@ -182,6 +192,8 @@ class NircamReprocess:
                                   pipeline_stage='lev1')
 
             if self.do_lv2:
+
+                self.logger.info('-> Level 2')
 
                 # Move lv2 rate files
                 rate_dir = os.path.join(self.reprocess_dir,
@@ -229,6 +241,8 @@ class NircamReprocess:
 
             if self.do_destriping:
 
+                self.logger.info('-> Destriping')
+
                 destripe_dir = os.path.join(self.reprocess_dir,
                                             self.galaxy,
                                             band,
@@ -271,6 +285,8 @@ class NircamReprocess:
                                   )
 
             if self.do_lv3:
+
+                self.logger.info('-> Level 3')
 
                 output_dir = os.path.join(self.reprocess_dir,
                                           self.galaxy,
@@ -330,6 +346,9 @@ class NircamReprocess:
                                   pipeline_stage='lev3')
 
             if self.do_astrometric_alignment:
+
+                self.logger.info('-> Astrometric alignment')
+
                 input_dir = os.path.join(self.reprocess_dir,
                                          self.galaxy,
                                          band,
@@ -599,14 +618,31 @@ class NircamReprocess:
                 nircam_im3.save_results = True
 
                 # Alignment settings edited to roughly match the HST setup
-                # nircam_im3.tweakreg.snr_threshold = 5.0  # 5.0 the default
-                nircam_im3.tweakreg.snr_threshold = 20.0  # 5.0 the default
-                nircam_im3.tweakreg.kernel_fwhm = 2.5  # 2.5 is default
-                nircam_im3.tweakreg.separation = 0.0  # 1.0 is default
-                nircam_im3.tweakreg.brightest = 200  # 100 is default
+                nircam_im3.tweakreg.snr_threshold = 25.0  # 5.0 the default
+
+                # FWHM should be set per-band (this is in pixels)
+                nircam_im3.tweakreg.kernel_fwhm = {'F200W': 2.141,
+                                                   'F300M': 1.585,
+                                                   'F335M': 1.760,
+                                                   'F360M': 1.901,
+                                                   }[band]
+
+                pixel_scale = {'F200W': 0.031,
+                               'F300M': 0.063,
+                               'F335M': 0.063,
+                               'F360M': 0.063,
+                               }[band]
+
+                # Set separation relatively small, 0.7" is default
+                nircam_im3.tweakreg.separation = 10 * pixel_scale
+
+                # Set tolerance small, 1" is default
+                nircam_im3.tweakreg.tolerance = 3 * pixel_scale
+
+                # nircam_im3.tweakreg.brightest = 200  # 200 is default
                 # nircam_im3.tweakreg.minobj = 10  # 15 is default
-                nircam_im3.tweakreg.minobj = 1  # 15 is default
-                nircam_im3.tweakreg.searchrad = 10  # 2.0 is default
+                nircam_im3.tweakreg.minobj = 3  # 15 is default
+                nircam_im3.tweakreg.searchrad = 100 * nircam_im3.tweakreg.separation  # 2.0 is default
                 nircam_im3.tweakreg.expand_refcat = True  # False is the default
                 # nircam_im3.tweakreg.fitgeometry = 'general'  # rshift is the default
                 # nircam_im3.tweakreg.align_to_gaia = True  # False is the default
@@ -656,7 +692,9 @@ class NircamReprocess:
 
         if not os.path.exists(source_cat_name) or self.overwrite_astrometric_alignment:
 
-            mean, median, std = sigma_clipped_stats(ref_data, sigma=3)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                mean, median, std = sigma_clipped_stats(ref_data, sigma=3)
             daofind = DAOStarFinder(fwhm=2.5, threshold=20 * std)
             sources = daofind(ref_data - median)
             sources.write(source_cat_name, overwrite=True)
@@ -693,7 +731,9 @@ class NircamReprocess:
 
                 if not os.path.exists(source_cat_name) or self.overwrite_astrometric_alignment:
 
-                    mean, median, std = sigma_clipped_stats(jwst_data, sigma=3)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore')
+                        mean, median, std = sigma_clipped_stats(jwst_data, sigma=3)
                     daofind = DAOStarFinder(fwhm=2.5, threshold=20 * std)
                     sources = daofind(jwst_data - median)
                     sources.write(source_cat_name, overwrite=True)
@@ -716,7 +756,7 @@ class NircamReprocess:
                 # And match!
                 match = TPMatch(searchrad=100,
                                 separation=0.1,
-                                tolerance=3,
+                                tolerance=1,
                                 use2dhist=True,
                                 )
                 wcs_jwst_corrector = FITSWCS(wcs_jwst)
@@ -725,11 +765,15 @@ class NircamReprocess:
                 # Finally, do the alignment
                 wcs_aligned = fit_wcs(ref_tab[ref_idx], jwst_tab[jwst_idx], wcs_jwst_corrector).wcs
 
+                self.logger.info('Original WCS:')
+                self.logger.info(wcs_jwst)
+                self.logger.info('Updated WCS:')
+                self.logger.info(wcs_aligned)
+
                 updatehdr.update_wcs(jwst_hdu,
                                      'SCI',
                                      wcs_aligned,
                                      wcsname='TWEAK',
-                                     reusename=True,
-                                     verbose=True)
+                                     reusename=True)
 
                 jwst_hdu.writeto(aligned_hdu_name, overwrite=True)
