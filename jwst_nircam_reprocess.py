@@ -153,33 +153,38 @@ class NircamReprocess:
                                          'uncal'
                                          )
 
+                if self.overwrite_lv1:
+                    os.system('rm -rf %s' % uncal_dir)
+
                 if not os.path.exists(uncal_dir):
                     os.makedirs(uncal_dir)
+
+                if len(glob.glob(os.path.join(uncal_dir, '*.fits'))) == 0 or self.overwrite_lv1:
+
+                    uncal_files = glob.glob(os.path.join(self.raw_dir,
+                                                         self.galaxy,
+                                                         'mastDownload',
+                                                         'JWST',
+                                                         '*nrc*',
+                                                         '*nrc*_uncal.fits')
+                                            )
+                    uncal_files.sort()
+
+                    for uncal_file in uncal_files:
+
+                        uncal_fits_name = uncal_file.split(os.path.sep)[-1]
+                        hdu_out_name = os.path.join(uncal_dir, uncal_fits_name)
+
+                        if not os.path.exists(hdu_out_name) or self.overwrite_lv1:
+
+                            hdu = fits.open(uncal_file)
+                            if hdu[0].header['FILTER'].strip() == band:
+                                hdu.writeto(hdu_out_name, overwrite=True)
 
                 rate_dir = os.path.join(self.reprocess_dir,
                                         self.galaxy,
                                         band,
                                         'rate')
-
-                uncal_files = glob.glob(os.path.join(self.raw_dir,
-                                                     self.galaxy,
-                                                     'mastDownload',
-                                                     'JWST',
-                                                     '*nrc*',
-                                                     '*nrc*_uncal.fits')
-                                        )
-                uncal_files.sort()
-
-                for uncal_file in uncal_files:
-
-                    uncal_fits_name = uncal_file.split(os.path.sep)[-1]
-                    hdu_out_name = os.path.join(uncal_dir, uncal_fits_name)
-
-                    if not os.path.exists(hdu_out_name) or self.overwrite_lv1:
-
-                        hdu = fits.open(uncal_file)
-                        if hdu[0].header['FILTER'].strip() == band:
-                            hdu.writeto(hdu_out_name, overwrite=True)
 
                 if self.overwrite_lv1:
                     os.system('rm -rf %s' % rate_dir)
@@ -618,7 +623,7 @@ class NircamReprocess:
                 nircam_im3.save_results = True
 
                 # Alignment settings edited to roughly match the HST setup
-                nircam_im3.tweakreg.snr_threshold = 25.0  # 5.0 the default
+                nircam_im3.tweakreg.snr_threshold = 10.0  # 5.0 the default
 
                 # FWHM should be set per-band (this is in pixels)
                 nircam_im3.tweakreg.kernel_fwhm = {'F200W': 2.141,
@@ -637,15 +642,18 @@ class NircamReprocess:
                 nircam_im3.tweakreg.separation = 10 * pixel_scale
 
                 # Set tolerance small, 1" is default
-                nircam_im3.tweakreg.tolerance = 3 * pixel_scale
+                nircam_im3.tweakreg.tolerance = 10 * pixel_scale
 
                 # nircam_im3.tweakreg.brightest = 200  # 200 is default
                 # nircam_im3.tweakreg.minobj = 10  # 15 is default
                 nircam_im3.tweakreg.minobj = 3  # 15 is default
-                nircam_im3.tweakreg.searchrad = 100 * nircam_im3.tweakreg.separation  # 2.0 is default
+                nircam_im3.tweakreg.searchrad = 100 * pixel_scale  # 2.0 is default
                 nircam_im3.tweakreg.expand_refcat = True  # False is the default
                 # nircam_im3.tweakreg.fitgeometry = 'general'  # rshift is the default
                 # nircam_im3.tweakreg.align_to_gaia = True  # False is the default
+
+                # Assume we're pretty well aligned already
+                nircam_im3.tweakreg.use2dhist = False  # True is the default
 
                 # Background matching settings
                 nircam_im3.skymatch.skymethod = 'global+match'  # 'match' is the default

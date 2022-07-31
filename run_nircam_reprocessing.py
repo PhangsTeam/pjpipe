@@ -40,7 +40,6 @@ for galaxy in galaxies:
                                 reprocess_dir=reprocess_dir,
                                 do_all=True,
                                 astrometric_alignment_image=alignment_image,
-                                overwrite_astrometric_alignment=True
                                 )
     nc_reproc.run_all()
 
