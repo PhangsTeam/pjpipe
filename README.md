@@ -12,6 +12,7 @@ PHANGS-JWST processing scripts
 * `run_nircam_destriping` is a wrapper to run the destriping for one NIRCAM frame
 * `jwst_nircam_reprocess` used to destripe and reprocess level3 NIRCAM data
 * `run_nircam_reprocessing` wraps around `jwst_nircam_reprocess`
+* `log_jwst_nircam_reprocessing` logs `run_nircam_reprocessing` to a file
 
 ## MIRI tools
 
