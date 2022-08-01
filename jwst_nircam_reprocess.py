@@ -35,13 +35,13 @@ def parse_fits_to_table(file):
 class NircamReprocess:
 
     def __init__(self,
-                 crds_path,
                  galaxy,
                  raw_dir,
                  reprocess_dir,
+                 crds_dir,
                  bands=None,
                  astrometric_alignment_image=None,
-                 do_all=False,
+                 do_all=True,
                  do_lv1=False,
                  do_lv2=False,
                  do_destriping=False,
@@ -60,19 +60,24 @@ class NircamReprocess:
         Will run through whole NIRCAM pipeline, allowing for fine-tuning along the way
 
         Args:
-            * crds_path (str): Path to CRDS data
             * galaxy (str): Galaxy to run reprocessing for
             * raw_dir (str): Path to raw data
             * reprocess_dir (str): Path to reprocess data into
+            * crds_dir (str): Path to CRDS data
             * bands (list): JWST filters to loop over
             * astrometric_alignment_image (str): Path to image to align astrometry to
-            * do_all (bool): Do all processing steps
-            * do_lv1 (bool): Run lv1 pipeline
-            * do_lv2 (bool): Run lv2 pipeline
-            * do_destriping (bool): Run destriping algorithm on lv2 data
-            * do_lv3 (bool): Run lv3 pipeline
-            * do_astrometric_alignment (bool): Run astrometric alignment on lv3 data
-            * overwrite_all (bool): Whether to everything. Defaults to False
+            * do_all (bool): Do all processing steps. Defaults to True
+            * do_lv1 (bool): Run lv1 pipeline. Defaults to False
+            * do_lv2 (bool): Run lv2 pipeline. Defaults to False
+            * do_destriping (bool): Run destriping algorithm on lv2 data. Defaults to False
+            * do_lv3 (bool): Run lv3 pipeline. Defaults to False
+            * do_astrometric_alignment (bool): Run astrometric alignment on lv3 data. Defaults to False
+            * overwrite_all (bool): Whether to overwrite everything. Defaults to False
+            * overwrite_lv1 (bool): Whether to overwrite lv1 data. Defaults to False
+            * overwrite_lv2 (bool): Whether to overwrite lv2 data. Defaults to False
+            * overwrite_destriping (bool): Whether to overwrite destriped data. Defaults to False
+            * overwrite_lv3 (bool): Whether to overwrite lv3 data. Defaults to False
+            * overwrite_astrometric_alignment (bool): Whether to overwrite astrometric alignment. Defaults to False
             * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds-pub.stsci.edu'
 
         TODO:
@@ -81,7 +86,7 @@ class NircamReprocess:
         """
 
         os.environ['CRDS_SERVER_URL'] = crds_url
-        os.environ['CRDS_PATH'] = crds_path
+        os.environ['CRDS_PATH'] = crds_dir
 
         global jwst, calwebb_detector1, calwebb_image2, calwebb_image3
         import jwst
@@ -182,7 +187,7 @@ class NircamReprocess:
                     if len(uncal_files) == 0:
                         self.logger.info('-> No uncal files found. Skipping')
                         os.system('rm -rf %s' % uncal_dir)
-                        return False
+                        continue
 
                     uncal_files.sort()
 
@@ -243,7 +248,7 @@ class NircamReprocess:
                     if len(rate_files) == 0:
                         self.logger.info('-> No rate files found. Skipping')
                         os.system('rm -rf %s' % rate_dir)
-                        return False
+                        continue
 
                     for rate_file in rate_files:
 
@@ -290,7 +295,7 @@ class NircamReprocess:
 
                     if len(cal_files) == 0:
                         self.logger.info('-> No cal files found. Skipping')
-                        return False
+                        continue
 
                 else:
                     initial_cal_files = glob.glob(os.path.join(self.raw_dir,
@@ -303,7 +308,7 @@ class NircamReprocess:
 
                     if len(initial_cal_files) == 0:
                         self.logger.info('-> No cal files found. Skipping')
-                        return False
+                        continue
 
                     cal_files = []
 
@@ -361,7 +366,7 @@ class NircamReprocess:
                     if len(cal_files) == 0:
                         self.logger.info('-> No cal files found. Skipping')
                         os.system('rm -rf %s' % input_dir)
-                        return False
+                        continue
 
                     for cal_file in cal_files:
 
