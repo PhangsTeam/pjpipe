@@ -20,19 +20,20 @@ reprocess_dir_ext = 'v0p2'
 reprocess_dir += '_%s' % reprocess_dir_ext
 
 galaxies = [
-    'ngc0628',
-    'ngc7496',
+    # 'ngc0628',
+    'ngc7320',
+    # 'ngc7496',
 ]
 
 for galaxy in galaxies:
 
-    alignment_image = {'ngc0628': os.path.join(working_dir,
-                                               'alignment_images',
-                                               'hlsp_phangs-hst_hst_acs-wfc_ngc628mosaic_f814w_v1_exp-drc-sci.fits'),
-                       'ngc7496': os.path.join(working_dir,
-                                               'alignment_images',
-                                               'hlsp_phangs-hst_hst_wfc3-uvis_ngc7496_f814w_v1_exp-drc-sci.fits')
-                       }[galaxy]
+    alignment_fits = {'ngc0628': 'hlsp_phangs-hst_hst_acs-wfc_ngc628mosaic_f814w_v1_exp-drc-sci.fits',
+                      'ngc7320': 'hlsp_sm4ero_hst_wfc3_11502-ngc7318_f814w_v1_sci_drz.fits',
+                      'ngc7496': 'hlsp_phangs-hst_hst_wfc3-uvis_ngc7496_f814w_v1_exp-drc-sci.fits',
+                      }[galaxy]
+    alignment_image = os.path.join(working_dir,
+                                   'alignment_images',
+                                   alignment_fits)
 
     nc_reproc = NircamReprocess(crds_path=crds_path,
                                 galaxy=galaxy,

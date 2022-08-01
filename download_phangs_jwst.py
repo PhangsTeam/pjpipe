@@ -16,22 +16,14 @@ if not os.path.exists(base_dir):
 
 os.chdir(base_dir)
 
-prop_id = '2107'
-
-targets = [
-    # 'ngc7496',
-    # 'ic5332',
-    'ngc0628',
-]
-
 login = True
 overwrite = False
 
 product_type = [
-                'SCIENCE',
-                'PREVIEW',
-                'INFO',
-                'AUXILIARY',
+    'SCIENCE',
+    'PREVIEW',
+    'INFO',
+    'AUXILIARY',
 ]
 
 calib_level = [1, 2, 3]
@@ -41,21 +33,39 @@ if login:
 else:
     api_key = None
 
-for target in targets:
-    dl_dir = target.replace(' ', '_')
-    if not os.path.exists(dl_dir):
-        os.makedirs(dl_dir)
-    os.chdir(dl_dir)
+prop_ids = [
+    '2732',  # Stephan's Quintet ERO
+    # '2107',  # PHANGS-JWST
+]
 
-    archive_dl = ArchiveDownload(target=target,
-                                 prop_id=prop_id,
-                                 login=login,
-                                 api_key=api_key,
-                                 calib_level=calib_level,
-                                 product_type=product_type,
-                                 overwrite=overwrite)
-    archive_dl.archive_download()
+for prop_id in prop_ids:
 
-    os.chdir(base_dir)
+    targets = {
+        '2732': [
+            'ngc7320',
+        ],
+        '2107': [
+            'ic5332',
+            'ngc0628',
+            'ngc7496',
+        ],
+    }[prop_id]
+
+    for target in targets:
+        dl_dir = target.replace(' ', '_')
+        if not os.path.exists(dl_dir):
+            os.makedirs(dl_dir)
+        os.chdir(dl_dir)
+
+        archive_dl = ArchiveDownload(target=target,
+                                     prop_id=prop_id,
+                                     login=login,
+                                     api_key=api_key,
+                                     calib_level=calib_level,
+                                     product_type=product_type,
+                                     overwrite=overwrite)
+        archive_dl.archive_download()
+
+        os.chdir(base_dir)
 
 print('Complete!')

@@ -90,7 +90,17 @@ class NircamReprocess:
         self.galaxy = galaxy
 
         if bands is None:
-            bands = ['F200W', 'F300M', 'F335M', 'F360M']
+            bands = [
+                'F090W',
+                'F150W',
+                'F200W',
+                'F277W',
+                'F300M',
+                'F335M',
+                'F356W',
+                'F360M',
+                'F444W',
+            ]
 
         self.bands = bands
 
@@ -168,6 +178,12 @@ class NircamReprocess:
                                                          '*nrc*',
                                                          '*nrc*_uncal.fits')
                                             )
+
+                    if len(uncal_files) == 0:
+                        self.logger.info('-> No uncal files found. Skipping')
+                        os.system('rm -rf %s' % uncal_dir)
+                        return False
+
                     uncal_files.sort()
 
                     for uncal_file in uncal_files:
@@ -224,6 +240,11 @@ class NircamReprocess:
                                                         '*nrc*_rate.fits')
                                            )
 
+                    if len(rate_files) == 0:
+                        self.logger.info('-> No rate files found. Skipping')
+                        os.system('rm -rf %s' % rate_dir)
+                        return False
+
                     for rate_file in rate_files:
 
                         fits_name = rate_file.split(os.path.sep)[-1]
@@ -267,6 +288,10 @@ class NircamReprocess:
                                                        '*nrc*_cal.fits')
                                           )
 
+                    if len(cal_files) == 0:
+                        self.logger.info('-> No cal files found. Skipping')
+                        return False
+
                 else:
                     initial_cal_files = glob.glob(os.path.join(self.raw_dir,
                                                                self.galaxy,
@@ -275,6 +300,10 @@ class NircamReprocess:
                                                                '*nrc*',
                                                                '*nrc*_cal.fits')
                                                   )
+
+                    if len(initial_cal_files) == 0:
+                        self.logger.info('-> No cal files found. Skipping')
+                        return False
 
                     cal_files = []
 
@@ -329,6 +358,11 @@ class NircamReprocess:
                                                        '*nrc*_cal.fits')
                                           )
 
+                    if len(cal_files) == 0:
+                        self.logger.info('-> No cal files found. Skipping')
+                        os.system('rm -rf %s' % input_dir)
+                        return False
+
                     for cal_file in cal_files:
 
                         fits_name = cal_file.split(os.path.sep)[-1]
@@ -351,7 +385,6 @@ class NircamReprocess:
                                   pipeline_stage='lev3')
 
             if self.do_astrometric_alignment:
-
                 self.logger.info('-> Astrometric alignment')
 
                 input_dir = os.path.join(self.reprocess_dir,
@@ -626,17 +659,43 @@ class NircamReprocess:
                 nircam_im3.tweakreg.snr_threshold = 10.0  # 5.0 the default
 
                 # FWHM should be set per-band (this is in pixels)
-                nircam_im3.tweakreg.kernel_fwhm = {'F200W': 2.141,
-                                                   'F300M': 1.585,
-                                                   'F335M': 1.760,
-                                                   'F360M': 1.901,
-                                                   }[band]
+                nircam_im3.tweakreg.kernel_fwhm = {
+                    'F070W': 0.987,
+                    'F090W': 1.103,
+                    'F115W': 1.298,
+                    'F140M': 1.553,
+                    'F150W': 1.628,
+                    'F162M': 1.770,
+                    'F164N': 1.801,
+                    'F150W2': 1.494,
+                    'F182M': 1.990,
+                    'F187N': 2.060,
+                    'F200W': 2.141,
+                    'F210M': 2.304,
+                    'F212N': 2.341,
+                    'F250M': 1.340,
+                    'F277W': 1.444,
+                    'F300M': 1.585,
+                    'F322W2': 1.547,
+                    'F323N': 1.711,
+                    'F335M': 1.760,
+                    'F356W': 1.830,
+                    'F360M': 1.901,
+                    'F405N': 2.165,
+                    'F410M': 2.179,
+                    'F430M': 2.300,
+                    'F444W': 2.302,
+                    'F460M': 2.459,
+                    'F466N': 2.507,
+                    'F470N': 2.535,
+                    'F480M': 2.574,
+                }[band]
 
-                pixel_scale = {'F200W': 0.031,
-                               'F300M': 0.063,
-                               'F335M': 0.063,
-                               'F360M': 0.063,
-                               }[band]
+                # Pixel scale based on wavelength
+                if int(band[1:4]) <= 212:
+                    pixel_scale = 0.031
+                else:
+                    pixel_scale = 0.063
 
                 # Set separation relatively small, 0.7" is default
                 nircam_im3.tweakreg.separation = 10 * pixel_scale
