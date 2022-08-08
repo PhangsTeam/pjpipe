@@ -5,17 +5,112 @@ import glob
 import shutil
 import numpy as np
 import time
-from astropy.table import Table
+from astropy.table import Table, QTable
 import warnings
 from astropy.modeling import models, fitting
 from photutils import make_source_mask
+from miri_destriping import MiriDestriper
+from drizzlepac import updatehdr
+from photutils.detection import DAOStarFinder
+from stwcs.wcsutil import HSTWCS
+from tweakwcs import fit_wcs, TPMatch, FITSWCS
+import copy
+from astropy.stats import sigma_clipped_stats
+
 
 os.environ["CRDS_SERVER_URL"] = "https://jwst-crds-pub.stsci.edu"
 
 # !!! Set up your path to the directory where the necessary calibration files for the pipeline will be stored !!!
 os.environ["CRDS_PATH"] = "/home/egorov/Science/PHANGS/JWST/"
 import jwst
-from jwst.pipeline import calwebb_image2, calwebb_image3
+from jwst.pipeline import calwebb_image2, calwebb_image3, calwebb_detector1
+
+
+def astrometric_align(input_dir,
+                      astrometric_alignment_image,
+                      overwrite_astrometric_alignment = False):
+    """Align JWST image to external .fits image. Probably an HST one
+    Modified from the code by Tom Williams
+    """
+
+
+    jwst_files = glob.glob(os.path.join(input_dir,
+                                        '*_i2d.fits'))
+    if len(jwst_files) == 0:
+        raise Warning('No JWST image found')
+
+    ref_hdu = fits.open(astrometric_alignment_image)
+
+    ref_data = copy.deepcopy(ref_hdu[0].data)
+    ref_data[ref_data == 0] = np.nan
+    # Find sources in the input image
+    source_cat_name = astrometric_alignment_image.replace('.fits', '_src_cat.fits')
+
+    if not os.path.exists(source_cat_name) or overwrite_astrometric_alignment:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            mean, median, std = sigma_clipped_stats(ref_data, sigma=3)
+        daofind = DAOStarFinder(fwhm=2.5, threshold=20 * std)
+        sources = daofind(ref_data - median)
+        sources.write(source_cat_name, overwrite=True)
+    else:
+
+        sources = QTable.read(source_cat_name)
+    # Convert sources into a reference catalogue
+    wcs_ref = HSTWCS(ref_hdu, 0)
+    ref_tab = Table()
+    ref_ra, ref_dec = wcs_ref.all_pix2world(sources['xcentroid'], sources['ycentroid'], 1)
+    ref_tab['RA'] = ref_ra
+    ref_tab['DEC'] = ref_dec
+    ref_tab['x'] = sources['xcentroid']
+    ref_tab['y'] = sources['ycentroid']
+
+    for jwst_file in jwst_files:
+        aligned_hdu_name = jwst_file.replace('.fits', '_align.fits')
+        if not os.path.exists(aligned_hdu_name) or overwrite_astrometric_alignment:
+            jwst_hdu = fits.open(jwst_file)
+            jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
+            jwst_data[jwst_data == 0] = np.nan
+            # Find sources in the input image
+            source_cat_name = jwst_file.replace('.fits', '_src_cat.fits')
+            if not os.path.exists(source_cat_name) or overwrite_astrometric_alignment:
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    mean, median, std = sigma_clipped_stats(jwst_data, sigma=3)
+                daofind = DAOStarFinder(fwhm=2.5, threshold=20 * std)
+                sources = daofind(jwst_data - median)
+                sources.write(source_cat_name, overwrite=True)
+            else:
+                sources = QTable.read(source_cat_name)
+            # Convert sources into a reference catalogue
+            wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
+            jwst_tab = Table()
+            jwst_ra, jwst_dec = wcs_jwst.all_pix2world(sources['xcentroid'], sources['ycentroid'], 1)
+            jwst_tab['RA'] = jwst_ra
+            jwst_tab['DEC'] = jwst_dec
+            jwst_tab['x'] = sources['xcentroid']
+            jwst_tab['y'] = sources['ycentroid']
+
+            # And match!
+            match = TPMatch(searchrad=100,
+                            separation=0.1,
+                            tolerance=1,
+                            use2dhist=True,
+                            )
+            wcs_jwst_corrector = FITSWCS(wcs_jwst)
+            ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
+
+            # Finally, do the alignment
+            wcs_aligned = fit_wcs(ref_tab[ref_idx], jwst_tab[jwst_idx], wcs_jwst_corrector).wcs
+
+            updatehdr.update_wcs(jwst_hdu,
+                                 'SCI',
+                                 wcs_aligned,
+                                 wcsname='TWEAK',
+                                 reusename=True)
+
+            jwst_hdu.writeto(aligned_hdu_name, overwrite=True)
+            jwst_hdu.close()
 
 
 def check_json_kw(file, kw, param):
@@ -62,7 +157,8 @@ def check_ids(tab, kw, param, alt_rule=None,  add_rule=None, reverse=False):
     return (rec & add_rule) | alt_rule
 
 
-def tweak_fits(data_dir=None, suffix_in='_cal.fits', suffix_out='_cal_mod.fits', level=3, max_bgr_level=0.3):
+def tweak_fits(data_dir=None, suffix_in='_cal.fits', suffix_out='_cal_mod.fits', level=3, max_bgr_level=0.3,
+               do_adjust_lyot=True, do_destriping=False):
     """
     Adjust the content of fits files before further processing and saves the modified version to the same directory.
     Currently includes:
@@ -72,6 +168,8 @@ def tweak_fits(data_dir=None, suffix_in='_cal.fits', suffix_out='_cal_mod.fits',
     :param suffix_out: New endings of the output files
     :param level: current level of data reduction (2 or 3, but currently only 3 makes sense)
     :param max_bgr_level: maximal level of the pixel to be considered as the background for lyot adjustments
+    :param do_adjust_lyot: if true, will perform adjustment of the bgr level in lyot field
+    :param do_destriping: if true, will run destriping
     """
     if data_dir is None:
         return
@@ -83,17 +181,26 @@ def tweak_fits(data_dir=None, suffix_in='_cal.fits', suffix_out='_cal_mod.fits',
                           for f in d[2] if suffix_in in f]
     for f in all_fits_files:
         with fits.open(f) as hdu:
-            lyot = hdu[1].data[750:, :280]
-            image = hdu[1].data[:, 360:]
-            bgr_level_image = np.nanmedian(model_background(image, poly_order=0, sigma=2.,
-                                                            gal_mask=(image == 0) |
-                                                                     (image > max_bgr_level) | (image < -10.)))
-            bgr_level_lyot = np.nanmedian(model_background(lyot, poly_order=0, sigma=2.,
-                                                           gal_mask=(lyot == 0) |
-                                                                    (lyot > max_bgr_level) | (lyot < -10.)))
-            hdu[1].data[750:, :280] += (bgr_level_image-bgr_level_lyot)
-            # hdu['DQ'].data[-744:, :280] = 513  # Masks the coronograph area
-            hdu.writeto(f.split(suffix_in)[0]+suffix_out, overwrite=True)
+            if do_adjust_lyot:
+                lyot = hdu[1].data[750:, :280]
+                image = hdu[1].data[:, 360:]
+                bgr_level_image = np.nanmedian(model_background(image, poly_order=0, sigma=2.,
+                                                                gal_mask=(image == 0) |
+                                                                         (image > max_bgr_level) | (image < -10.)))
+                bgr_level_lyot = np.nanmedian(model_background(lyot, poly_order=0, sigma=2.,
+                                                               gal_mask=(lyot == 0) |
+                                                                        (lyot > max_bgr_level) | (lyot < -10.)))
+                hdu[1].data[750:, :280] += (bgr_level_image-bgr_level_lyot)
+                # hdu['DQ'].data[-744:, :280] = 513  # Masks the coronograph area
+                hdu.writeto(f.split(suffix_in)[0]+suffix_out, overwrite=True)
+        if do_destriping:
+            f_in = f.split(suffix_in)[0]+suffix_out
+            if not do_adjust_lyot:
+                f_in = f
+            md = MiriDestriper(hdu_name=f_in,
+                           hdu_out_name=f.split(suffix_in)[0]+suffix_out,
+                           destriping_method='median_filter')
+            md.run_destriping()
 
 
 def run_association_lev2(data_dir=None, fileout=None, force_id=None, skip_id=None,
@@ -231,14 +338,68 @@ def run_association_lev3(data_dir=os.path.curdir, fileout_root='asn_lev3', galna
 def run_pipeline(asn_file, level='level2', data_dir=os.curdir, output_dir=os.curdir, max_bgr_level=0.3):
     """
     Run JWST pipeline for the selected stage of the data reduction and for the provided asn file
-    :param asn_file: path to the asn json file to be used for the current data processing
-    :param level: stage of the data processing ('level2' or 'level3')
+    :param asn_file: path to the asn json file to be used for the current data processing (None for level1)
+    :param level: stage of the data processing ('level1', 'level2' or 'level3')
     :param data_dir: path to the directory with the data to be processed
     :param output_dir: path to the directory where all output files will be saved
     :param max_bgr_level: maximal brightness of the pixels considered as sky for skymatch (level3 only)
     """
 
-    if level == 'level2':
+    if level == 'level1':
+        os.chdir(data_dir)
+        all_fits_files = [(d[0], os.path.join(d[0], f)) for d in os.walk(data_dir, followlinks=True) if
+                          'mirimage' in d[0] for f in d[2] if '_mirimage_uncal.fits' in f]
+        for uncal_file in all_fits_files:
+            dir_names = uncal_file[0].split(os.sep)
+            if dir_names[-1] != '':
+                dir_name = dir_names[-1]
+            else:
+                dir_name = dir_names[-2]
+            detector1 = calwebb_detector1.Detector1Pipeline()
+            detector1.output_dir = os.path.join(output_dir, dir_name)
+            if not os.path.isdir(detector1.output_dir):
+                os.makedirs(detector1.output_dir)
+            detector1.save_results = True
+
+            # Don't flag everything if only the first sample is saturated
+            detector1.jump.suppress_one_group = False
+            detector1.ramp_fit.suppress_one_group = False
+
+            # Tweak settings
+            detector1.refpix.use_side_ref_pixels = True
+            # detector1.ramp_fit.save_results = True
+            # detector1.linearity.save_results = True
+
+
+
+            # Pull out the trapsfilled file from preceding exposure if needed
+            uncal_file_split = uncal_file[1].split('_')
+            exposure_str = uncal_file_split[2]
+            exposure_int = int(exposure_str)
+
+            if exposure_int > 1:
+                previous_exposure_str = '%05d' % (exposure_int - 1)
+                persist_fits_file = uncal_file[1].replace(exposure_str, previous_exposure_str)
+                persist_file = persist_fits_file.replace('_uncal.fits', '_trapsfilled.fits')
+                #
+                # persist_file = glob.glob(os.path.join(self.raw_dir,
+                #                                       self.galaxy,
+                #                                       'mastDownload',
+                #                                       'JWST',
+                #                                       '*nrc*',
+                #                                       persist_fits_file,
+                #                                       )
+                #                          )[0]
+            else:
+                persist_file = ''
+
+            # Specify the name of the trapsfilled file
+            detector1.persistence.input_trapsfilled = persist_file
+
+            # Run the level 1 pipeline
+            detector1.run(uncal_file[1])
+
+    elif level == 'level2':
         image2 = calwebb_image2.Image2Pipeline()
         # For some reason, setting up the input directory hadn't worked, so just cd to the level2 directory
         os.chdir(data_dir)
@@ -272,6 +433,7 @@ def run_pipeline(asn_file, level='level2', data_dir=os.curdir, output_dir=os.cur
         miri_im3.skymatch.upper = max_bgr_level
         miri_im3.skymatch.lower = -5.
         miri_im3.skymatch.nclip = 10
+        miri_im3.skymatch.skystat = 'median'
         miri_im3.skymatch.subtract = False
         # miri_im3.skymatch.match_down = True
         miri_im3.skymatch.usigma = 1.5
@@ -316,10 +478,13 @@ def model_background(data, poly_order=1, sigma=2, n_pixels=5, pixel_step=1, gal_
     return background
 
 
-def run_reprocessing(galname="ngc0628", lev2_root_dir='/home/egorov/Science/PHANGS/JWST/',
+def run_reprocessing(galname="ngc0628", lev1_root_dir='/home/egorov/Science/PHANGS/JWST/Lev1/',
+                     lev2_root_dir='/home/egorov/Science/PHANGS/JWST/',
                      reduced_root_dir="/home/egorov/Science/PHANGS/JWST/Reduction/",
                      asn_lev2_rules=None, do_steps=None,
-                     do_adjust_lyot=True, max_bgr_level=0.3):
+                     do_adjust_lyot=True, max_bgr_level=0.3,
+                     do_destriping=False,
+                     ref_file_for_astrometry=None):
 
     # ===========================
     # We assume that the level2 and the output directories contain subfolders for each galaxy.
@@ -328,13 +493,19 @@ def run_reprocessing(galname="ngc0628", lev2_root_dir='/home/egorov/Science/PHAN
 
     if do_steps is None:
         do_steps = {
+            'process1': True,
             'asn2': True,
             'process2': True,
             'mask_level3': True,
             'asn3': True,
-            'process3': True
+            'process3': True,
+            'align_astrometry': True,
         }
 
+    if lev1_root_dir is not None:
+        lev1_dir_cur_obj = os.path.join(lev1_root_dir, galname)
+    else:
+        lev1_dir_cur_obj = os.curdir
     lev2_dir_cur_obj = os.path.join(lev2_root_dir, galname)
     reduced_dir_cur_obj = os.path.join(reduced_root_dir, galname)
     if not os.path.isdir(reduced_dir_cur_obj):
@@ -343,10 +514,14 @@ def run_reprocessing(galname="ngc0628", lev2_root_dir='/home/egorov/Science/PHAN
     asn_file_lev3_root = f'{galname}_asn_lev3'
 
     lev2_suffix_in = '_rate.fits'
-    if do_adjust_lyot:
+    if do_adjust_lyot or do_destriping:
         lev3_suffix_in = 'mirimage_cal_masked.fits'
     else:
         lev3_suffix_in = 'mirimage_cal.fits'
+
+    # === Step 1: Create association file for level2 reprocessing
+    if os.path.isdir(lev1_dir_cur_obj) and do_steps['process1']:
+        run_pipeline(None, level='level1', data_dir=lev1_dir_cur_obj, output_dir=lev2_dir_cur_obj)
 
     # === Step 1: Create association file for level2 reprocessing
     if do_steps['asn2']:
@@ -359,9 +534,9 @@ def run_reprocessing(galname="ngc0628", lev2_root_dir='/home/egorov/Science/PHAN
         run_pipeline(asn_file_lev2, level='level2', data_dir=lev2_dir_cur_obj, output_dir=reduced_dir_cur_obj)
 
     # === Step 3: Mask the input frames before level2 processing
-    if do_adjust_lyot and do_steps['mask_level3']:
+    if (do_adjust_lyot or do_destriping) and do_steps['mask_level3']:
         tweak_fits(reduced_dir_cur_obj, suffix_in='mirimage_cal.fits', suffix_out=lev3_suffix_in, level=3,
-                   max_bgr_level=max_bgr_level)
+                   max_bgr_level=max_bgr_level, do_adjust_lyot=do_adjust_lyot, do_destriping=do_destriping)
 
     # === Step 4: Create association file for level3 reprocessing
     if do_steps['asn3']:
@@ -378,25 +553,44 @@ def run_reprocessing(galname="ngc0628", lev2_root_dir='/home/egorov/Science/PHAN
             run_pipeline(asn_f, level='level3', data_dir=reduced_dir_cur_obj, output_dir=cur_dir,
                          max_bgr_level=max_bgr_level)
 
+    # === Step 6: Adjust astrometry
+    if do_steps['align_astrometry'] and ref_file_for_astrometry is not None and os.path.isfile(ref_file_for_astrometry):
+        os.chdir(reduced_dir_cur_obj)
+        asn3_json_files = [f for f in glob.glob('*.json') if asn_file_lev3_root in f]
+        for asn_f in asn3_json_files:
+            cur_filter = asn_f.split('.json')[0].split('_')[-1]
+            cur_dir = os.path.join(reduced_dir_cur_obj, cur_filter)
+            astrometric_align(cur_dir, ref_file_for_astrometry)
+
 
 if __name__ == '__main__':
     # To run reprocessing, it is necessary to provide:
     # 1) name of the galaxy;
-    # 2) path to the directory where the level2 data were downloaded from MAST
-    # 3) path to the directory where the reprocessed files will be saved, together with json association files
-    # 4) Only if needed - adjust the dictionary for the rules to process the files association
-    # 5) Also can be useful to modify do_adjust_lyot and max_bgr_level for some galaxies (see below)
+    # 2) path to the directory where the level1 data were downloaded from MAST (if reducing from the uncal files)
+    # 3) path to the directory where the initially reduced data will be stored for subsequent level2 reduction
+    # or
+    # 3) path to the directory where the level2 data were downloaded from MAST
+    # 4) path to the directory where the reprocessed files will be saved, together with json association files
+    # 5) Only if needed - adjust the dictionary for the rules to process the files association
+    # 6) Also can be useful to modify do_adjust_lyot and max_bgr_level for some galaxies (see below)
+    # 7) Switch on do_destriping if necessary (not tested!)
+    # 8) Provide path to the reference file for astrometry correction
 
     galname = "ngc0628"
-    lev2_root_dir = '/home/egorov/Science/PHANGS/JWST/'
-    reduced_root_dir = "/home/egorov/Science/PHANGS/JWST/Reduction/"
+
+    lev1_root_dir = '/home/egorov/Science/PHANGS/JWST/Lev1/'
+    lev2_root_dir = '/home/egorov/Science/PHANGS/JWST/Reduction/Lev2/'
+    reduced_root_dir = "/home/egorov/Science/PHANGS/JWST/Reduction/Lev3/"
+
+    ref_file_for_astrometry = "/my/absolute/path/file.fits"
 
     # This values can be adjusted depending on the galaxy.
     # Current recomendation
-    #   - use do_adjust_lyot = True and max_bgr_level = 0.3 for IC5332 for NGC628 and NGC7496;
+    #   - use do_adjust_lyot = True and max_bgr_level = 0.3 for NGC628 and NGC7496;
     #   - use do_adjust_lyot = False and max_bgr_level = 5.5 for IC5332
     do_adjust_lyot = True  # Set True if you want to adjust background level in Lyot area (for proper sky matching)
-    max_bgr_level = 0.3  # Maximal brightness in calibrated images to be considered as sky (for proper sky matching)
+    max_bgr_level = 0.7  # Maximal brightness in calibrated images to be considered as sky (for proper sky matching)
+    do_destriping = False
 
     asn_lev2_rules = {
         "force_use": {"sci_id": None, 'bgr_id': None, 'obj_name': None},  # if not None -> only these ids will be used
@@ -407,15 +601,18 @@ if __name__ == '__main__':
 
     # Select steps:
     do_steps = {
-        'asn2': True,
-        'process2': True,
+        'process1': False,
+        'asn2': False,
+        'process2': False,
         'mask_level3': True,
         'asn3': True,
         'process3': True,
+        'align_astrometry': False,  # implemented, but not tested yet
     }
 
-    run_reprocessing(galname=galname, lev2_root_dir=lev2_root_dir,
+    run_reprocessing(galname=galname, lev1_root_dir=lev1_root_dir, lev2_root_dir=lev2_root_dir,
                      reduced_root_dir=reduced_root_dir, asn_lev2_rules=asn_lev2_rules, do_steps=do_steps,
-                     do_adjust_lyot=do_adjust_lyot, max_bgr_level=max_bgr_level)
+                     do_adjust_lyot=do_adjust_lyot, max_bgr_level=max_bgr_level, do_destriping=do_destriping,
+                     ref_file_for_astrometry = ref_file_for_astrometry)
 
 
