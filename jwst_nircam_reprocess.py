@@ -3,17 +3,26 @@ import glob
 import json
 import logging
 import os
+import shutil
 import time
 import warnings
+from functools import partial
+from multiprocessing import Pool, cpu_count, set_start_method
 
 import numpy as np
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from astropy.table import Table, QTable
 from drizzlepac import updatehdr
+from jwst import datamodels
 from photutils.detection import DAOStarFinder
 from stwcs.wcsutil import HSTWCS
+from tqdm import tqdm
 from tweakwcs import fit_wcs, TPMatch, FITSWCS
+
+set_start_method('fork')
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
 
 from nircam_destriping import NircamDestriper
 
@@ -21,6 +30,59 @@ jwst = None
 calwebb_detector1 = None
 calwebb_image2 = None
 calwebb_image3 = None
+
+
+def parallel_destripe(hdu_name,
+                      quadrants=True,
+                      destriping_method='row_median',
+                      sigma=3,
+                      npixels=3,
+                      max_iters=20,
+                      dilate_size=11,
+                      median_filter_scales=None,
+                      pca_components=50,
+                      pca_reconstruct_components=10,
+                      pca_diffuse=False,
+                      pca_dir=None,
+                      just_sci_hdu=False,
+                      out_dir=None,
+                      plot_dir=None,
+                      ):
+    """Function to parallelise destriping"""
+
+    out_file = os.path.join(out_dir, os.path.split(hdu_name)[-1])
+
+    if os.path.exists(out_file):
+        return True
+
+    if pca_dir is not None:
+        pca_file = os.path.join(pca_dir,
+                                os.path.split(hdu_name)[-1].replace('.fits', '_pca.pkl')
+                                )
+    else:
+        pca_file = None
+
+    nc_destripe = NircamDestriper(hdu_name=hdu_name,
+                                  hdu_out_name=out_file,
+                                  quadrants=quadrants,
+                                  destriping_method=destriping_method,
+                                  sigma=sigma,
+                                  npixels=npixels,
+                                  max_iters=max_iters,
+                                  dilate_size=dilate_size,
+                                  median_filter_scales=median_filter_scales,
+                                  pca_components=pca_components,
+                                  pca_reconstruct_components=pca_reconstruct_components,
+                                  pca_diffuse=pca_diffuse,
+                                  pca_file=pca_file,
+                                  just_sci_hdu=just_sci_hdu,
+                                  plot_dir=plot_dir,
+                                  )
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        nc_destripe.run_destriping()
+
+    return True
 
 
 def parse_fits_to_table(file):
@@ -53,7 +115,8 @@ class NircamReprocess:
                  overwrite_destriping=False,
                  overwrite_lv3=False,
                  overwrite_astrometric_alignment=False,
-                 crds_url='https://jwst-crds-pub.stsci.edu'
+                 crds_url='https://jwst-crds-pub.stsci.edu',
+                 procs=None
                  ):
         """NIRCAM reprocessing routines.
 
@@ -79,6 +142,8 @@ class NircamReprocess:
             * overwrite_lv3 (bool): Whether to overwrite lv3 data. Defaults to False
             * overwrite_astrometric_alignment (bool): Whether to overwrite astrometric alignment. Defaults to False
             * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds-pub.stsci.edu'
+            * procs (int): Number of parallel processes to run during destriping. Will default to half the number of
+                cores in the system
 
         TODO:
             * Update destriping algorithm as we improve it
@@ -95,16 +160,38 @@ class NircamReprocess:
         self.galaxy = galaxy
 
         if bands is None:
+            # All possible NIRCAM bands
+
             bands = [
+                'F070W',
                 'F090W',
+                'F115W',
+                'F140M',
                 'F150W',
+                'F162M',
+                'F164N',
+                'F150W2',
+                'F182M',
+                'F187N',
                 'F200W',
+                'F210M',
+                'F212N',
+                'F250M',
                 'F277W',
                 'F300M',
+                'F322W2',
+                'F323N',
                 'F335M',
                 'F356W',
                 'F360M',
+                'F405N',
+                'F410M',
+                'F430M',
                 'F444W',
+                'F460M',
+                'F466N',
+                'F470N',
+                'F480M',
             ]
 
         self.bands = bands
@@ -140,6 +227,11 @@ class NircamReprocess:
         self.overwrite_destriping = overwrite_destriping
         self.overwrite_lv3 = overwrite_lv3
         self.overwrite_astrometric_alignment = overwrite_astrometric_alignment
+
+        if procs is None:
+            procs = cpu_count() // 2
+
+        self.procs = procs
 
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
@@ -187,11 +279,14 @@ class NircamReprocess:
                     if len(uncal_files) == 0:
                         self.logger.info('-> No uncal files found. Skipping')
                         os.system('rm -rf %s' % uncal_dir)
+                        shutil.rmtree(os.path.join(self.reprocess_dir,
+                                                   self.galaxy,
+                                                   band))
                         continue
 
                     uncal_files.sort()
 
-                    for uncal_file in uncal_files:
+                    for uncal_file in tqdm(uncal_files, ascii=True):
 
                         uncal_fits_name = uncal_file.split(os.path.sep)[-1]
                         hdu_out_name = os.path.join(uncal_dir, uncal_fits_name)
@@ -201,6 +296,16 @@ class NircamReprocess:
                             hdu = fits.open(uncal_file)
                             if hdu[0].header['FILTER'].strip() == band:
                                 hdu.writeto(hdu_out_name, overwrite=True)
+
+                            hdu.close()
+
+                if len(glob.glob(os.path.join(uncal_dir, '*.fits'))) == 0:
+                    self.logger.info('-> No uncal files found. Skipping')
+                    os.system('rm -rf %s' % uncal_dir)
+                    shutil.rmtree(os.path.join(self.reprocess_dir,
+                                               self.galaxy,
+                                               band))
+                    continue
 
                 rate_dir = os.path.join(self.reprocess_dir,
                                         self.galaxy,
@@ -248,16 +353,20 @@ class NircamReprocess:
                     if len(rate_files) == 0:
                         self.logger.info('-> No rate files found. Skipping')
                         os.system('rm -rf %s' % rate_dir)
+                        shutil.rmtree(os.path.join(self.reprocess_dir,
+                                                   self.galaxy,
+                                                   band))
                         continue
 
-                    for rate_file in rate_files:
+                    for rate_file in tqdm(rate_files, ascii=True):
 
                         fits_name = rate_file.split(os.path.sep)[-1]
                         if not os.path.exists(os.path.join(rate_dir, fits_name)) or self.overwrite_lv2:
 
-                            hdu = fits.open(rate_file)[0]
-                            if hdu.header['FILTER'].strip() == band:
+                            hdu = fits.open(rate_file)
+                            if hdu[0].header['FILTER'].strip() == band:
                                 os.system('cp %s %s/' % (rate_file, rate_dir))
+                            hdu.close()
 
                 # Run lv2 asn generation
                 asn_file = self.run_asn2(directory=rate_dir,
@@ -295,6 +404,9 @@ class NircamReprocess:
 
                     if len(cal_files) == 0:
                         self.logger.info('-> No cal files found. Skipping')
+                        shutil.rmtree(os.path.join(self.reprocess_dir,
+                                                   self.galaxy,
+                                                   band))
                         continue
 
                 else:
@@ -308,19 +420,23 @@ class NircamReprocess:
 
                     if len(initial_cal_files) == 0:
                         self.logger.info('-> No cal files found. Skipping')
+                        shutil.rmtree(os.path.join(self.reprocess_dir,
+                                                   self.galaxy,
+                                                   band))
                         continue
 
                     cal_files = []
 
                     for cal_file in initial_cal_files:
 
-                        hdu = fits.open(cal_file)[0]
-                        if hdu.header['FILTER'].strip() == band:
+                        hdu = fits.open(cal_file)
+                        if hdu[0].header['FILTER'].strip() == band:
                             cal_files.append(cal_file)
+                        hdu.close()
 
                 cal_files.sort()
                 self.run_destripe(files=cal_files,
-                                  output_dir=destripe_dir
+                                  out_dir=destripe_dir
                                   )
 
             if self.do_lv3:
@@ -366,17 +482,21 @@ class NircamReprocess:
                     if len(cal_files) == 0:
                         self.logger.info('-> No cal files found. Skipping')
                         os.system('rm -rf %s' % input_dir)
+                        shutil.rmtree(os.path.join(self.reprocess_dir,
+                                                   self.galaxy,
+                                                   band))
                         continue
 
-                    for cal_file in cal_files:
+                    for cal_file in tqdm(cal_files, ascii=True):
 
                         fits_name = cal_file.split(os.path.sep)[-1]
                         if os.path.exists(os.path.join(input_dir, fits_name)) or self.overwrite_lv3:
                             continue
 
-                        hdu = fits.open(cal_file)[0]
-                        if hdu.header['FILTER'].strip() == band:
+                        hdu = fits.open(cal_file)
+                        if hdu[0].header['FILTER'].strip() == band:
                             os.system('cp %s %s/' % (cal_file, input_dir))
+                        hdu.close()
 
                 # Run lv3 asn generation
                 asn_file = self.run_asn3(directory=input_dir,
@@ -401,33 +521,53 @@ class NircamReprocess:
 
     def run_destripe(self,
                      files,
-                     output_dir,
+                     out_dir,
                      ):
         """Run destriping algorithm, looping over calibrated files
 
         Args:
             * files (list): List of files to loop over
-            * output_dir (str): Where to save destriped files to
+            * out_dir (str): Where to save destriped files to
         """
 
-        for in_file in files:
+        # TODO: Swap out for newer algorithm at some point
 
-            out_file = os.path.join(output_dir,
-                                    os.path.split(in_file)[-1])
+        median_filter_scales = [7, 31, 63, 127, 511]
 
-            median_filter_scales = [7, 31, 63, 127, 511]
+        plot_dir = os.path.join(out_dir, 'plots')
+        pca_dir = os.path.join(out_dir, 'pca')
 
-            # Run destriping. TODO: Swap out for newer algorithm at some point
-            if not os.path.exists(out_file) or self.overwrite_destriping:
-                nc_destripe = NircamDestriper(hdu_name=in_file,
-                                              hdu_out_name=out_file,
-                                              destriping_method='median_filter',
-                                              median_filter_scales=median_filter_scales,
-                                              quadrants=False,
-                                              )
-                with warnings.catch_warnings():
-                    warnings.simplefilter('ignore')
-                    nc_destripe.run_destriping()
+        for directory in [plot_dir, pca_dir]:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+
+        with Pool(self.procs) as pool:
+
+            results = []
+
+            for result in tqdm(pool.imap_unordered(partial(parallel_destripe,
+                                                           quadrants=True,
+                                                           destriping_method='pca+median',
+                                                           dilate_size=7,
+                                                           pca_reconstruct_components=5,
+                                                           pca_diffuse=True,
+                                                           pca_dir=pca_dir,
+                                                           out_dir=out_dir,
+                                                           plot_dir=plot_dir,
+                                                           ),
+                                                   files),
+                               total=len(files), ascii=True):
+                results.append(result)
+
+            # for result in tqdm(pool.imap_unordered(partial(parallel_destripe,
+            #                                                quadrants=False,
+            #                                                destriping_method='median_filter',
+            #                                                dilate_size=7,
+            #                                                out_dir=out_dir,
+            #                                                ),
+            #                                        files),
+            #                    total=len(files), ascii=True):
+            #     results.append(result)
 
     def run_asn2(self,
                  directory=None,
@@ -732,8 +872,20 @@ class NircamReprocess:
                 nircam_im3.source_catalog.kernel_fwhm = 2.5  # pixels
                 nircam_im3.source_catalog.snr_threshold = 10.
 
+                # Degroup the short NIRCAM observations, to avoid background issues
+                if int(band[1:4]) <= 212:
+                    degroup = True
+                else:
+                    degroup = False
+
+                model_container = datamodels.open(asn_file)
+
+                if degroup:
+                    for i, model in enumerate(model_container._models):
+                        model.meta.observation.exposure_number = str(i)
+
                 # Run the level 3 pipeline
-                nircam_im3.run(asn_file)
+                nircam_im3.run(model_container)
 
         else:
 

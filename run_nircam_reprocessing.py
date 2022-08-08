@@ -15,14 +15,14 @@ else:
 reprocess_dir = os.path.join(working_dir, 'nircam_lev3_reprocessed')
 crds_dir = os.path.join(working_dir, 'crds')
 
-reprocess_dir_ext = 'v0p2'
+reprocess_dir_ext = 'v0p3'
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
 galaxies = [
-    # 'ngc0628',
+    'ngc0628',
     'ngc7320',
-    # 'ngc7496',
+    'ngc7496',
 ]
 
 for galaxy in galaxies:
