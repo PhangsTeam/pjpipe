@@ -3,17 +3,26 @@ import glob
 import json
 import logging
 import os
+import shutil
 import time
 import warnings
+from functools import partial
+from multiprocessing import Pool, cpu_count, set_start_method
 
 import numpy as np
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from astropy.table import Table, QTable
 from drizzlepac import updatehdr
+from jwst import datamodels
 from photutils.detection import DAOStarFinder
 from stwcs.wcsutil import HSTWCS
+from tqdm import tqdm
 from tweakwcs import fit_wcs, TPMatch, FITSWCS
+
+set_start_method('fork')
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
 
 from nircam_destriping import NircamDestriper
 
@@ -21,6 +30,59 @@ jwst = None
 calwebb_detector1 = None
 calwebb_image2 = None
 calwebb_image3 = None
+
+
+def parallel_destripe(hdu_name,
+                      quadrants=True,
+                      destriping_method='row_median',
+                      sigma=3,
+                      npixels=3,
+                      max_iters=20,
+                      dilate_size=11,
+                      median_filter_scales=None,
+                      pca_components=50,
+                      pca_reconstruct_components=10,
+                      pca_diffuse=False,
+                      pca_dir=None,
+                      just_sci_hdu=False,
+                      out_dir=None,
+                      plot_dir=None,
+                      ):
+    """Function to parallelise destriping"""
+
+    out_file = os.path.join(out_dir, os.path.split(hdu_name)[-1])
+
+    if os.path.exists(out_file):
+        return True
+
+    if pca_dir is not None:
+        pca_file = os.path.join(pca_dir,
+                                os.path.split(hdu_name)[-1].replace('.fits', '_pca.pkl')
+                                )
+    else:
+        pca_file = None
+
+    nc_destripe = NircamDestriper(hdu_name=hdu_name,
+                                  hdu_out_name=out_file,
+                                  quadrants=quadrants,
+                                  destriping_method=destriping_method,
+                                  sigma=sigma,
+                                  npixels=npixels,
+                                  max_iters=max_iters,
+                                  dilate_size=dilate_size,
+                                  median_filter_scales=median_filter_scales,
+                                  pca_components=pca_components,
+                                  pca_reconstruct_components=pca_reconstruct_components,
+                                  pca_diffuse=pca_diffuse,
+                                  pca_file=pca_file,
+                                  just_sci_hdu=just_sci_hdu,
+                                  plot_dir=plot_dir,
+                                  )
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        nc_destripe.run_destriping()
+
+    return True
 
 
 def parse_fits_to_table(file):
@@ -35,13 +97,13 @@ def parse_fits_to_table(file):
 class NircamReprocess:
 
     def __init__(self,
-                 crds_path,
                  galaxy,
                  raw_dir,
                  reprocess_dir,
+                 crds_dir,
                  bands=None,
                  astrometric_alignment_image=None,
-                 do_all=False,
+                 do_all=True,
                  do_lv1=False,
                  do_lv2=False,
                  do_destriping=False,
@@ -53,27 +115,38 @@ class NircamReprocess:
                  overwrite_destriping=False,
                  overwrite_lv3=False,
                  overwrite_astrometric_alignment=False,
-                 crds_url='https://jwst-crds-pub.stsci.edu'
+                 overwrite_astrometric_ref_cat=False,
+                 crds_url='https://jwst-crds-pub.stsci.edu',
+                 procs=None
                  ):
         """NIRCAM reprocessing routines.
 
         Will run through whole NIRCAM pipeline, allowing for fine-tuning along the way
 
         Args:
-            * crds_path (str): Path to CRDS data
             * galaxy (str): Galaxy to run reprocessing for
             * raw_dir (str): Path to raw data
             * reprocess_dir (str): Path to reprocess data into
+            * crds_dir (str): Path to CRDS data
             * bands (list): JWST filters to loop over
             * astrometric_alignment_image (str): Path to image to align astrometry to
-            * do_all (bool): Do all processing steps
-            * do_lv1 (bool): Run lv1 pipeline
-            * do_lv2 (bool): Run lv2 pipeline
-            * do_destriping (bool): Run destriping algorithm on lv2 data
-            * do_lv3 (bool): Run lv3 pipeline
-            * do_astrometric_alignment (bool): Run astrometric alignment on lv3 data
-            * overwrite_all (bool): Whether to everything. Defaults to False
+            * do_all (bool): Do all processing steps. Defaults to True
+            * do_lv1 (bool): Run lv1 pipeline. Defaults to False
+            * do_lv2 (bool): Run lv2 pipeline. Defaults to False
+            * do_destriping (bool): Run destriping algorithm on lv2 data. Defaults to False
+            * do_lv3 (bool): Run lv3 pipeline. Defaults to False
+            * do_astrometric_alignment (bool): Run astrometric alignment on lv3 data. Defaults to False
+            * overwrite_all (bool): Whether to overwrite everything. Defaults to False
+            * overwrite_lv1 (bool): Whether to overwrite lv1 data. Defaults to False
+            * overwrite_lv2 (bool): Whether to overwrite lv2 data. Defaults to False
+            * overwrite_destriping (bool): Whether to overwrite destriped data. Defaults to False
+            * overwrite_lv3 (bool): Whether to overwrite lv3 data. Defaults to False
+            * overwrite_astrometric_alignment (bool): Whether to overwrite astrometric alignment. Defaults to False
+            * overwrite_astrometric_ref_cat (bool): Whether to overwrite the generated reference catalogue for
+                astrometric alignment. Defaults to False
             * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds-pub.stsci.edu'
+            * procs (int): Number of parallel processes to run during destriping. Will default to half the number of
+                cores in the system
 
         TODO:
             * Update destriping algorithm as we improve it
@@ -81,7 +154,7 @@ class NircamReprocess:
         """
 
         os.environ['CRDS_SERVER_URL'] = crds_url
-        os.environ['CRDS_PATH'] = crds_path
+        os.environ['CRDS_PATH'] = crds_dir
 
         global jwst, calwebb_detector1, calwebb_image2, calwebb_image3
         import jwst
@@ -90,7 +163,39 @@ class NircamReprocess:
         self.galaxy = galaxy
 
         if bands is None:
-            bands = ['F200W', 'F300M', 'F335M', 'F360M']
+            # All possible NIRCAM bands
+
+            bands = [
+                'F070W',
+                'F090W',
+                'F115W',
+                'F140M',
+                'F150W',
+                'F162M',
+                'F164N',
+                'F150W2',
+                'F182M',
+                'F187N',
+                'F200W',
+                'F210M',
+                'F212N',
+                'F250M',
+                'F277W',
+                'F300M',
+                'F322W2',
+                'F323N',
+                'F335M',
+                'F356W',
+                'F360M',
+                'F405N',
+                'F410M',
+                'F430M',
+                'F444W',
+                'F460M',
+                'F466N',
+                'F470N',
+                'F480M',
+            ]
 
         self.bands = bands
 
@@ -125,6 +230,12 @@ class NircamReprocess:
         self.overwrite_destriping = overwrite_destriping
         self.overwrite_lv3 = overwrite_lv3
         self.overwrite_astrometric_alignment = overwrite_astrometric_alignment
+        self.overwrite_astrometric_ref_cat = overwrite_astrometric_ref_cat
+
+        if procs is None:
+            procs = cpu_count() // 2
+
+        self.procs = procs
 
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
@@ -168,9 +279,18 @@ class NircamReprocess:
                                                          '*nrc*',
                                                          '*nrc*_uncal.fits')
                                             )
+
+                    if len(uncal_files) == 0:
+                        self.logger.info('-> No uncal files found. Skipping')
+                        os.system('rm -rf %s' % uncal_dir)
+                        shutil.rmtree(os.path.join(self.reprocess_dir,
+                                                   self.galaxy,
+                                                   band))
+                        continue
+
                     uncal_files.sort()
 
-                    for uncal_file in uncal_files:
+                    for uncal_file in tqdm(uncal_files, ascii=True):
 
                         uncal_fits_name = uncal_file.split(os.path.sep)[-1]
                         hdu_out_name = os.path.join(uncal_dir, uncal_fits_name)
@@ -180,6 +300,16 @@ class NircamReprocess:
                             hdu = fits.open(uncal_file)
                             if hdu[0].header['FILTER'].strip() == band:
                                 hdu.writeto(hdu_out_name, overwrite=True)
+
+                            hdu.close()
+
+                if len(glob.glob(os.path.join(uncal_dir, '*.fits'))) == 0:
+                    self.logger.info('-> No uncal files found. Skipping')
+                    os.system('rm -rf %s' % uncal_dir)
+                    shutil.rmtree(os.path.join(self.reprocess_dir,
+                                               self.galaxy,
+                                               band))
+                    continue
 
                 rate_dir = os.path.join(self.reprocess_dir,
                                         self.galaxy,
@@ -224,14 +354,23 @@ class NircamReprocess:
                                                         '*nrc*_rate.fits')
                                            )
 
-                    for rate_file in rate_files:
+                    if len(rate_files) == 0:
+                        self.logger.info('-> No rate files found. Skipping')
+                        os.system('rm -rf %s' % rate_dir)
+                        shutil.rmtree(os.path.join(self.reprocess_dir,
+                                                   self.galaxy,
+                                                   band))
+                        continue
+
+                    for rate_file in tqdm(rate_files, ascii=True):
 
                         fits_name = rate_file.split(os.path.sep)[-1]
                         if not os.path.exists(os.path.join(rate_dir, fits_name)) or self.overwrite_lv2:
 
-                            hdu = fits.open(rate_file)[0]
-                            if hdu.header['FILTER'].strip() == band:
+                            hdu = fits.open(rate_file)
+                            if hdu[0].header['FILTER'].strip() == band:
                                 os.system('cp %s %s/' % (rate_file, rate_dir))
+                            hdu.close()
 
                 # Run lv2 asn generation
                 asn_file = self.run_asn2(directory=rate_dir,
@@ -267,6 +406,13 @@ class NircamReprocess:
                                                        '*nrc*_cal.fits')
                                           )
 
+                    if len(cal_files) == 0:
+                        self.logger.info('-> No cal files found. Skipping')
+                        shutil.rmtree(os.path.join(self.reprocess_dir,
+                                                   self.galaxy,
+                                                   band))
+                        continue
+
                 else:
                     initial_cal_files = glob.glob(os.path.join(self.raw_dir,
                                                                self.galaxy,
@@ -276,17 +422,25 @@ class NircamReprocess:
                                                                '*nrc*_cal.fits')
                                                   )
 
+                    if len(initial_cal_files) == 0:
+                        self.logger.info('-> No cal files found. Skipping')
+                        shutil.rmtree(os.path.join(self.reprocess_dir,
+                                                   self.galaxy,
+                                                   band))
+                        continue
+
                     cal_files = []
 
                     for cal_file in initial_cal_files:
 
-                        hdu = fits.open(cal_file)[0]
-                        if hdu.header['FILTER'].strip() == band:
+                        hdu = fits.open(cal_file)
+                        if hdu[0].header['FILTER'].strip() == band:
                             cal_files.append(cal_file)
+                        hdu.close()
 
                 cal_files.sort()
                 self.run_destripe(files=cal_files,
-                                  output_dir=destripe_dir
+                                  out_dir=destripe_dir
                                   )
 
             if self.do_lv3:
@@ -329,15 +483,24 @@ class NircamReprocess:
                                                        '*nrc*_cal.fits')
                                           )
 
-                    for cal_file in cal_files:
+                    if len(cal_files) == 0:
+                        self.logger.info('-> No cal files found. Skipping')
+                        os.system('rm -rf %s' % input_dir)
+                        shutil.rmtree(os.path.join(self.reprocess_dir,
+                                                   self.galaxy,
+                                                   band))
+                        continue
+
+                    for cal_file in tqdm(cal_files, ascii=True):
 
                         fits_name = cal_file.split(os.path.sep)[-1]
                         if os.path.exists(os.path.join(input_dir, fits_name)) or self.overwrite_lv3:
                             continue
 
-                        hdu = fits.open(cal_file)[0]
-                        if hdu.header['FILTER'].strip() == band:
+                        hdu = fits.open(cal_file)
+                        if hdu[0].header['FILTER'].strip() == band:
                             os.system('cp %s %s/' % (cal_file, input_dir))
+                        hdu.close()
 
                 # Run lv3 asn generation
                 asn_file = self.run_asn3(directory=input_dir,
@@ -351,7 +514,6 @@ class NircamReprocess:
                                   pipeline_stage='lev3')
 
             if self.do_astrometric_alignment:
-
                 self.logger.info('-> Astrometric alignment')
 
                 input_dir = os.path.join(self.reprocess_dir,
@@ -363,33 +525,53 @@ class NircamReprocess:
 
     def run_destripe(self,
                      files,
-                     output_dir,
+                     out_dir,
                      ):
         """Run destriping algorithm, looping over calibrated files
 
         Args:
             * files (list): List of files to loop over
-            * output_dir (str): Where to save destriped files to
+            * out_dir (str): Where to save destriped files to
         """
 
-        for in_file in files:
+        # TODO: Swap out for newer algorithm at some point
 
-            out_file = os.path.join(output_dir,
-                                    os.path.split(in_file)[-1])
+        median_filter_scales = [7, 31, 63, 127, 511]
 
-            median_filter_scales = [7, 31, 63, 127, 511]
+        plot_dir = os.path.join(out_dir, 'plots')
+        pca_dir = os.path.join(out_dir, 'pca')
 
-            # Run destriping. TODO: Swap out for newer algorithm at some point
-            if not os.path.exists(out_file) or self.overwrite_destriping:
-                nc_destripe = NircamDestriper(hdu_name=in_file,
-                                              hdu_out_name=out_file,
-                                              destriping_method='median_filter',
-                                              median_filter_scales=median_filter_scales,
-                                              quadrants=False,
-                                              )
-                with warnings.catch_warnings():
-                    warnings.simplefilter('ignore')
-                    nc_destripe.run_destriping()
+        for directory in [plot_dir, pca_dir]:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+
+        with Pool(self.procs) as pool:
+
+            results = []
+
+            for result in tqdm(pool.imap_unordered(partial(parallel_destripe,
+                                                           quadrants=True,
+                                                           destriping_method='pca+median',
+                                                           dilate_size=7,
+                                                           pca_reconstruct_components=5,
+                                                           pca_diffuse=True,
+                                                           pca_dir=pca_dir,
+                                                           out_dir=out_dir,
+                                                           plot_dir=plot_dir,
+                                                           ),
+                                                   files),
+                               total=len(files), ascii=True):
+                results.append(result)
+
+            # for result in tqdm(pool.imap_unordered(partial(parallel_destripe,
+            #                                                quadrants=False,
+            #                                                destriping_method='median_filter',
+            #                                                dilate_size=7,
+            #                                                out_dir=out_dir,
+            #                                                ),
+            #                                        files),
+            #                    total=len(files), ascii=True):
+            #     results.append(result)
 
     def run_asn2(self,
                  directory=None,
@@ -626,17 +808,43 @@ class NircamReprocess:
                 nircam_im3.tweakreg.snr_threshold = 10.0  # 5.0 the default
 
                 # FWHM should be set per-band (this is in pixels)
-                nircam_im3.tweakreg.kernel_fwhm = {'F200W': 2.141,
-                                                   'F300M': 1.585,
-                                                   'F335M': 1.760,
-                                                   'F360M': 1.901,
-                                                   }[band]
+                nircam_im3.tweakreg.kernel_fwhm = {
+                    'F070W': 0.987,
+                    'F090W': 1.103,
+                    'F115W': 1.298,
+                    'F140M': 1.553,
+                    'F150W': 1.628,
+                    'F162M': 1.770,
+                    'F164N': 1.801,
+                    'F150W2': 1.494,
+                    'F182M': 1.990,
+                    'F187N': 2.060,
+                    'F200W': 2.141,
+                    'F210M': 2.304,
+                    'F212N': 2.341,
+                    'F250M': 1.340,
+                    'F277W': 1.444,
+                    'F300M': 1.585,
+                    'F322W2': 1.547,
+                    'F323N': 1.711,
+                    'F335M': 1.760,
+                    'F356W': 1.830,
+                    'F360M': 1.901,
+                    'F405N': 2.165,
+                    'F410M': 2.179,
+                    'F430M': 2.300,
+                    'F444W': 2.302,
+                    'F460M': 2.459,
+                    'F466N': 2.507,
+                    'F470N': 2.535,
+                    'F480M': 2.574,
+                }[band]
 
-                pixel_scale = {'F200W': 0.031,
-                               'F300M': 0.063,
-                               'F335M': 0.063,
-                               'F360M': 0.063,
-                               }[band]
+                # Pixel scale based on wavelength
+                if int(band[1:4]) <= 212:
+                    pixel_scale = 0.031
+                else:
+                    pixel_scale = 0.063
 
                 # Set separation relatively small, 0.7" is default
                 nircam_im3.tweakreg.separation = 10 * pixel_scale
@@ -664,12 +872,27 @@ class NircamReprocess:
                 nircam_im3.skymatch.lsigma = 3  # 4 is the default
                 nircam_im3.skymatch.usigma = 3  # 4 is the default
 
+                # Resample settings
+                nircam_im3.resample.rotation = 0.0  # Ensure north up
+
                 # Source catalogue settings
                 nircam_im3.source_catalog.kernel_fwhm = 2.5  # pixels
                 nircam_im3.source_catalog.snr_threshold = 10.
 
+                # Degroup the short NIRCAM observations, to avoid background issues
+                if int(band[1:4]) <= 212:
+                    degroup = True
+                else:
+                    degroup = False
+
+                model_container = datamodels.open(asn_file)
+
+                if degroup:
+                    for i, model in enumerate(model_container._models):
+                        model.meta.observation.exposure_number = str(i)
+
                 # Run the level 3 pipeline
-                nircam_im3.run(asn_file)
+                nircam_im3.run(model_container)
 
         else:
 
@@ -678,7 +901,8 @@ class NircamReprocess:
         os.chdir(orig_dir)
 
     def astrometric_align(self,
-                          input_dir):
+                          input_dir,
+                          ):
         """Align JWST image to external .fits image. Probably an HST one"""
 
         if not self.astrometric_alignment_image:
@@ -698,12 +922,12 @@ class NircamReprocess:
 
         source_cat_name = self.astrometric_alignment_image.replace('.fits', '_src_cat.fits')
 
-        if not os.path.exists(source_cat_name) or self.overwrite_astrometric_alignment:
+        if not os.path.exists(source_cat_name) or self.overwrite_astrometric_ref_cat:
 
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
                 mean, median, std = sigma_clipped_stats(ref_data, sigma=3)
-            daofind = DAOStarFinder(fwhm=2.5, threshold=20 * std)
+            daofind = DAOStarFinder(fwhm=2.5, threshold=10 * std)
             sources = daofind(ref_data - median)
             sources.write(source_cat_name, overwrite=True)
 
@@ -715,12 +939,10 @@ class NircamReprocess:
         wcs_ref = HSTWCS(ref_hdu, 0)
 
         ref_tab = Table()
-        ref_ra, ref_dec = wcs_ref.all_pix2world(sources['xcentroid'], sources['ycentroid'], 1)
+        ref_ra, ref_dec = wcs_ref.all_pix2world(sources['xcentroid'], sources['ycentroid'], 0)
 
         ref_tab['RA'] = ref_ra
         ref_tab['DEC'] = ref_dec
-        ref_tab['x'] = sources['xcentroid']
-        ref_tab['y'] = sources['ycentroid']
 
         for jwst_file in jwst_files:
 
@@ -733,45 +955,34 @@ class NircamReprocess:
                 jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
                 jwst_data[jwst_data == 0] = np.nan
 
-                # Find sources in the input image
+                # Read in the source catalogue from the pipeline
 
-                source_cat_name = jwst_file.replace('.fits', '_src_cat.fits')
-
-                if not os.path.exists(source_cat_name) or self.overwrite_astrometric_alignment:
-
-                    with warnings.catch_warnings():
-                        warnings.simplefilter('ignore')
-                        mean, median, std = sigma_clipped_stats(jwst_data, sigma=3)
-                    daofind = DAOStarFinder(fwhm=2.5, threshold=20 * std)
-                    sources = daofind(jwst_data - median)
-                    sources.write(source_cat_name, overwrite=True)
-
-                else:
-
-                    sources = QTable.read(source_cat_name)
+                source_cat_name = jwst_file.replace('i2d.fits', 'cat.ecsv')
+                sources = Table.read(source_cat_name, format='ascii.ecsv')
 
                 # Convert sources into a reference catalogue
                 wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
+                wcs_jwst_corrector = FITSWCS(wcs_jwst)
 
                 jwst_tab = Table()
-                jwst_ra, jwst_dec = wcs_jwst.all_pix2world(sources['xcentroid'], sources['ycentroid'], 1)
-
-                jwst_tab['RA'] = jwst_ra
-                jwst_tab['DEC'] = jwst_dec
                 jwst_tab['x'] = sources['xcentroid']
                 jwst_tab['y'] = sources['ycentroid']
 
                 # And match!
-                match = TPMatch(searchrad=100,
-                                separation=0.1,
-                                tolerance=1,
-                                use2dhist=True,
-                                )
-                wcs_jwst_corrector = FITSWCS(wcs_jwst)
+                match = TPMatch(
+                    searchrad=100,
+                    separation=0.1,
+                    tolerance=1,
+                    use2dhist=True,
+                )
                 ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
 
                 # Finally, do the alignment
-                wcs_aligned = fit_wcs(ref_tab[ref_idx], jwst_tab[jwst_idx], wcs_jwst_corrector).wcs
+                wcs_aligned = fit_wcs(ref_tab[ref_idx],
+                                      jwst_tab[jwst_idx],
+                                      wcs_jwst_corrector,
+                                      fitgeom='rshift',
+                                      ).wcs
 
                 self.logger.info('Original WCS:')
                 self.logger.info(wcs_jwst)
@@ -785,3 +996,6 @@ class NircamReprocess:
                                      reusename=True)
 
                 jwst_hdu.writeto(aligned_hdu_name, overwrite=True)
+
+                jwst_hdu.close()
+                ref_hdu.close()

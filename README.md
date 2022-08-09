@@ -9,7 +9,7 @@ PHANGS-JWST processing scripts
 ## NIRCAM tools
 
 * `nircam_destriping` contains various routines for destriping NIRCAM data
-* `run_nircam_destriping` is a wrapper to run the destriping for one NIRCAM frame
+* `run_nircam_destriping` is a wrapper to run the destriping for select NIRCAM frames
 * `jwst_nircam_reprocess` used to destripe and reprocess level3 NIRCAM data
 * `run_nircam_reprocessing` wraps around `jwst_nircam_reprocess`
 * `log_jwst_nircam_reprocessing` logs `run_nircam_reprocessing` to a file
@@ -27,3 +27,8 @@ to reprocess the level1 (if necessary), level2 and level3 MIRI data reduction
   these kernels are circularised
 * `loop_kernel_creation` provides an example wrapper around `make_jwst_kernels` 
 * `jwst_pypherise` uses pypher to produce PSF kernels to convert from JWST to JWST or JWST to gaussian/moffat
+
+## PCA tools
+* the `pca/` directory contains a number of robust PCA routines that we use for destriping data. They were ported to 
+  Python by Elizabeth Watkins from IDL. These should reference Budavari+ 2009 (MNRAS 394, 1496–1502), and Wild+Hewett
+  2005 (MNRAS 358, 1083-1099)
