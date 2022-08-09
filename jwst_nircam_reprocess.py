@@ -115,6 +115,7 @@ class NircamReprocess:
                  overwrite_destriping=False,
                  overwrite_lv3=False,
                  overwrite_astrometric_alignment=False,
+                 overwrite_astrometric_ref_cat=False,
                  crds_url='https://jwst-crds-pub.stsci.edu',
                  procs=None
                  ):
@@ -141,6 +142,8 @@ class NircamReprocess:
             * overwrite_destriping (bool): Whether to overwrite destriped data. Defaults to False
             * overwrite_lv3 (bool): Whether to overwrite lv3 data. Defaults to False
             * overwrite_astrometric_alignment (bool): Whether to overwrite astrometric alignment. Defaults to False
+            * overwrite_astrometric_ref_cat (bool): Whether to overwrite the generated reference catalogue for
+                astrometric alignment. Defaults to False
             * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds-pub.stsci.edu'
             * procs (int): Number of parallel processes to run during destriping. Will default to half the number of
                 cores in the system
@@ -227,6 +230,7 @@ class NircamReprocess:
         self.overwrite_destriping = overwrite_destriping
         self.overwrite_lv3 = overwrite_lv3
         self.overwrite_astrometric_alignment = overwrite_astrometric_alignment
+        self.overwrite_astrometric_ref_cat = overwrite_astrometric_ref_cat
 
         if procs is None:
             procs = cpu_count() // 2
@@ -868,6 +872,9 @@ class NircamReprocess:
                 nircam_im3.skymatch.lsigma = 3  # 4 is the default
                 nircam_im3.skymatch.usigma = 3  # 4 is the default
 
+                # Resample settings
+                nircam_im3.resample.rotation = 0.0  # Ensure north up
+
                 # Source catalogue settings
                 nircam_im3.source_catalog.kernel_fwhm = 2.5  # pixels
                 nircam_im3.source_catalog.snr_threshold = 10.
@@ -894,7 +901,8 @@ class NircamReprocess:
         os.chdir(orig_dir)
 
     def astrometric_align(self,
-                          input_dir):
+                          input_dir,
+                          ):
         """Align JWST image to external .fits image. Probably an HST one"""
 
         if not self.astrometric_alignment_image:
@@ -914,12 +922,12 @@ class NircamReprocess:
 
         source_cat_name = self.astrometric_alignment_image.replace('.fits', '_src_cat.fits')
 
-        if not os.path.exists(source_cat_name) or self.overwrite_astrometric_alignment:
+        if not os.path.exists(source_cat_name) or self.overwrite_astrometric_ref_cat:
 
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
                 mean, median, std = sigma_clipped_stats(ref_data, sigma=3)
-            daofind = DAOStarFinder(fwhm=2.5, threshold=20 * std)
+            daofind = DAOStarFinder(fwhm=2.5, threshold=10 * std)
             sources = daofind(ref_data - median)
             sources.write(source_cat_name, overwrite=True)
 
@@ -931,12 +939,10 @@ class NircamReprocess:
         wcs_ref = HSTWCS(ref_hdu, 0)
 
         ref_tab = Table()
-        ref_ra, ref_dec = wcs_ref.all_pix2world(sources['xcentroid'], sources['ycentroid'], 1)
+        ref_ra, ref_dec = wcs_ref.all_pix2world(sources['xcentroid'], sources['ycentroid'], 0)
 
         ref_tab['RA'] = ref_ra
         ref_tab['DEC'] = ref_dec
-        ref_tab['x'] = sources['xcentroid']
-        ref_tab['y'] = sources['ycentroid']
 
         for jwst_file in jwst_files:
 
@@ -949,45 +955,34 @@ class NircamReprocess:
                 jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
                 jwst_data[jwst_data == 0] = np.nan
 
-                # Find sources in the input image
+                # Read in the source catalogue from the pipeline
 
-                source_cat_name = jwst_file.replace('.fits', '_src_cat.fits')
-
-                if not os.path.exists(source_cat_name) or self.overwrite_astrometric_alignment:
-
-                    with warnings.catch_warnings():
-                        warnings.simplefilter('ignore')
-                        mean, median, std = sigma_clipped_stats(jwst_data, sigma=3)
-                    daofind = DAOStarFinder(fwhm=2.5, threshold=20 * std)
-                    sources = daofind(jwst_data - median)
-                    sources.write(source_cat_name, overwrite=True)
-
-                else:
-
-                    sources = QTable.read(source_cat_name)
+                source_cat_name = jwst_file.replace('i2d.fits', 'cat.ecsv')
+                sources = Table.read(source_cat_name, format='ascii.ecsv')
 
                 # Convert sources into a reference catalogue
                 wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
+                wcs_jwst_corrector = FITSWCS(wcs_jwst)
 
                 jwst_tab = Table()
-                jwst_ra, jwst_dec = wcs_jwst.all_pix2world(sources['xcentroid'], sources['ycentroid'], 1)
-
-                jwst_tab['RA'] = jwst_ra
-                jwst_tab['DEC'] = jwst_dec
                 jwst_tab['x'] = sources['xcentroid']
                 jwst_tab['y'] = sources['ycentroid']
 
                 # And match!
-                match = TPMatch(searchrad=100,
-                                separation=0.1,
-                                tolerance=1,
-                                use2dhist=True,
-                                )
-                wcs_jwst_corrector = FITSWCS(wcs_jwst)
+                match = TPMatch(
+                    searchrad=100,
+                    separation=0.1,
+                    tolerance=1,
+                    use2dhist=True,
+                )
                 ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
 
                 # Finally, do the alignment
-                wcs_aligned = fit_wcs(ref_tab[ref_idx], jwst_tab[jwst_idx], wcs_jwst_corrector).wcs
+                wcs_aligned = fit_wcs(ref_tab[ref_idx],
+                                      jwst_tab[jwst_idx],
+                                      wcs_jwst_corrector,
+                                      fitgeom='rshift',
+                                      ).wcs
 
                 self.logger.info('Original WCS:')
                 self.logger.info(wcs_jwst)
@@ -1001,3 +996,6 @@ class NircamReprocess:
                                      reusename=True)
 
                 jwst_hdu.writeto(aligned_hdu_name, overwrite=True)
+
+                jwst_hdu.close()
+                ref_hdu.close()
