@@ -36,9 +36,25 @@ fov_arcsec = 20
 
 overwrite = False
 
-nircam_psfs = ['F200W', 'F300M', 'F335M', 'F360M']
-miri_psfs = ['F770W', 'F1000W', 'F1130W', 'F2100W']
-gauss_psfs = ['gauss0.73', 'gauss1.67']
+nircam_psfs = [
+    # 'F200W',
+    # 'F300M',
+    'F335M',
+    'F360M',
+]
+
+miri_psfs = [
+    # 'F770W',
+    # 'F1000W',
+    # 'F1130W',
+    # 'F2100W',
+]
+
+gauss_psfs = [
+    # 'gauss0.73',
+    # 'gauss1.66',
+    'gauss1.67',
+]
 all_psfs = nircam_psfs + miri_psfs + gauss_psfs
 
 nircam = webbpsf.NIRCam()

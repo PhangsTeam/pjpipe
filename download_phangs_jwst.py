@@ -34,8 +34,8 @@ else:
     api_key = None
 
 prop_ids = [
-    '2732',  # Stephan's Quintet ERO
-    # '2107',  # PHANGS-JWST
+    # '2732',  # Stephan's Quintet ERO
+    '2107',  # PHANGS-JWST
 ]
 
 for prop_id in prop_ids:
@@ -47,6 +47,7 @@ for prop_id in prop_ids:
         '2107': [
             'ic5332',
             'ngc0628',
+            'ngc1365',
             'ngc7496',
         ],
     }[prop_id]

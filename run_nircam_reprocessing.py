@@ -12,21 +12,31 @@ else:
     raw_dir = '/Users/williams/Documents/phangs/jwst_data'
     working_dir = '/Users/williams/Documents/phangs/jwst_working'
 
+# We may want to occasionally flush out the CRDS directory to avoid weirdness between mappings. Probably do this at
+# the start of another version cycle
+flush_crds = False
+
 reprocess_dir = os.path.join(working_dir, 'nircam_lev3_reprocessed')
 crds_dir = os.path.join(working_dir, 'crds')
 
-reprocess_dir_ext = 'v0p3'
+if flush_crds:
+    os.system('rm -rf %s' % crds_dir)
+    os.makedirs(crds_dir)
+
+reprocess_dir_ext = 'v0p3p1'
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
 galaxies = [
     'ngc0628',
+    'ngc1365',
     'ngc7320',
     'ngc7496',
 ]
 
 for galaxy in galaxies:
     alignment_fits = {'ngc0628': 'hlsp_phangs-hst_hst_acs-wfc_ngc628mosaic_f814w_v1_exp-drc-sci.fits',
+                      'ngc1365': 'hlsp_phangs-hst_hst_wfc3-uvis_ngc1365_f814w_v1_exp-drc-sci.fits',
                       'ngc7320': 'hlsp_sm4ero_hst_wfc3_11502-ngc7318_f814w_v1_sci_drz.fits',
                       'ngc7496': 'hlsp_phangs-hst_hst_wfc3-uvis_ngc7496_f814w_v1_exp-drc-sci.fits',
                       }[galaxy]
