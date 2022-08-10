@@ -116,7 +116,7 @@ class NircamReprocess:
                  overwrite_lv3=False,
                  overwrite_astrometric_alignment=False,
                  overwrite_astrometric_ref_cat=False,
-                 crds_url='https://jwst-crds-pub.stsci.edu',
+                 crds_url='https://jwst-crds.stsci.edu',
                  procs=None
                  ):
         """NIRCAM reprocessing routines.
@@ -144,7 +144,8 @@ class NircamReprocess:
             * overwrite_astrometric_alignment (bool): Whether to overwrite astrometric alignment. Defaults to False
             * overwrite_astrometric_ref_cat (bool): Whether to overwrite the generated reference catalogue for
                 astrometric alignment. Defaults to False
-            * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds-pub.stsci.edu'
+            * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds.stsci.edu', which will be the
+                latest versions of the files
             * procs (int): Number of parallel processes to run during destriping. Will default to half the number of
                 cores in the system
 
@@ -849,7 +850,7 @@ class NircamReprocess:
                 # Set separation relatively small, 0.7" is default
                 nircam_im3.tweakreg.separation = 10 * pixel_scale
 
-                # Set tolerance small, 1" is default
+                # Set tolerance small, 0.7" is default
                 nircam_im3.tweakreg.tolerance = 10 * pixel_scale
 
                 # nircam_im3.tweakreg.brightest = 200  # 200 is default
@@ -857,7 +858,7 @@ class NircamReprocess:
                 nircam_im3.tweakreg.minobj = 3  # 15 is default
                 nircam_im3.tweakreg.searchrad = 100 * pixel_scale  # 2.0 is default
                 nircam_im3.tweakreg.expand_refcat = True  # False is the default
-                # nircam_im3.tweakreg.fitgeometry = 'general'  # rshift is the default
+                # nircam_im3.tweakreg.fitgeometry = 'shift'  # rshift is the default
                 # nircam_im3.tweakreg.align_to_gaia = True  # False is the default
 
                 # Assume we're pretty well aligned already
