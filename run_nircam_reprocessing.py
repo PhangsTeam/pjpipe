@@ -35,20 +35,31 @@ galaxies = [
 ]
 
 for galaxy in galaxies:
-    alignment_fits = {'ngc0628': 'hlsp_phangs-hst_hst_acs-wfc_ngc628mosaic_f814w_v1_exp-drc-sci.fits',
-                      'ngc1365': 'hlsp_phangs-hst_hst_wfc3-uvis_ngc1365_f814w_v1_exp-drc-sci.fits',
-                      'ngc7320': 'hlsp_sm4ero_hst_wfc3_11502-ngc7318_f814w_v1_sci_drz.fits',
-                      'ngc7496': 'hlsp_phangs-hst_hst_wfc3-uvis_ngc7496_f814w_v1_exp-drc-sci.fits',
-                      }[galaxy]
-    alignment_image = os.path.join(working_dir,
+    # alignment_fits = {'ngc0628': 'hlsp_phangs-hst_hst_acs-wfc_ngc628mosaic_f814w_v1_exp-drc-sci.fits',
+    #                   'ngc1365': 'hlsp_phangs-hst_hst_wfc3-uvis_ngc1365_f814w_v1_exp-drc-sci.fits',
+    #                   'ngc7320': 'hlsp_sm4ero_hst_wfc3_11502-ngc7318_f814w_v1_sci_drz.fits',
+    #                   'ngc7496': 'hlsp_phangs-hst_hst_wfc3-uvis_ngc7496_f814w_v1_exp-drc-sci.fits',
+    #                   }[galaxy]
+    # alignment_image = os.path.join(working_dir,
+    #                                'alignment_images',
+    #                                alignment_fits)
+
+    alignment_table_name = {'ngc0628': 'Gaia_DR3_NGC0628.fits',
+                            'ngc1365': 'Gaia_DR3_NGC1365.fits',
+                            'ngc7320': 'Gaia_DR3_NGC7320.fits',
+                            'ngc7496': 'Gaia_DR3_NGC7496.fits',
+                            }[galaxy]
+    alignment_table = os.path.join(working_dir,
                                    'alignment_images',
-                                   alignment_fits)
+                                   alignment_table_name)
 
     nc_reproc = NircamReprocess(galaxy=galaxy,
                                 raw_dir=raw_dir,
                                 reprocess_dir=reprocess_dir,
                                 crds_dir=crds_dir,
-                                astrometric_alignment_image=alignment_image,
+                                astrometric_alignment_type='table',
+                                # astrometric_alignment_image=alignment_image,
+                                astrometric_alignment_table=alignment_table,
                                 )
     nc_reproc.run_all()
 
