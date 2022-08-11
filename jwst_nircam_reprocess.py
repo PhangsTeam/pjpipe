@@ -102,7 +102,9 @@ class NircamReprocess:
                  reprocess_dir,
                  crds_dir,
                  bands=None,
+                 astrometric_alignment_type='image',
                  astrometric_alignment_image=None,
+                 astrometric_alignment_table=None,
                  do_all=True,
                  do_lv1=False,
                  do_lv2=False,
@@ -200,8 +202,6 @@ class NircamReprocess:
 
         self.bands = bands
 
-        self.astrometric_alignment_image = astrometric_alignment_image
-
         self.raw_dir = raw_dir
         self.reprocess_dir = reprocess_dir
 
@@ -217,6 +217,10 @@ class NircamReprocess:
         self.do_destriping = do_destriping
         self.do_lv3 = do_lv3
         self.do_astrometric_alignment = do_astrometric_alignment
+
+        self.astrometric_alignment_type = astrometric_alignment_type
+        self.astrometric_alignment_image = astrometric_alignment_image
+        self.astrometric_alignment_table = astrometric_alignment_table
 
         if overwrite_all:
             overwrite_lv1 = True
@@ -522,7 +526,10 @@ class NircamReprocess:
                                          band,
                                          'lev3')
 
-                self.astrometric_align(input_dir=input_dir)
+                self.align_wcs(input_dir)
+
+                # self.generate_aligned_wcs(band)
+                # self.apply_aligned_wcs(input_dir, band)
 
     def run_destripe(self,
                      files,
@@ -901,55 +908,92 @@ class NircamReprocess:
 
         os.chdir(orig_dir)
 
-    def astrometric_align(self,
-                          input_dir,
-                          ):
-        """Align JWST image to external .fits image. Probably an HST one"""
+    def align_wcs(self,
+                  input_dir,
+                  ):
+        """Align JWST image to external .fits image. Probably an HST one
 
-        if not self.astrometric_alignment_image:
-            raise Warning('astrometric_alignment_image should be set!')
+        Args:
+            * input_dir (str): Directory to find files to align
+        """
 
         jwst_files = glob.glob(os.path.join(input_dir,
-                                            '*_i2d.fits'))
+                                            '*i2d.fits'))
+
         if len(jwst_files) == 0:
-            raise Warning('No JWST image found')
+            raise Warning('No files found to align!')
 
-        ref_hdu = fits.open(self.astrometric_alignment_image)
+        if self.astrometric_alignment_type == 'image':
+            if not self.astrometric_alignment_image:
+                raise Warning('astrometric_alignment_image should be set!')
 
-        ref_data = copy.deepcopy(ref_hdu[0].data)
-        ref_data[ref_data == 0] = np.nan
+            if not os.path.exists(self.astrometric_alignment_image):
+                raise Warning('Requested astrometric alignment image not found!')
 
-        # Find sources in the input image
+            ref_hdu = fits.open(self.astrometric_alignment_image)
 
-        source_cat_name = self.astrometric_alignment_image.replace('.fits', '_src_cat.fits')
+            ref_data = copy.deepcopy(ref_hdu[0].data)
+            ref_data[ref_data == 0] = np.nan
 
-        if not os.path.exists(source_cat_name) or self.overwrite_astrometric_ref_cat:
+            # Find sources in the input image
 
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
-                mean, median, std = sigma_clipped_stats(ref_data, sigma=3)
-            daofind = DAOStarFinder(fwhm=2.5, threshold=10 * std)
-            sources = daofind(ref_data - median)
-            sources.write(source_cat_name, overwrite=True)
+            source_cat_name = self.astrometric_alignment_image.replace('.fits', '_src_cat.fits')
+
+            if not os.path.exists(source_cat_name) or self.overwrite_astrometric_ref_cat:
+
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    mean, median, std = sigma_clipped_stats(ref_data, sigma=3)
+                daofind = DAOStarFinder(fwhm=2.5, threshold=10 * std)
+                sources = daofind(ref_data - median)
+                sources.write(source_cat_name, overwrite=True)
+
+            else:
+
+                sources = QTable.read(source_cat_name)
+
+            # Convert sources into a reference catalogue
+            wcs_ref = HSTWCS(ref_hdu, 0)
+
+            ref_tab = Table()
+            ref_ra, ref_dec = wcs_ref.all_pix2world(sources['xcentroid'], sources['ycentroid'], 0)
+
+            ref_tab['RA'] = ref_ra
+            ref_tab['DEC'] = ref_dec
+
+            ref_hdu.close()
+
+        elif self.astrometric_alignment_type == 'table':
+
+            if not self.astrometric_alignment_table:
+                raise Warning('astrometric_alignment_table should be set!')
+
+            if not os.path.exists(self.astrometric_alignment_table):
+                raise Warning('Requested astrometric alignment table not found!')
+
+            astro_table = QTable.read(self.astrometric_alignment_table, format='fits')
+            # if 'parallax_over_error' in astro_table.colnames:
+            #     # This should be a GAIA query, so cut down based on quality
+            #     # idx = np.where(astro_table['parallax_over_error'] > 1)
+            #     astro_table = astro_table[idx]
+
+            ref_ra = astro_table['ra']
+            ref_dec = astro_table['dec']
+
+            ref_tab = Table()
+
+            ref_tab['RA'] = ref_ra
+            ref_tab['DEC'] = ref_dec
 
         else:
 
-            sources = QTable.read(source_cat_name)
-
-        # Convert sources into a reference catalogue
-        wcs_ref = HSTWCS(ref_hdu, 0)
-
-        ref_tab = Table()
-        ref_ra, ref_dec = wcs_ref.all_pix2world(sources['xcentroid'], sources['ycentroid'], 0)
-
-        ref_tab['RA'] = ref_ra
-        ref_tab['DEC'] = ref_dec
+            raise Warning('astrometric_alignment_type should be one of image, table!')
 
         for jwst_file in jwst_files:
 
-            aligned_hdu_name = jwst_file.replace('.fits', '_align.fits')
+            aligned_file = jwst_file.replace('.fits', '_align.fits')
 
-            if not os.path.exists(aligned_hdu_name) or self.overwrite_astrometric_alignment:
+            if not os.path.exists(aligned_file) or self.overwrite_astrometric_alignment:
 
                 jwst_hdu = fits.open(jwst_file)
 
@@ -982,7 +1026,7 @@ class NircamReprocess:
                 wcs_aligned = fit_wcs(ref_tab[ref_idx],
                                       jwst_tab[jwst_idx],
                                       wcs_jwst_corrector,
-                                      fitgeom='rshift',
+                                      fitgeom='shift',
                                       ).wcs
 
                 self.logger.info('Original WCS:')
@@ -996,7 +1040,6 @@ class NircamReprocess:
                                      wcsname='TWEAK',
                                      reusename=True)
 
-                jwst_hdu.writeto(aligned_hdu_name, overwrite=True)
+                jwst_hdu.writeto(aligned_file, overwrite=True)
 
                 jwst_hdu.close()
-                ref_hdu.close()
