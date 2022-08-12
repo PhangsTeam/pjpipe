@@ -14,6 +14,7 @@ from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from astropy.table import Table, QTable
 from drizzlepac import updatehdr
+from image_registration import cross_correlation_shifts
 from jwst import datamodels
 from photutils.detection import DAOStarFinder
 from stwcs.wcsutil import HSTWCS
@@ -105,6 +106,7 @@ class NircamReprocess:
                  astrometric_alignment_type='image',
                  astrometric_alignment_image=None,
                  astrometric_alignment_table=None,
+                 alignment_mapping=None,
                  do_all=True,
                  do_lv1=False,
                  do_lv2=False,
@@ -132,6 +134,9 @@ class NircamReprocess:
             * crds_dir (str): Path to CRDS data
             * bands (list): JWST filters to loop over
             * astrometric_alignment_image (str): Path to image to align astrometry to
+            * astrometric_alignment_table (str): Path to table to align astrometry to
+            * alignment_mapping (dict): Dictionary to map basing alignments off cross-correlation with other aligned
+                band. Should be of the form {'band': 'reference_band'}
             * do_all (bool): Do all processing steps. Defaults to True
             * do_lv1 (bool): Run lv1 pipeline. Defaults to False
             * do_lv2 (bool): Run lv2 pipeline. Defaults to False
@@ -212,11 +217,15 @@ class NircamReprocess:
             do_lv3 = True
             do_astrometric_alignment = True
 
+        if alignment_mapping is None:
+            alignment_mapping = {}
+
         self.do_lv1 = do_lv1
         self.do_lv2 = do_lv2
         self.do_destriping = do_destriping
         self.do_lv3 = do_lv3
         self.do_astrometric_alignment = do_astrometric_alignment
+        self.alignment_mapping = alignment_mapping
 
         self.astrometric_alignment_type = astrometric_alignment_type
         self.astrometric_alignment_image = astrometric_alignment_image
@@ -526,7 +535,11 @@ class NircamReprocess:
                                          band,
                                          'lev3')
 
-                self.align_wcs(input_dir)
+                if band in self.alignment_mapping.keys():
+                    self.align_wcs_to_jwst(input_dir,
+                                           band)
+                else:
+                    self.align_wcs_to_ref(input_dir)
 
                 # self.generate_aligned_wcs(band)
                 # self.apply_aligned_wcs(input_dir, band)
@@ -887,6 +900,10 @@ class NircamReprocess:
                 nircam_im3.source_catalog.kernel_fwhm = 2.5  # pixels
                 nircam_im3.source_catalog.snr_threshold = 10.
 
+                # Keep things in memory for speed
+                nircam_im3.outlier_detection.in_memory = True
+                nircam_im3.resample.in_memory = True
+
                 # Degroup the short NIRCAM observations, to avoid background issues
                 if int(band[1:4]) <= 212:
                     degroup = True
@@ -908,10 +925,10 @@ class NircamReprocess:
 
         os.chdir(orig_dir)
 
-    def align_wcs(self,
-                  input_dir,
-                  ):
-        """Align JWST image to external .fits image. Probably an HST one
+    def align_wcs_to_ref(self,
+                         input_dir,
+                         ):
+        """Align JWST image to external references. Either a table or an image
 
         Args:
             * input_dir (str): Directory to find files to align
@@ -972,9 +989,12 @@ class NircamReprocess:
                 raise Warning('Requested astrometric alignment table not found!')
 
             astro_table = QTable.read(self.astrometric_alignment_table, format='fits')
-            # if 'parallax_over_error' in astro_table.colnames:
-            #     # This should be a GAIA query, so cut down based on quality
-            #     # idx = np.where(astro_table['parallax_over_error'] > 1)
+
+            # if 'parallax' in astro_table.colnames:
+            #     # This should be a GAIA query, so cut down based on whether there is a parallax measurement
+            #     idx = np.where(~np.isnan(astro_table['parallax']))
+            #     # idx = np.where(np.logical_and(astro_table['ra_error'].value < 1,
+            #     #                               astro_table['dec_error'].value < 1))
             #     astro_table = astro_table[idx]
 
             ref_ra = astro_table['ra']
@@ -994,7 +1014,6 @@ class NircamReprocess:
             aligned_file = jwst_file.replace('.fits', '_align.fits')
 
             if not os.path.exists(aligned_file) or self.overwrite_astrometric_alignment:
-
                 jwst_hdu = fits.open(jwst_file)
 
                 jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
@@ -1004,6 +1023,9 @@ class NircamReprocess:
 
                 source_cat_name = jwst_file.replace('i2d.fits', 'cat.ecsv')
                 sources = Table.read(source_cat_name, format='ascii.ecsv')
+
+                # Filter the table down by only not extended sources
+                # sources = sources[~sources['is_extended']]
 
                 # Convert sources into a reference catalogue
                 wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
@@ -1016,8 +1038,8 @@ class NircamReprocess:
                 # And match!
                 match = TPMatch(
                     searchrad=100,
-                    separation=0.1,
-                    tolerance=1,
+                    separation=0.01,
+                    tolerance=2,
                     use2dhist=True,
                 )
                 ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
@@ -1043,3 +1065,92 @@ class NircamReprocess:
                 jwst_hdu.writeto(aligned_file, overwrite=True)
 
                 jwst_hdu.close()
+
+    def align_wcs_to_jwst(self,
+                          input_dir,
+                          band):
+        """Internally align image to already aligned JWST one
+
+        Args:
+            * input_dir (str): Directory to find files to align
+            * band (str): JWST band to align
+        """
+
+        jwst_files = glob.glob(os.path.join(input_dir,
+                                            '*i2d.fits'))
+
+        if len(jwst_files) == 0:
+            raise Warning('No files found to align!')
+
+        ref_band = self.alignment_mapping[band]
+        ref_hdu_name = os.path.join(self.reprocess_dir,
+                                    self.galaxy,
+                                    ref_band,
+                                    'lev3',
+                                    '%s_nircam_lvl3_%s_i2d_align.fits' % (self.galaxy, ref_band.lower()))
+
+        if not os.path.exists(ref_hdu_name):
+            raise Warning('reference HDU to align not found!')
+
+        ref_hdu = fits.open(ref_hdu_name)
+
+        for jwst_file in jwst_files:
+
+            aligned_file = jwst_file.replace('.fits', '_align.fits')
+
+            if not os.path.exists(aligned_file) or self.overwrite_astrometric_alignment:
+
+                wcs_ref = HSTWCS(ref_hdu, 'SCI')
+                wcs_ref_corrector = FITSWCS(wcs_ref)
+
+                jwst_hdu = fits.open(jwst_file)
+
+                ref_data = copy.deepcopy(ref_hdu['SCI'].data)
+                jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
+
+                ref_err = copy.deepcopy(ref_hdu['ERR'].data)
+                jwst_err = copy.deepcopy(jwst_hdu['ERR'].data)
+
+                ref_data[ref_data == 0] = np.nan
+                jwst_data[jwst_data == 0] = np.nan
+
+                nan_idx = np.logical_or(np.isnan(ref_data),
+                                        np.isnan(jwst_data))
+
+                ref_data[nan_idx] = np.nan
+                jwst_data[nan_idx] = np.nan
+
+                ref_err[nan_idx] = np.nan
+                jwst_err[nan_idx] = np.nan
+
+                # Make sure we're square, since apparently this causes weirdness
+                data_size_min = min(ref_data.shape)
+                data_slice_i = slice(ref_data.shape[0] // 2 - data_size_min // 2,
+                                     ref_data.shape[0] // 2 + data_size_min // 2)
+                data_slice_j = slice(ref_data.shape[1] // 2 - data_size_min // 2,
+                                     ref_data.shape[1] // 2 + data_size_min // 2)
+
+                x_off, y_off = cross_correlation_shifts(ref_data[data_slice_i, data_slice_j],
+                                                        jwst_data[data_slice_i, data_slice_j],
+                                                        errim1=ref_err[data_slice_i, data_slice_j],
+                                                        errim2=jwst_err[data_slice_i, data_slice_j],
+                                                        )
+
+                self.logger.info('Found offset of [%.2f, %.2f]' % (x_off, y_off))
+
+                # Apply correction directly to CRPIX
+                wcs_ref_corrector.wcs.wcs.crpix += [x_off, y_off]
+
+                wcs_aligned = wcs_ref_corrector.wcs
+
+                updatehdr.update_wcs(jwst_hdu,
+                                     'SCI',
+                                     wcs_aligned,
+                                     wcsname='TWEAK',
+                                     reusename=True)
+
+                jwst_hdu.writeto(aligned_file, overwrite=True)
+
+                jwst_hdu.close()
+
+        ref_hdu.close()

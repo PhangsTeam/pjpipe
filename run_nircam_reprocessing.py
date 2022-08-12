@@ -23,7 +23,7 @@ if flush_crds:
     os.system('rm -rf %s' % crds_dir)
     os.makedirs(crds_dir)
 
-reprocess_dir_ext = 'v0p3p1'
+reprocess_dir_ext = 'v0p4'
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
@@ -49,17 +49,30 @@ for galaxy in galaxies:
                             'ngc7320': 'Gaia_DR3_NGC7320.fits',
                             'ngc7496': 'Gaia_DR3_NGC7496.fits',
                             }[galaxy]
+    # alignment_table_name = '%s_agb_cat.fits' % galaxy
     alignment_table = os.path.join(working_dir,
                                    'alignment_images',
                                    alignment_table_name)
+
+    if galaxy == 'ngc7320':
+        alignment_mapping = {'F150W': 'F090W',
+                             'F200W': 'F090W',
+                             'F356W': 'F277W',
+                             'F444W': 'F277W'}
+        bands = ['F090W', 'F150W', 'F200W', 'F277W', 'F356W', 'F444W']
+    else:
+        alignment_mapping = {'F335M': 'F300M',
+                             'F360M': 'F300M'}
+        bands = ['F200W', 'F300M', 'F335M', 'F360M']
 
     nc_reproc = NircamReprocess(galaxy=galaxy,
                                 raw_dir=raw_dir,
                                 reprocess_dir=reprocess_dir,
                                 crds_dir=crds_dir,
                                 astrometric_alignment_type='table',
-                                # astrometric_alignment_image=alignment_image,
                                 astrometric_alignment_table=alignment_table,
+                                alignment_mapping=alignment_mapping,
+                                bands=bands,
                                 )
     nc_reproc.run_all()
 
