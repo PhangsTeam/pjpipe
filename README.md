@@ -6,18 +6,20 @@ PHANGS-JWST processing scripts
 * `archive_download` is a generic wrapper around Astroquery MAST query/download
 * `download_phangs_jwst` can be used to download the PHANGS-JWST data into a reasonable directory structure
 
+## Reduction tools
+
+* `jwst_reprocess` is used to reprocess both NIRCAM and MIRI data
+* `run_jwst_reprocessing` wraps around `jwst_reprocess`
+* `log_jwst_reprocessing` logs `run_jwst_reprocessing` to a file
+* `prepare_release` flattens the file structure into something more manageable
+
 ## NIRCAM tools
 
 * `nircam_destriping` contains various routines for destriping NIRCAM data
 * `run_nircam_destriping` is a wrapper to run the destriping for select NIRCAM frames
-* `jwst_nircam_reprocess` used to destripe and reprocess level3 NIRCAM data
-* `run_nircam_reprocessing` wraps around `jwst_nircam_reprocess`
-* `log_jwst_nircam_reprocessing` logs `run_nircam_reprocessing` to a file
 
 ## MIRI tools
 
-* `jwst_miri_reprocess` is used to associate OFF and science MIRI exposures and 
-to reprocess the level1 (if necessary), level2 and level3 MIRI data reduction 
 * `miri_destriping` contains routines for destriping MIRI data
 * `run_miri_destriping` wraps around `miri_destriping`
 

@@ -2,7 +2,8 @@ import os
 import socket
 from datetime import datetime
 
-from jwst_nircam_reprocess import NircamReprocess
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
 
 host = socket.gethostname()
 
@@ -16,9 +17,9 @@ else:
 date_str = datetime.today().strftime('%Y%m%d_%H:%M:%S')
 
 log_file = os.path.join(working_dir,
-                        'nircam_reprocess_log_%s.log' % date_str)
+                        'jwst_reprocess_log_%s.log' % date_str)
 
-script_name = 'run_nircam_reprocessing.py'
+script_name = 'run_jwst_reprocessing.py'
 
 os.system('python3 %s |& tee %s' % (script_name, log_file))
 
