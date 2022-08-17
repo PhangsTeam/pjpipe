@@ -26,7 +26,7 @@ if flush_crds:
     os.system('rm -rf %s' % crds_dir)
     os.makedirs(crds_dir)
 
-reprocess_dir_ext = 'v0p4'
+reprocess_dir_ext = 'v0p4p1'
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
@@ -44,7 +44,8 @@ for galaxy in galaxies:
         'ngc0628': 'ngc0628_agb_cat.fits',
         'ngc1365': 'ngc1365_agb_cat.fits',
         'ngc7320': 'Gaia_DR3_NGC7320.fits',
-        'ngc7496': 'ngc7496_agb_cat.fits'
+        'ngc7496': 'ngc7496_agb_cat.fits',
+        'ic5332': 'Gaia_DR3_IC5332.fits',
     }[galaxy]
     alignment_table = os.path.join(working_dir,
                                    'alignment_images',
@@ -73,7 +74,7 @@ for galaxy in galaxies:
     else:
 
         # We can't use NIRCAM bands for IC5332
-        if galaxy in ['ic5532']:
+        if galaxy in ['ic5332']:
             alignment_mapping = {
                 'F1000W': 'F770W',  # Step up MIRI wavelengths
                 'F1130W': 'F1000W',

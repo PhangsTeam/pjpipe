@@ -14,7 +14,7 @@ else:
 reprocess_dir = os.path.join(working_dir, 'jwst_lv3_reprocessed')
 release_dir = os.path.join(working_dir, 'jwst_release')
 
-version = 'v0p4'
+version = 'v0p4p1'
 
 reprocess_dir += '_%s' % version
 release_dir = os.path.join(release_dir, version)

@@ -290,7 +290,7 @@ class JWSTReprocess:
 
         TODO:
             * Update destriping algorithm as we improve it
-            * Merge in the MIRI stuff for a general pipeline.
+            * Record alignment parameters into the fits header
 
         """
 
@@ -582,7 +582,7 @@ class JWSTReprocess:
             # The Lyot coronagraph is only in the MIRI bands
             if do_lyot_adjust is not None:
 
-                self.logger.info('Adjusting lyot with method %s' % do_lyot_adjust)
+                self.logger.info('-> Adjusting lyot with method %s' % do_lyot_adjust)
 
                 lyot_adjust_dir = os.path.join(self.reprocess_dir,
                                                self.galaxy,
@@ -733,9 +733,6 @@ class JWSTReprocess:
                 else:
                     self.align_wcs_to_ref(input_dir,
                                           band)
-
-                # self.generate_aligned_wcs(band)
-                # self.apply_aligned_wcs(input_dir, band)
 
     def run_destripe(self,
                      files,
@@ -943,16 +940,6 @@ class JWSTReprocess:
 
             # Associate background files
             for product in json_content['products']:
-
-                # exp_num = product['name'].split('_')[2]
-                #
-                # for row in bgr_tab:
-                #     if row['File'].split('_')[2] == exp_num:
-                #         product['members'].append({
-                #             'expname': row['File'],
-                #             'exptype': 'background',
-                #             'exposerr': 'null'
-                #         })
                 for row in bgr_tab:
                     product['members'].append({
                         'expname': row['File'],
@@ -1116,15 +1103,6 @@ class JWSTReprocess:
                             persist_file = persist_file.replace('_uncal.fits', '_trapsfilled.fits')
                             persist_file = os.path.join(output_dir, persist_file)
 
-                            # persist_file = glob.glob(os.path.join(self.raw_dir,
-                            #                                       self.galaxy,
-                            #                                       'mastDownload',
-                            #                                       'JWST',
-                            #                                       '*%s' % band_ext,
-                            #                                       persist_fits_file,
-                            #                                       )
-                            #                          )[0]
-
                     # Specify the name of the trapsfilled file
                     detector1.persistence.input_trapsfilled = persist_file
 
@@ -1172,12 +1150,6 @@ class JWSTReprocess:
                 im3.save_results = True
 
                 # Alignment settings edited to roughly match the HST setup
-                im3.tweakreg.snr_threshold = 10.0  # 5.0 the default
-
-                fwhm_pix = FWHM_PIX[band]
-
-                # FWHM should be set per-band
-                im3.tweakreg.kernel_fwhm = fwhm_pix
 
                 # Pixel scale based on wavelength
                 if band_type == 'nircam':
@@ -1190,15 +1162,21 @@ class JWSTReprocess:
                 else:
                     raise Warning('Pixel scale not know for band type %s!' % band_type)
 
+                fwhm_pix = FWHM_PIX[band]
+
+                # FWHM should be set per-band
+                im3.tweakreg.kernel_fwhm = fwhm_pix
+
                 # Set separation relatively small, 0.7" is default
                 im3.tweakreg.separation = 10 * pixel_scale
 
                 # Set tolerance small, 0.7" is default
                 im3.tweakreg.tolerance = 10 * pixel_scale
 
-                # im3.tweakreg.brightest = 200  # 200 is default
-                # im3.tweakreg.minobj = 10  # 15 is default
-                im3.tweakreg.minobj = 3  # 15 is default
+                im3.tweakreg.brightest = 500  # 200 is default
+                im3.tweakreg.snr_threshold = 5  # 10 is default
+                im3.tweakreg.minobj = 15  # 15 is default
+                im3.tweakreg.peakmax = 10  # None is default, filter out very bright sources
                 im3.tweakreg.searchrad = 100 * pixel_scale  # 2.0 is default
                 im3.tweakreg.expand_refcat = True  # False is the default
                 im3.tweakreg.fitgeometry = 'shift'  # rshift is the default
@@ -1353,7 +1331,7 @@ class JWSTReprocess:
                 sources = Table.read(source_cat_name, format='ascii.ecsv')
 
                 # Filter out extended
-                # sources = sources[~sources['is_extended']]
+                sources = sources[~sources['is_extended']]
 
                 # Convert sources into a reference catalogue
                 wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
@@ -1363,27 +1341,16 @@ class JWSTReprocess:
                 jwst_tab['x'] = sources['xcentroid']
                 jwst_tab['y'] = sources['ycentroid']
 
-                # Pixel scale based on wavelength
-                if band in NIRCAM_BANDS:
-                    if int(band[1:4]) <= 212:
-                        pixel_scale = 0.031
-                    else:
-                        pixel_scale = 0.063
-                elif band in MIRI_BANDS:
-                    pixel_scale = 0.11
-                else:
-                    raise Warning('Pixel scale not know for band %s!' % band)
-
                 # Run a match with fairly strict tolerance
                 match = TPMatch(
                     searchrad=10,
-                    separation=0.0001,
-                    tolerance=10 * pixel_scale,
+                    separation=0.000001,
+                    tolerance=0.7,
                     use2dhist=True,
                 )
                 ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
 
-                # Do the alignment
+                # Do alignment
                 wcs_aligned = fit_wcs(ref_tab[ref_idx],
                                       jwst_tab[jwst_idx],
                                       wcs_jwst_corrector,
