@@ -219,6 +219,48 @@ def parse_fits_to_table(file,
                hdu[0].header['OBSLABEL'].lower().strip(), hdu[0].header['PROGRAM']
 
 
+def parse_parameter_dict(parameter_dict,
+                         key,
+                         band):
+    """Pull values out of a parameter dictionary"""
+
+    value = parameter_dict[key]
+
+    if band in MIRI_BANDS:
+        band_type = 'miri'
+        short_long = 'miri'
+        pixel_scale = 0.11
+    elif band in NIRCAM_BANDS:
+        band_type = 'nircam'
+
+        # Also pull out the distinction between short and long NIRCAM
+        if int(band[1:4]) <= 212:
+            short_long = 'nircam_short'
+            pixel_scale = 0.031
+        else:
+            short_long = 'nircam_long'
+            pixel_scale = 0.063
+    else:
+        raise Warning('Band type %s not known!')
+
+    if isinstance(value, dict):
+
+        if band_type in value.keys():
+            value = value[band_type]
+
+        elif band_type == 'nircam' and short_long in value.keys():
+            value = value[short_long]
+
+        else:
+            value = 'VAL_NOT_FOUND'
+
+    # Finally, if we have a 'pix' in there, we need to convert to arcsec
+    if 'pix' in value:
+        value = float(value.strip('pix')) * pixel_scale
+
+    return value
+
+
 class JWSTReprocess:
 
     def __init__(self,
@@ -227,6 +269,9 @@ class JWSTReprocess:
                  reprocess_dir,
                  crds_dir,
                  bands=None,
+                 lv1_parameter_dict=None,
+                 lv2_parameter_dict=None,
+                 lv3_parameter_dict=None,
                  bgr_check_type='parallel_off',
                  astrometric_alignment_type='image',
                  astrometric_alignment_image=None,
@@ -252,7 +297,16 @@ class JWSTReprocess:
                  ):
         """JWST reprocessing routines.
 
-        Will run through whole JWST pipeline, allowing for fine-tuning along the way
+        Will run through whole JWST pipeline, allowing for fine-tuning along the way.
+
+        It's worth talking a little about how parameter dictionaries are passed. They should be of the form
+            {'parameter': value}
+        where parameter is how the pipeline names it, e.g. 'save_results', 'tweakreg.fitgeometry'. Because you might
+        want to break these out per observing mode, you can also pass a dict, like
+            {'parameter': {'miri': miri_val, 'nircam': nircam_val}}
+        where the acceptable variants are 'miri', 'nircam', 'nircam_long', and 'nircam_short'. As many bits of the
+        pipeline require a number in arcsec rather than pixels, you can pass a value as 'Xpix', and it will parse
+        according to the band you're processing.
 
         Args:
             * galaxy (str): Galaxy to run reprocessing for
@@ -291,6 +345,8 @@ class JWSTReprocess:
         TODO:
             * Update destriping algorithm as we improve it
             * Record alignment parameters into the fits header
+            * Skip skymatch for MIRI (according to Karl Gordon)
+            * Pass pipeline config through dictionaries. The machinery has been built but needs to be tested
 
         """
 
@@ -312,6 +368,71 @@ class JWSTReprocess:
         self.raw_dir = raw_dir
         self.reprocess_dir = reprocess_dir
 
+        if alignment_mapping is None:
+            alignment_mapping = {}
+
+        if lv1_parameter_dict is None:
+            lv1_parameter_dict = {}
+        elif lv1_parameter_dict == 'phangs':
+            lv1_parameter_dict = {
+                'save_results': True,
+
+                'ramp_fit.suppress_one_group': False,
+
+                'refpix.use_side_ref_pixels': True,
+            }
+
+        self.lv1_parameter_dict = lv1_parameter_dict
+
+        if lv2_parameter_dict is None:
+            lv2_parameter_dict = {}
+        elif lv2_parameter_dict == 'phangs':
+            lv2_parameter_dict = {
+                'save_results': True,
+
+                'bkg_subtract.save_combined_background': True,
+                'bkg_subtract.sigma': 1.5,
+            }
+
+        self.lv2_parameter_dict = lv2_parameter_dict
+
+        if lv3_parameter_dict is None:
+            lv3_parameter_dict = {}
+        elif lv3_parameter_dict == 'phangs':
+            lv3_parameter_dict = {
+                'save_results': True,
+
+                'tweakreg.align_to_gaia': False,
+                'tweakreg.brightest': 500,
+                'tweakreg.expand_refcat': True,
+                'tweakreg.fitgeometry': 'shift',
+                'tweakreg.minobj': 3,
+                'tweakreg.peakmax': {'nircam': 20, 'miri': None},
+                'tweakreg.searchrad': '10pix',
+                'tweakreg.separation': '10pix',
+                'tweakreg.tolerance': {'nircam_short': '5pix', 'nircam_long': '10pix', 'miri': '10pix'},
+                'tweakreg.use2dhist': False,
+
+                'skymatch.skymethod': 'global+match',
+                'skymatch.subtract': True,
+                'skymatch.skystat': 'median',
+                'skymatch.nclip': 20,
+                'skymatch.lsigma': 3,
+                'skymatch.usigma': 3,
+
+                'outlier_detection.in_memory': True,
+
+                'resample.rotation': 0.0,
+                'resample.in_memory': True,
+
+                'source_catalog.snr_threshold': 3,
+                'source_catalog.npixels': 5,
+                'source_catalog.bkg_boxsize': 100,
+                'source_catalog.deblend': True
+            }
+
+        self.lv3_parameter_dict = lv3_parameter_dict
+
         if do_all:
             do_lv1 = True
             do_lv2 = True
@@ -319,9 +440,6 @@ class JWSTReprocess:
             do_lyot_adjust = 'adjust'
             do_lv3 = True
             do_astrometric_alignment = True
-
-        if alignment_mapping is None:
-            alignment_mapping = {}
 
         self.do_lv1 = do_lv1
         self.do_lv2 = do_lv2
@@ -732,7 +850,7 @@ class JWSTReprocess:
                                            band)
                 else:
                     self.align_wcs_to_ref(input_dir,
-                                          band)
+                                          )
 
     def run_destripe(self,
                      files,
@@ -1050,8 +1168,6 @@ class JWSTReprocess:
         else:
             raise Warning('Band %s not recognised!' % band)
 
-        # band_ext = BAND_EXTS[band_type]
-
         orig_dir = os.getcwd()
 
         os.chdir(input_dir)
@@ -1077,16 +1193,24 @@ class JWSTReprocess:
                     detector1.output_dir = output_dir
                     if not os.path.isdir(detector1.output_dir):
                         os.makedirs(detector1.output_dir)
+
+                    # for key in self.lv1_parameter_dict.keys():
+                    #
+                    #     value = parse_parameter_dict(self.lv1_parameter_dict,
+                    #                                  key,
+                    #                                  band)
+                    #     if value == 'VAL_NOT_FOUND':
+                    #         continue
+                    #
+                    #     setattr(detector1, key, value)
+
                     detector1.save_results = True
 
                     # Don't flag everything if only the first sample is saturated
-                    detector1.jump.suppress_one_group = False
                     detector1.ramp_fit.suppress_one_group = False
 
                     # Tweak settings
                     detector1.refpix.use_side_ref_pixels = True
-                    # detector1.ramp_fit.save_results = True
-                    # detector1.linearity.save_results = True
 
                     # Pull out the trapsfilled file from preceding exposure if needed. Only for NIRCAM
 
@@ -1122,6 +1246,17 @@ class JWSTReprocess:
                 im2.output_dir = output_dir
                 if not os.path.isdir(im2.output_dir):
                     os.makedirs(im2.output_dir)
+
+                # for key in self.lv2_parameter_dict.keys():
+                #
+                #     value = parse_parameter_dict(self.lv2_parameter_dict,
+                #                                  key,
+                #                                  band)
+                #     if value == 'VAL_NOT_FOUND':
+                #         continue
+                #
+                #     setattr(im2, key, value)
+
                 im2.save_results = True
 
                 # Any settings to tweak go here
@@ -1147,6 +1282,22 @@ class JWSTReprocess:
                 im3.output_dir = output_dir
                 if not os.path.isdir(im3.output_dir):
                     os.makedirs(im3.output_dir)
+
+                # FWHM should be set per-band for both tweakreg and source catalogue
+                fwhm_pix = FWHM_PIX[band]
+                im3.tweakreg.kernel_fwhm = fwhm_pix
+                im3.source_catalog.kernel_fwhm = fwhm_pix
+
+                # for key in self.lv3_parameter_dict.keys():
+                #
+                #     value = parse_parameter_dict(self.lv3_parameter_dict,
+                #                                  key,
+                #                                  band)
+                #     if value == 'VAL_NOT_FOUND':
+                #         continue
+                #
+                #     setattr(im3, key, value)
+
                 im3.save_results = True
 
                 # Alignment settings edited to roughly match the HST setup
@@ -1162,22 +1313,30 @@ class JWSTReprocess:
                 else:
                     raise Warning('Pixel scale not know for band type %s!' % band_type)
 
-                fwhm_pix = FWHM_PIX[band]
-
-                # FWHM should be set per-band
-                im3.tweakreg.kernel_fwhm = fwhm_pix
-
                 # Set separation relatively small, 0.7" is default
                 im3.tweakreg.separation = 10 * pixel_scale
 
-                # Set tolerance small, 0.7" is default
-                im3.tweakreg.tolerance = 10 * pixel_scale
+                # Set tolerance small, 0.7" is default. Smaller for shorter NIRCAM wavelengths to avoid multiple matches
+                tolerance = 10 * pixel_scale
+                if band_type == 'nircam' and int(band[1:4]) <= 212:
+                    tolerance = 5 * pixel_scale
+
+                im3.tweakreg.tolerance = tolerance
 
                 im3.tweakreg.brightest = 500  # 200 is default
+
                 im3.tweakreg.snr_threshold = 5  # 10 is default
-                im3.tweakreg.minobj = 15  # 15 is default
-                im3.tweakreg.peakmax = 10  # None is default, filter out very bright sources
-                im3.tweakreg.searchrad = 100 * pixel_scale  # 2.0 is default
+                im3.tweakreg.minobj = 3  # 15 is default
+
+                # Filter out bright sources in the NIRCAM
+                if band_type == 'nircam':
+                    peakmax = 20
+                else:
+                    peakmax = None
+
+                im3.tweakreg.peakmax = peakmax
+
+                im3.tweakreg.searchrad = 10 * pixel_scale  # 2.0 is default
                 im3.tweakreg.expand_refcat = True  # False is the default
                 im3.tweakreg.fitgeometry = 'shift'  # rshift is the default
                 # im3.tweakreg.align_to_gaia = True  # False is the default
@@ -1198,7 +1357,6 @@ class JWSTReprocess:
                 im3.resample.rotation = 0.0  # Ensure north up
 
                 # Source catalogue settings
-                im3.source_catalog.kernel_fwhm = fwhm_pix
                 im3.source_catalog.snr_threshold = 3.
                 im3.source_catalog.npixels = 5
                 im3.source_catalog.bkg_boxsize = 100
@@ -1231,13 +1389,11 @@ class JWSTReprocess:
 
     def align_wcs_to_ref(self,
                          input_dir,
-                         band,
                          ):
         """Align JWST image to external references. Either a table or an image
 
         Args:
             * input_dir (str): Directory to find files to align
-            * band (str): Band we're aligning
         """
 
         jwst_files = glob.glob(os.path.join(input_dir,
@@ -1303,13 +1459,14 @@ class JWSTReprocess:
             #     #                               astro_table['dec_error'].value < 1))
             #     astro_table = astro_table[idx]
 
-            ref_ra = astro_table['ra']
-            ref_dec = astro_table['dec']
-
             ref_tab = Table()
 
-            ref_tab['RA'] = ref_ra
-            ref_tab['DEC'] = ref_dec
+            ref_tab['RA'] = astro_table['ra']
+            ref_tab['DEC'] = astro_table['dec']
+
+            if 'xcentroid' in astro_table.colnames:
+                ref_tab['xcentroid'] = astro_table['xcentroid']
+                ref_tab['ycentroid'] = astro_table['ycentroid']
 
         else:
 
@@ -1318,6 +1475,7 @@ class JWSTReprocess:
         for jwst_file in jwst_files:
 
             aligned_file = jwst_file.replace('.fits', '_align.fits')
+            aligned_table = aligned_file.replace('.fits', '_table.fits')
 
             if not os.path.exists(aligned_file) or self.overwrite_astrometric_alignment:
                 jwst_hdu = fits.open(jwst_file)
@@ -1340,6 +1498,8 @@ class JWSTReprocess:
                 jwst_tab = Table()
                 jwst_tab['x'] = sources['xcentroid']
                 jwst_tab['y'] = sources['ycentroid']
+                jwst_tab['ra'] = sources['sky_centroid'].ra.value
+                jwst_tab['dec'] = sources['sky_centroid'].dec.value
 
                 # Run a match with fairly strict tolerance
                 match = TPMatch(
@@ -1351,11 +1511,14 @@ class JWSTReprocess:
                 ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
 
                 # Do alignment
-                wcs_aligned = fit_wcs(ref_tab[ref_idx],
-                                      jwst_tab[jwst_idx],
-                                      wcs_jwst_corrector,
-                                      fitgeom='shift',
-                                      ).wcs
+
+                wcs_aligned_fit = fit_wcs(ref_tab[ref_idx],
+                                          jwst_tab[jwst_idx],
+                                          wcs_jwst_corrector,
+                                          fitgeom='shift',
+                                          )
+
+                wcs_aligned = wcs_aligned_fit.wcs
 
                 self.logger.info('Original WCS:')
                 self.logger.info(wcs_jwst)
@@ -1367,6 +1530,30 @@ class JWSTReprocess:
                                      wcs_aligned,
                                      wcsname='TWEAK',
                                      reusename=True)
+
+                fit_info = wcs_aligned_fit.meta['fit_info']
+
+                # Pull out useful alignment info to the table -- HST x/y/RA/Dec, JWST x/y/RA/Dec (corrected and
+                # uncorrected)
+                aligned_tab = Table()
+
+                # Catch if there's only RA/Dec in the reference table
+                if 'xcentroid' in ref_tab.colnames:
+                    aligned_tab['xcentroid_ref'] = ref_tab[ref_idx]['xcentroid']
+                    aligned_tab['ycentroid_ref'] = ref_tab[ref_idx]['ycentroid']
+                aligned_tab['ra_ref'] = ref_tab[ref_idx]['RA']
+                aligned_tab['dec_ref'] = ref_tab[ref_idx]['DEC']
+
+                # Since we're pulling from the source catalogue, these should all exist
+                aligned_tab['xcentroid_jwst'] = jwst_tab[jwst_idx]['x']
+                aligned_tab['ycentroid_jwst'] = jwst_tab[jwst_idx]['y']
+                aligned_tab['ra_jwst_uncorr'] = jwst_tab[jwst_idx]['ra']
+                aligned_tab['dec_jwst_uncorr'] = jwst_tab[jwst_idx]['dec']
+
+                aligned_tab['ra_jwst_corr'] = fit_info['fit_RA']
+                aligned_tab['dec_jwst_corr'] = fit_info['fit_DEC']
+
+                aligned_tab.write(aligned_table, format='fits', overwrite=True)
 
                 jwst_hdu.writeto(aligned_file, overwrite=True)
 

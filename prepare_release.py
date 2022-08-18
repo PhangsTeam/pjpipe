@@ -54,4 +54,12 @@ for galaxy in galaxies:
     for align_file in align_files:
         os.system('cp %s %s' % (align_file, release_gal_dir))
 
+    align_tables = glob.glob(os.path.join(reprocess_dir,
+                                          galaxy,
+                                          '*',
+                                          'lv3',
+                                          '*_i2d_align_table.fits'))
+    for align_table in align_tables:
+        os.system('cp %s %s' % (align_table, release_gal_dir))
+
 print('Complete!')

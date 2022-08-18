@@ -31,21 +31,21 @@ reprocess_dir_ext = 'v0p4p1'
 reprocess_dir += '_%s' % reprocess_dir_ext
 
 galaxies = [
+    'ic5332',
     'ngc0628',
     'ngc1365',
     # 'ngc7320',
     'ngc7496',
-    'ic5332',
 ]
 
 for galaxy in galaxies:
 
     alignment_table_name = {
+        'ic5332': 'Gaia_DR3_IC5332.fits',
         'ngc0628': 'ngc0628_agb_cat.fits',
         'ngc1365': 'ngc1365_agb_cat.fits',
         'ngc7320': 'Gaia_DR3_NGC7320.fits',
         'ngc7496': 'ngc7496_agb_cat.fits',
-        'ic5332': 'Gaia_DR3_IC5332.fits',
     }[galaxy]
     alignment_table = os.path.join(working_dir,
                                    'alignment_images',
@@ -110,6 +110,9 @@ for galaxy in galaxies:
                            alignment_mapping=alignment_mapping,
                            bands=bands,
                            procs=20,
+                           lv1_parameter_dict='phangs',
+                           lv2_parameter_dict='phangs',
+                           lv3_parameter_dict='phangs',
                            )
     reproc.run_all()
 
