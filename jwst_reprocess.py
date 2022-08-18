@@ -1,4 +1,5 @@
 import copy
+import functools
 import glob
 import json
 import logging
@@ -254,11 +255,23 @@ def parse_parameter_dict(parameter_dict,
         else:
             value = 'VAL_NOT_FOUND'
 
-    # Finally, if we have a 'pix' in there, we need to convert to arcsec
-    if 'pix' in value:
-        value = float(value.strip('pix')) * pixel_scale
+    # Finally, if we have a string with a 'pix' in there, we need to convert to arcsec
+    if isinstance(value, str):
+        if 'pix' in value:
+            value = float(value.strip('pix')) * pixel_scale
 
     return value
+
+
+def recursive_setattr(f, attribute, value):
+    pre, _, post = attribute.rpartition('.')
+    return setattr(recursive_getattr(f, pre) if pre else f, post, value)
+
+
+def recursive_getattr(f, attribute, *args):
+    def _getattr(f, attribute):
+        return getattr(f, attribute, *args)
+    return functools.reduce(_getattr, [f] + attribute.split('.'))
 
 
 class JWSTReprocess:
@@ -300,10 +313,14 @@ class JWSTReprocess:
         Will run through whole JWST pipeline, allowing for fine-tuning along the way.
 
         It's worth talking a little about how parameter dictionaries are passed. They should be of the form
-            {'parameter': value}
+
+                {'parameter': value}
+
         where parameter is how the pipeline names it, e.g. 'save_results', 'tweakreg.fitgeometry'. Because you might
         want to break these out per observing mode, you can also pass a dict, like
-            {'parameter': {'miri': miri_val, 'nircam': nircam_val}}
+
+                {'parameter': {'miri': miri_val, 'nircam': nircam_val}}
+
         where the acceptable variants are 'miri', 'nircam', 'nircam_long', and 'nircam_short'. As many bits of the
         pipeline require a number in arcsec rather than pixels, you can pass a value as 'Xpix', and it will parse
         according to the band you're processing.
@@ -314,6 +331,10 @@ class JWSTReprocess:
             * reprocess_dir (str): Path to reprocess data into
             * crds_dir (str): Path to CRDS data
             * bands (list): JWST filters to loop over
+            * lv1_parameter_dict (dict): Dictionary of parameters to feed to level 1 pipeline. See description above
+                for how this should be formatted. Defaults to None, which will keep pipeline at default
+            * lv2_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 2 pipeline
+            * lv3_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 3 pipeline
             * bgr_check_type (str): Method to check if MIRI obs is science or background. Options are 'parallel_off' and
                 off_in_name. Defaults to 'parallel_off'
             * astrometric_alignment_image (str): Path to image to align astrometry to
@@ -345,8 +366,6 @@ class JWSTReprocess:
         TODO:
             * Update destriping algorithm as we improve it
             * Record alignment parameters into the fits header
-            * Skip skymatch for MIRI (according to Karl Gordon)
-            * Pass pipeline config through dictionaries. The machinery has been built but needs to be tested
 
         """
 
@@ -413,6 +432,7 @@ class JWSTReprocess:
                 'tweakreg.tolerance': {'nircam_short': '5pix', 'nircam_long': '10pix', 'miri': '10pix'},
                 'tweakreg.use2dhist': False,
 
+                'skymatch.skip': {'miri': True},
                 'skymatch.skymethod': 'global+match',
                 'skymatch.subtract': True,
                 'skymatch.skystat': 'median',
@@ -1194,23 +1214,15 @@ class JWSTReprocess:
                     if not os.path.isdir(detector1.output_dir):
                         os.makedirs(detector1.output_dir)
 
-                    # for key in self.lv1_parameter_dict.keys():
-                    #
-                    #     value = parse_parameter_dict(self.lv1_parameter_dict,
-                    #                                  key,
-                    #                                  band)
-                    #     if value == 'VAL_NOT_FOUND':
-                    #         continue
-                    #
-                    #     setattr(detector1, key, value)
+                    for key in self.lv1_parameter_dict.keys():
 
-                    detector1.save_results = True
+                        value = parse_parameter_dict(self.lv1_parameter_dict,
+                                                     key,
+                                                     band)
+                        if value == 'VAL_NOT_FOUND':
+                            continue
 
-                    # Don't flag everything if only the first sample is saturated
-                    detector1.ramp_fit.suppress_one_group = False
-
-                    # Tweak settings
-                    detector1.refpix.use_side_ref_pixels = True
+                        recursive_setattr(detector1, key, value)
 
                     # Pull out the trapsfilled file from preceding exposure if needed. Only for NIRCAM
 
@@ -1247,21 +1259,15 @@ class JWSTReprocess:
                 if not os.path.isdir(im2.output_dir):
                     os.makedirs(im2.output_dir)
 
-                # for key in self.lv2_parameter_dict.keys():
-                #
-                #     value = parse_parameter_dict(self.lv2_parameter_dict,
-                #                                  key,
-                #                                  band)
-                #     if value == 'VAL_NOT_FOUND':
-                #         continue
-                #
-                #     setattr(im2, key, value)
+                for key in self.lv2_parameter_dict.keys():
 
-                im2.save_results = True
+                    value = parse_parameter_dict(self.lv2_parameter_dict,
+                                                 key,
+                                                 band)
+                    if value == 'VAL_NOT_FOUND':
+                        continue
 
-                # Any settings to tweak go here
-                im2.bkg_subtract.save_combined_background = True
-                im2.bkg_subtract.sigma = 1.5
+                    recursive_setattr(im2, key, value)
 
                 # Run the level 2 pipeline
                 im2.run(asn_file)
@@ -1288,83 +1294,15 @@ class JWSTReprocess:
                 im3.tweakreg.kernel_fwhm = fwhm_pix
                 im3.source_catalog.kernel_fwhm = fwhm_pix
 
-                # for key in self.lv3_parameter_dict.keys():
-                #
-                #     value = parse_parameter_dict(self.lv3_parameter_dict,
-                #                                  key,
-                #                                  band)
-                #     if value == 'VAL_NOT_FOUND':
-                #         continue
-                #
-                #     setattr(im3, key, value)
+                for key in self.lv3_parameter_dict.keys():
 
-                im3.save_results = True
+                    value = parse_parameter_dict(self.lv3_parameter_dict,
+                                                 key,
+                                                 band)
+                    if value == 'VAL_NOT_FOUND':
+                        continue
 
-                # Alignment settings edited to roughly match the HST setup
-
-                # Pixel scale based on wavelength
-                if band_type == 'nircam':
-                    if int(band[1:4]) <= 212:
-                        pixel_scale = 0.031
-                    else:
-                        pixel_scale = 0.063
-                elif band_type == 'miri':
-                    pixel_scale = 0.11
-                else:
-                    raise Warning('Pixel scale not know for band type %s!' % band_type)
-
-                # Set separation relatively small, 0.7" is default
-                im3.tweakreg.separation = 10 * pixel_scale
-
-                # Set tolerance small, 0.7" is default. Smaller for shorter NIRCAM wavelengths to avoid multiple matches
-                tolerance = 10 * pixel_scale
-                if band_type == 'nircam' and int(band[1:4]) <= 212:
-                    tolerance = 5 * pixel_scale
-
-                im3.tweakreg.tolerance = tolerance
-
-                im3.tweakreg.brightest = 500  # 200 is default
-
-                im3.tweakreg.snr_threshold = 5  # 10 is default
-                im3.tweakreg.minobj = 3  # 15 is default
-
-                # Filter out bright sources in the NIRCAM
-                if band_type == 'nircam':
-                    peakmax = 20
-                else:
-                    peakmax = None
-
-                im3.tweakreg.peakmax = peakmax
-
-                im3.tweakreg.searchrad = 10 * pixel_scale  # 2.0 is default
-                im3.tweakreg.expand_refcat = True  # False is the default
-                im3.tweakreg.fitgeometry = 'shift'  # rshift is the default
-                # im3.tweakreg.align_to_gaia = True  # False is the default
-
-                # Assume we're pretty well aligned already
-                im3.tweakreg.use2dhist = False  # True is the default
-
-                # Background matching settings
-                im3.skymatch.skymethod = 'global+match'  # 'match' is the default
-                im3.skymatch.subtract = True  # False is the default
-
-                im3.skymatch.skystat = 'median'  # mode is the default
-                im3.skymatch.nclip = 20  # 5 is the default
-                im3.skymatch.lsigma = 3  # 4 is the default
-                im3.skymatch.usigma = 3  # 4 is the default
-
-                # Resample settings
-                im3.resample.rotation = 0.0  # Ensure north up
-
-                # Source catalogue settings
-                im3.source_catalog.snr_threshold = 3.
-                im3.source_catalog.npixels = 5
-                im3.source_catalog.bkg_boxsize = 100
-                im3.source_catalog.deblend = True
-
-                # Keep things in memory for speed
-                im3.outlier_detection.in_memory = True
-                im3.resample.in_memory = True
+                    recursive_setattr(im3, key, value)
 
                 # Degroup the short NIRCAM observations, to avoid background issues
                 if int(band[1:4]) <= 212 and band_type == 'nircam':
