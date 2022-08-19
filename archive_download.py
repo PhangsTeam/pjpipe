@@ -104,10 +104,10 @@ class ArchiveDownload:
 
         if self.verbose:
             print('[%s] Beginning archive query:' % get_time())
-            print('[%s] -> Target: %s' % self.target)
-            print('[%s] -> Telescope: %s' % self.telescope)
-            print('[%s] -> Proposal ID: %s' % self.proposal_id)
-            print('[%s] -> Instrument name: %s' % self.instrument_name)
+            print('[%s] -> Target: %s' % (get_time(), self.target))
+            print('[%s] -> Telescope: %s' % (get_time(), self.telescope))
+            print('[%s] -> Proposal ID: %s' % (get_time(), self.prop_id))
+            print('[%s] -> Instrument name: %s' % (get_time(), self.instrument_name))
 
         self.obs_list = self.observations.query_object(self.target)
 
@@ -152,13 +152,11 @@ class ArchiveDownload:
                                                              extension=self.extension,
                                                              )
                 if len(products) > 0:
-                    # self.observations.download_products(products)
                     download(self.observations, products)
                 else:
                     print('[%s] Filtered data not available' % get_time())
                     continue
             else:
-                # self.observations.download_products(product_list)
                 download(self.observations, product_list)
 
         return True
