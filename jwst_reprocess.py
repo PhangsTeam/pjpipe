@@ -282,9 +282,9 @@ class JWSTReprocess:
                  reprocess_dir,
                  crds_dir,
                  bands=None,
-                 lv1_parameter_dict=None,
-                 lv2_parameter_dict=None,
-                 lv3_parameter_dict=None,
+                 lv1_parameter_dict='phangs',
+                 lv2_parameter_dict='phangs',
+                 lv3_parameter_dict='phangs',
                  bgr_check_type='parallel_off',
                  astrometric_alignment_type='image',
                  astrometric_alignment_image=None,
@@ -332,7 +332,8 @@ class JWSTReprocess:
             * crds_dir (str): Path to CRDS data
             * bands (list): JWST filters to loop over
             * lv1_parameter_dict (dict): Dictionary of parameters to feed to level 1 pipeline. See description above
-                for how this should be formatted. Defaults to None, which will keep pipeline at default
+                for how this should be formatted. Defaults to 'phangs', which will use the parameters for the
+                PHANGS-JWST reduction. To keep pipeline default, use 'None'
             * lv2_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 2 pipeline
             * lv3_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 3 pipeline
             * bgr_check_type (str): Method to check if MIRI obs is science or background. Options are 'parallel_off' and
