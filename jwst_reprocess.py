@@ -34,6 +34,7 @@ jwst = None
 calwebb_detector1 = None
 calwebb_image2 = None
 calwebb_image3 = None
+TweakRegStep = None
 
 # All NIRCAM bands
 NIRCAM_BANDS = [
@@ -285,6 +286,7 @@ class JWSTReprocess:
                  lv1_parameter_dict='phangs',
                  lv2_parameter_dict='phangs',
                  lv3_parameter_dict='phangs',
+                 degroup_short_nircam=True,
                  bgr_check_type='parallel_off',
                  astrometric_alignment_type='image',
                  astrometric_alignment_image=None,
@@ -336,6 +338,8 @@ class JWSTReprocess:
                 PHANGS-JWST reduction. To keep pipeline default, use 'None'
             * lv2_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 2 pipeline
             * lv3_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 3 pipeline
+            * degroup_short_nircam (bool): Will degroup short wavelength NIRCAM observations for all steps beyond
+                relative alignment. This can alleviate steps between mosaic pointings
             * bgr_check_type (str): Method to check if MIRI obs is science or background. Options are 'parallel_off' and
                 off_in_name. Defaults to 'parallel_off'
             * astrometric_alignment_image (str): Path to image to align astrometry to
@@ -373,9 +377,10 @@ class JWSTReprocess:
         os.environ['CRDS_SERVER_URL'] = crds_url
         os.environ['CRDS_PATH'] = crds_dir
 
-        global jwst, calwebb_detector1, calwebb_image2, calwebb_image3
+        global jwst, calwebb_detector1, calwebb_image2, calwebb_image3, TweakRegStep
         import jwst
         from jwst.pipeline import calwebb_detector1, calwebb_image2, calwebb_image3
+        from jwst.tweakreg import TweakRegStep
 
         self.galaxy = galaxy
 
@@ -424,6 +429,7 @@ class JWSTReprocess:
 
                 'tweakreg.align_to_gaia': False,
                 'tweakreg.brightest': 500,
+                'tweakreg.snr_threshold': 3,
                 'tweakreg.expand_refcat': True,
                 'tweakreg.fitgeometry': 'shift',
                 'tweakreg.minobj': 3,
@@ -453,6 +459,8 @@ class JWSTReprocess:
             }
 
         self.lv3_parameter_dict = lv3_parameter_dict
+
+        self.degroup_short_nircam = degroup_short_nircam
 
         if do_all:
             do_lv1 = True
@@ -1285,13 +1293,39 @@ class JWSTReprocess:
 
                 os.system('rm -rf %s' % output_dir)
 
-                im3 = calwebb_image3.Image3Pipeline()
-                im3.output_dir = output_dir
-                if not os.path.isdir(im3.output_dir):
-                    os.makedirs(im3.output_dir)
+                if not os.path.isdir(output_dir):
+                    os.makedirs(output_dir)
 
                 # FWHM should be set per-band for both tweakreg and source catalogue
                 fwhm_pix = FWHM_PIX[band]
+
+                # If we're degrouping short NIRCAM observations, we still want to align grouped
+                if self.degroup_short_nircam:
+                    tweakreg = TweakRegStep()
+                    tweakreg.output_dir = output_dir
+                    tweakreg.save_results = False
+                    tweakreg.kernel_fwhm = fwhm_pix
+
+                    for key in self.lv3_parameter_dict.keys():
+                        if key.split('.')[0] == 'tweakreg':
+
+                            tweakreg_key = '.'.join(key.split('.')[1:])
+
+                            value = parse_parameter_dict(self.lv3_parameter_dict,
+                                                         key,
+                                                         band)
+                            if value == 'VAL_NOT_FOUND':
+                                continue
+
+                            recursive_setattr(tweakreg, tweakreg_key, value)
+
+                    asn_file = tweakreg.run(asn_file)
+
+                # Now run through the rest of the pipeline
+
+                im3 = calwebb_image3.Image3Pipeline()
+                im3.output_dir = output_dir
+
                 im3.tweakreg.kernel_fwhm = fwhm_pix
                 im3.source_catalog.kernel_fwhm = fwhm_pix
 
@@ -1305,20 +1339,23 @@ class JWSTReprocess:
 
                     recursive_setattr(im3, key, value)
 
-                # Degroup the short NIRCAM observations, to avoid background issues
-                if int(band[1:4]) <= 212 and band_type == 'nircam':
-                    degroup = True
-                else:
-                    degroup = False
+                if self.degroup_short_nircam:
 
-                model_container = datamodels.open(asn_file)
+                    # Make sure we skip tweakreg since we've already done it
+                    im3.tweakreg.skip = True
 
-                if degroup:
-                    for i, model in enumerate(model_container._models):
-                        model.meta.observation.exposure_number = str(i)
+                    # Degroup the short NIRCAM observations, to avoid background issues
+                    if int(band[1:4]) <= 212 and band_type == 'nircam':
+                        degroup = True
+                    else:
+                        degroup = False
+
+                    if degroup:
+                        for i, model in enumerate(asn_file._models):
+                            model.meta.observation.exposure_number = str(i)
 
                 # Run the level 3 pipeline
-                im3.run(model_container)
+                im3.run(asn_file)
 
         else:
 
