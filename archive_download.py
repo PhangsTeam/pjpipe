@@ -38,6 +38,7 @@ class ArchiveDownload:
 
     def __init__(self,
                  target=None,
+                 radius=None,
                  telescope='JWST',
                  prop_id=None,
                  instrument_name=None,
@@ -67,6 +68,7 @@ class ArchiveDownload:
             ]
 
         self.target = target
+        self.radius = radius
         self.telescope = telescope
         self.prop_id = prop_id
         self.instrument_name = instrument_name
@@ -109,7 +111,10 @@ class ArchiveDownload:
             print('[%s] -> Proposal ID: %s' % (get_time(), self.prop_id))
             print('[%s] -> Instrument name: %s' % (get_time(), self.instrument_name))
 
-        self.obs_list = self.observations.query_object(self.target)
+        if self.radius is None:
+            self.obs_list = self.observations.query_object(self.target)
+        else:
+            self.obs_list = self.observations.query_object(self.target, radius=self.radius)
 
         if np.all(self.obs_list['calib_level'] < 0):
             print('[%s] No available data' % get_time())
