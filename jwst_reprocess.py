@@ -307,6 +307,7 @@ class JWSTReprocess:
                  overwrite_lv3=False,
                  overwrite_astrometric_alignment=False,
                  overwrite_astrometric_ref_cat=False,
+                 correct_lv1_wcs=False,
                  crds_url='https://jwst-crds.stsci.edu',
                  procs=None
                  ):
@@ -363,6 +364,8 @@ class JWSTReprocess:
             * overwrite_astrometric_alignment (bool): Whether to overwrite astrometric alignment. Defaults to False
             * overwrite_astrometric_ref_cat (bool): Whether to overwrite the generated reference catalogue for
                 astrometric alignment. Defaults to False
+            * correct_lv1_wcs (bool): Check WCS in uncal files, since there is a bug that some don't have this populated
+                when pulled from the archive. Defaults to False
             * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds.stsci.edu', which will be the
                 latest versions of the files
             * procs (int): Number of parallel processes to run during destriping. Will default to half the number of
@@ -500,6 +503,8 @@ class JWSTReprocess:
         self.overwrite_lv3 = overwrite_lv3
         self.overwrite_astrometric_alignment = overwrite_astrometric_alignment
         self.overwrite_astrometric_ref_cat = overwrite_astrometric_ref_cat
+
+        self.correct_lv1_wcs = correct_lv1_wcs
 
         if procs is None:
             procs = cpu_count() // 2
@@ -1214,6 +1219,19 @@ class JWSTReprocess:
                 uncal_files.sort()
 
                 for uncal_file in uncal_files:
+
+                    # There appears to be a bug that sometimes WCS info isn't populated through to the uncal files.
+                    # Fix that here
+                    if self.correct_lv1_wcs:
+                        if 'MAST_API_TOKEN' not in os.environ.keys():
+                            os.environ['MAST_API_TOKEN'] = input('Input MAST API token: ')
+
+                        uncal_hdu = fits.open(uncal_file)
+
+                        qual = uncal_hdu[0].header['ENGQLPTG']
+
+                        if qual == 'PLANNED':
+                            os.system('set_telescope_pointing.py %s' % uncal_file)
 
                     detector1 = calwebb_detector1.Detector1Pipeline()
 
