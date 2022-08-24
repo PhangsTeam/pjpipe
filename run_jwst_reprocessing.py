@@ -11,10 +11,11 @@ host = socket.gethostname()
 if 'node' in host:
     raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data'
     working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_working'
+    alternative_flats_dir = None
 else:
-    raw_dir = '/Users/williams/Documents/phangs/jwst_data'
-    working_dir = '/Users/williams/Documents/phangs/jwst_working'
-
+    raw_dir = '/home/egorov/Science/PHANGS/JWST/Lev1/'#'/Users/williams/Documents/phangs/jwst_data'
+    working_dir = '/home/egorov/Science/PHANGS/JWST/Reduction/merge/'#'/Users/williams/Documents/phangs/jwst_working'
+    alternative_flats_dir = "/home/egorov/Science/PHANGS/JWST/config/flats/"
 # We may want to occasionally flush out the CRDS directory to avoid weirdness between mappings. Probably do this at
 # the start of another version cycle
 flush_crds = False
@@ -31,11 +32,11 @@ reprocess_dir_ext = 'v0p4p1'
 reprocess_dir += '_%s' % reprocess_dir_ext
 
 galaxies = [
-    'ic5332',
+    # 'ic5332',
     'ngc0628',
-    'ngc1365',
+    # 'ngc1365',
     # 'ngc7320',
-    'ngc7496',
+    # 'ngc7496',
 ]
 
 for galaxy in galaxies:
@@ -90,10 +91,10 @@ for galaxy in galaxies:
 
         bands = [
             # NIRCAM
-            'F200W',
-            'F300M',
-            'F335M',
-            'F360M',
+            # 'F200W',
+            # 'F300M',
+            # 'F335M',
+            # 'F360M',
             # MIRI
             'F770W',
             'F1000W',
@@ -110,9 +111,19 @@ for galaxy in galaxies:
                            alignment_mapping=alignment_mapping,
                            bands=bands,
                            procs=20,
+                           overwrite_lv1=False,
+                           overwrite_all=False,
+                           overwrite_lv2=False,
+                           overwrite_lv3=True,
+                           # do_all=False,
+                           do_lv1=False,
+                           do_lv2=False,
+                           do_lv3=True,
+                           do_astrometric_alignment=True,
                            lv1_parameter_dict='phangs',
                            lv2_parameter_dict='phangs',
                            lv3_parameter_dict='phangs',
+                           alternative_flats_dir=alternative_flats_dir,
                            )
     reproc.run_all()
 

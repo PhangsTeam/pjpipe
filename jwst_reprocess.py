@@ -255,7 +255,7 @@ def parse_parameter_dict(parameter_dict,
             value = 'VAL_NOT_FOUND'
 
     # Finally, if we have a 'pix' in there, we need to convert to arcsec
-    if 'pix' in value:
+    if isinstance(value, str) and 'pix' in value:
         value = float(value.strip('pix')) * pixel_scale
 
     return value
@@ -293,7 +293,8 @@ class JWSTReprocess:
                  overwrite_astrometric_alignment=False,
                  overwrite_astrometric_ref_cat=False,
                  crds_url='https://jwst-crds.stsci.edu',
-                 procs=None
+                 procs=None,
+                 alternative_flats_dir=None
                  ):
         """JWST reprocessing routines.
 
@@ -341,6 +342,7 @@ class JWSTReprocess:
                 latest versions of the files
             * procs (int): Number of parallel processes to run during destriping. Will default to half the number of
                 cores in the system
+            * alternative_flats_dir (str): path to the directory with the flats to be used instead of default ones.
 
         TODO:
             * Update destriping algorithm as we improve it
@@ -414,11 +416,12 @@ class JWSTReprocess:
                 'tweakreg.use2dhist': False,
 
                 'skymatch.skymethod': 'global+match',
-                'skymatch.subtract': True,
+                'skymatch.subtract': {'nircam': True, 'miri': False},
                 'skymatch.skystat': 'median',
                 'skymatch.nclip': 20,
                 'skymatch.lsigma': 3,
                 'skymatch.usigma': 3,
+                'skymatch.match_down': {'miri': False},
 
                 'outlier_detection.in_memory': True,
 
@@ -480,9 +483,13 @@ class JWSTReprocess:
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
 
+        if os.path.isdir(alternative_flats_dir):
+            self.alternative_flats_dir = alternative_flats_dir
+        else:
+            self.alternative_flats_dir = None
+
     def run_all(self):
         """Run the whole pipeline reprocess"""
-
         self.logger.info('Reprocessing %s' % self.galaxy)
 
         for band in self.bands:
@@ -494,7 +501,7 @@ class JWSTReprocess:
             elif band in MIRI_BANDS:
                 band_type = 'miri'
                 do_destriping = False
-                do_lyot_adjust = self.do_lyot_adjust
+                do_lyot_adjust = None  # self.do_lyot_adjust
             else:
                 raise Warning('Unknown band %s' % band)
 
@@ -697,7 +704,7 @@ class JWSTReprocess:
                                   out_dir=destripe_dir
                                   )
 
-            # The Lyot coronagraph is only in the MIRI bands
+            # The Lyot coronagraph is only in the MIRI bands (deprecated -> no needs anymore)
             if do_lyot_adjust is not None:
 
                 self.logger.info('-> Adjusting lyot with method %s' % do_lyot_adjust)
@@ -1113,7 +1120,7 @@ class JWSTReprocess:
                                                 check_bgr=check_bgr,
                                                 check_type=self.bgr_check_type)
                             )
-
+            print(tab['Program'])
             json_content = {"asn_type": "None",
                             "asn_rule": "DMS_Level3_Base",
                             "version_id": time.strftime('%Y%m%dt%H%M%S'),
@@ -1262,6 +1269,10 @@ class JWSTReprocess:
                 # Any settings to tweak go here
                 im2.bkg_subtract.save_combined_background = True
                 im2.bkg_subtract.sigma = 1.5
+                if self.alternative_flats_dir is not None:
+                    my_flat = [f for f in glob.glob(os.path.join(self.alternative_flats_dir, '*.fits')) if band in f]
+                    if len(my_flat) !=0:
+                        im2.flat_field.override_flat = my_flat[0]
 
                 # Run the level 2 pipeline
                 im2.run(asn_file)
@@ -1288,20 +1299,9 @@ class JWSTReprocess:
                 im3.tweakreg.kernel_fwhm = fwhm_pix
                 im3.source_catalog.kernel_fwhm = fwhm_pix
 
-                # for key in self.lv3_parameter_dict.keys():
-                #
-                #     value = parse_parameter_dict(self.lv3_parameter_dict,
-                #                                  key,
-                #                                  band)
-                #     if value == 'VAL_NOT_FOUND':
-                #         continue
-                #
-                #     setattr(im3, key, value)
-
                 im3.save_results = True
 
                 # Alignment settings edited to roughly match the HST setup
-
                 # Pixel scale based on wavelength
                 if band_type == 'nircam':
                     if int(band[1:4]) <= 212:
@@ -1377,6 +1377,16 @@ class JWSTReprocess:
                 if degroup:
                     for i, model in enumerate(model_container._models):
                         model.meta.observation.exposure_number = str(i)
+
+                # Adjustment of the parameters above
+                for key in self.lv3_parameter_dict.keys():
+                    value = parse_parameter_dict(self.lv3_parameter_dict,
+                                                 key,
+                                                 band)
+                    if value == 'VAL_NOT_FOUND':
+                        continue
+                    # print(key, value)
+                    # setattr(im3, key, value)
 
                 # Run the level 3 pipeline
                 im3.run(model_container)

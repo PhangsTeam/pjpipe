@@ -203,13 +203,13 @@ def tweak_fits(data_dir=None, suffix_in='_cal.fits', suffix_out='_cal_mod.fits',
             md.run_destriping()
 
 
-def run_association_lev2(data_dir=None, fileout=None, force_id=None, skip_id=None,
+def run_association_lev2(data_dir=None, fileout_root=None, force_id=None, skip_id=None,
                          skip_bgr_num=None, suffix_in='_rate.fits'):
     """
     Create json file with the association of science and background MIRI exposures based
     from the downloaded level2 data
     :param data_dir: Path to the root directory with the downloaded level2 data
-    :param fileout: Name of the output json file
+    :param fileout_root: Name prefix of the output json file
     :param force_id: if not None (default), then contain dictionary with keys 'sci_id', 'bgr_id', 'obj_name'.
         If the values are not None, then only those IDs for science, offset exposures or target will be used
     :param skip_id: if not None (default), then contain dictionary with keys 'sci_id', 'bgr_id', 'obj_name'.
@@ -248,46 +248,50 @@ def run_association_lev2(data_dir=None, fileout=None, force_id=None, skip_id=Non
     if (n_sci == 0) or (n_bgr == 0):
         print("Error: either science or offset exposures were not found. There is no sense to proceed further.")
         return None
-    if fileout is not None:
+    if fileout_root is not None:
         t_sci = tab[tab['Type'] == 'sci']
         t_bgr = tab[tab['Type'] == 'bgr']
-        json_content = {"asn_type": "image2",
-                        "asn_rule": "DMSLevel2bBase",
-                        "version_id": time.strftime('%Y%m%dt%H%M%S'),
-                        "code_version": jwst.__version__,
-                        "degraded_status": "No known degraded exposures in association.",
-                        "program": t_sci['Program'][0],
-                        "constraints": "none",
-                        "asn_id": 'o'+(t_sci['Obs_ID'][0]),
-                        "asn_pool": "none",
-                        "products": []
-                        }
-        for t_row in t_sci:
-            # if t_row['Filter'] != 'F2100W':
-            #     continue
-            rec = t_bgr['Filter'] == t_row['Filter']
-            if np.sum(rec) == 0:
-                continue
-            json_content['products'].append({
-                "name": os.path.split(t_row['File'])[1].split(suffix_in)[0],
-                "members": [
-                    {'expname': t_row['File'],
-                     'exptype': 'science',
-                     'exposerr': 'null'}
-                ]
-            })
-            for bgr_num, t_row_bgr in enumerate(t_bgr[rec]):
-                if skip_bgr_num is not None:
-                    if bgr_num in np.atleast_1d(skip_bgr_num):
-                        continue
-                json_content['products'][-1]['members'].append(
-                    {'expname': t_row_bgr['File'],
-                     'exptype': 'background',
-                     'exposerr': 'null'}
-                )
 
-        with open(fileout, 'w') as f:
-            json.dump(json_content, f)
+        all_filters = np.unique(t_sci['Filter'])
+        for cur_band in all_filters:
+            fileout = f"{fileout_root}_{cur_band}.json"
+            json_content = {"asn_type": "image2",
+                            "asn_rule": "DMSLevel2bBase",
+                            "version_id": time.strftime('%Y%m%dt%H%M%S'),
+                            "code_version": jwst.__version__,
+                            "degraded_status": "No known degraded exposures in association.",
+                            "program": t_sci['Program'][0],
+                            "constraints": "none",
+                            "asn_id": 'o'+(t_sci['Obs_ID'][0]),
+                            "asn_pool": "none",
+                            "products": []
+                            }
+            for t_row in t_sci:
+                if t_row['Filter'] != cur_band:
+                    continue
+                rec = t_bgr['Filter'] == t_row['Filter']
+                if np.sum(rec) == 0:
+                    continue
+                json_content['products'].append({
+                    "name": os.path.split(t_row['File'])[1].split(suffix_in)[0],
+                    "members": [
+                        {'expname': t_row['File'],
+                         'exptype': 'science',
+                         'exposerr': 'null'}
+                    ]
+                })
+                for bgr_num, t_row_bgr in enumerate(t_bgr[rec]):
+                    if skip_bgr_num is not None:
+                        if bgr_num in np.atleast_1d(skip_bgr_num):
+                            continue
+                    json_content['products'][-1]['members'].append(
+                        {'expname': t_row_bgr['File'],
+                         'exptype': 'background',
+                         'exposerr': 'null'}
+                    )
+
+            with open(fileout, 'w') as f:
+                json.dump(json_content, f)
     return tab
 
 
@@ -335,7 +339,8 @@ def run_association_lev3(data_dir=os.path.curdir, fileout_root='asn_lev3', galna
             json.dump(json_content, f)
 
 
-def run_pipeline(asn_file, level='level2', data_dir=os.curdir, output_dir=os.curdir, max_bgr_level=0.3):
+def run_pipeline(asn_file, level='level2', data_dir=os.curdir, output_dir=os.curdir, max_bgr_level=0.3,
+                 use_flat=None):
     """
     Run JWST pipeline for the selected stage of the data reduction and for the provided asn file
     :param asn_file: path to the asn json file to be used for the current data processing (None for level1)
@@ -343,6 +348,7 @@ def run_pipeline(asn_file, level='level2', data_dir=os.curdir, output_dir=os.cur
     :param data_dir: path to the directory with the data to be processed
     :param output_dir: path to the directory where all output files will be saved
     :param max_bgr_level: maximal brightness of the pixels considered as sky for skymatch (level3 only)
+    :param use_flat: path to the flat to be used in level2 instead of the default
     """
 
     if level == 'level1':
@@ -409,6 +415,8 @@ def run_pipeline(asn_file, level='level2', data_dir=os.curdir, output_dir=os.cur
         image2.bkg_subtract.save_combined_background = True
         # image2.save_bsub = True
         image2.bkg_subtract.sigma = 1.5
+        if use_flat is not None and os.path.isfile(use_flat):
+            image2.flat_field.override_flat = use_flat
         image2.run(asn_file)
 
     elif level == 'level3':
@@ -428,8 +436,8 @@ def run_pipeline(asn_file, level='level2', data_dir=os.curdir, output_dir=os.cur
         miri_im3.tweakreg.brightest = 10  # 100 is the default
 
         miri_im3.source_catalog.snr_threshold = 5.
-        # miri_im3.skymatch.skip = False
-        miri_im3.skymatch.skymethod = 'global+match'
+        miri_im3.skymatch.skip = False
+        miri_im3.skymatch.skymethod = 'match'# 'global+match'
         miri_im3.skymatch.upper = max_bgr_level
         miri_im3.skymatch.lower = -5.
         miri_im3.skymatch.nclip = 10
@@ -484,7 +492,8 @@ def run_reprocessing(galname="ngc0628", lev1_root_dir='/home/egorov/Science/PHAN
                      asn_lev2_rules=None, do_steps=None,
                      do_adjust_lyot=True, max_bgr_level=0.3,
                      do_destriping=False,
-                     ref_file_for_astrometry=None):
+                     ref_file_for_astrometry=None,
+                     use_flats_dir=None):
 
     # ===========================
     # We assume that the level2 and the output directories contain subfolders for each galaxy.
@@ -510,7 +519,7 @@ def run_reprocessing(galname="ngc0628", lev1_root_dir='/home/egorov/Science/PHAN
     reduced_dir_cur_obj = os.path.join(reduced_root_dir, galname)
     if not os.path.isdir(reduced_dir_cur_obj):
         os.makedirs(reduced_dir_cur_obj)
-    asn_file_lev2 = os.path.join(reduced_dir_cur_obj, f'{galname}_asn_lev2.json')
+    asn_file_lev2_root = os.path.join(reduced_dir_cur_obj, f'{galname}_asn_lev2')
     asn_file_lev3_root = f'{galname}_asn_lev3'
 
     lev2_suffix_in = '_rate.fits'
@@ -519,31 +528,45 @@ def run_reprocessing(galname="ngc0628", lev1_root_dir='/home/egorov/Science/PHAN
     else:
         lev3_suffix_in = 'mirimage_cal.fits'
 
-    # === Step 1: Create association file for level2 reprocessing
+    # === Step 1: Reprocess level1
     if os.path.isdir(lev1_dir_cur_obj) and do_steps['process1']:
         run_pipeline(None, level='level1', data_dir=lev1_dir_cur_obj, output_dir=lev2_dir_cur_obj)
 
-    # === Step 1: Create association file for level2 reprocessing
+    # === Step 2: Create association file for level2 reprocessing
     if do_steps['asn2']:
-        tab = run_association_lev2(lev2_dir_cur_obj, asn_file_lev2,
+        tab = run_association_lev2(lev2_dir_cur_obj, asn_file_lev2_root,
                                    force_id=asn_lev2_rules['force_use'], skip_id=asn_lev2_rules['skip'],
                                    skip_bgr_num=asn_lev2_rules['skip_bgr_exposures'], suffix_in=lev2_suffix_in)
 
-    # === Step 2: Run level2 data reduction
-    if os.path.isfile(asn_file_lev2) and do_steps['process2']:
-        run_pipeline(asn_file_lev2, level='level2', data_dir=lev2_dir_cur_obj, output_dir=reduced_dir_cur_obj)
+    # === Step 3: Run level2 data reduction
+    if do_steps['process2']:
+        bands = [f.split(asn_file_lev2_root+"_")[1].split('.json')[0]
+                 for f in glob.glob(os.path.join(reduced_dir_cur_obj,'*.json')) if asn_file_lev2_root in f]
+        for cur_band in bands:
+            asn_file_lev2 = f'{asn_file_lev2_root}_{cur_band}.json'
+            if use_flats_dir is not None and os.path.isdir(use_flats_dir):
+                my_flat = [f for f in glob.glob(os.path.join(use_flats_dir,'*.fits')) if cur_band in f]
+                if len(my_flat) == 0:
+                    use_flat = None
+                else:
+                    use_flat = my_flat[0]
+            else:
+                use_flat = None
+            print(use_flat)
+            # run_pipeline(asn_file_lev2, level='level2', data_dir=lev2_dir_cur_obj, output_dir=reduced_dir_cur_obj,
+            #              use_flat=use_flat)
 
-    # === Step 3: Mask the input frames before level2 processing
+    # === Step 4: Mask the input frames before level2 processing
     if (do_adjust_lyot or do_destriping) and do_steps['mask_level3']:
         tweak_fits(reduced_dir_cur_obj, suffix_in='mirimage_cal.fits', suffix_out=lev3_suffix_in, level=3,
                    max_bgr_level=max_bgr_level, do_adjust_lyot=do_adjust_lyot, do_destriping=do_destriping)
 
-    # === Step 4: Create association file for level3 reprocessing
+    # === Step 5: Create association file for level3 reprocessing
     if do_steps['asn3']:
         run_association_lev3(reduced_dir_cur_obj, fileout_root=asn_file_lev3_root, galname=galname,
                              suffix_in=lev3_suffix_in)
 
-    # === Step 5: Run level3 data reduction
+    # === Step 6: Run level3 data reduction
     if do_steps['process3']:
         os.chdir(reduced_dir_cur_obj)
         asn3_json_files = [f for f in glob.glob('*.json') if asn_file_lev3_root in f]
@@ -553,7 +576,7 @@ def run_reprocessing(galname="ngc0628", lev1_root_dir='/home/egorov/Science/PHAN
             run_pipeline(asn_f, level='level3', data_dir=reduced_dir_cur_obj, output_dir=cur_dir,
                          max_bgr_level=max_bgr_level)
 
-    # === Step 6: Adjust astrometry
+    # === Step 7: Adjust astrometry
     if do_steps['align_astrometry'] and ref_file_for_astrometry is not None and os.path.isfile(ref_file_for_astrometry):
         os.chdir(reduced_dir_cur_obj)
         asn3_json_files = [f for f in glob.glob('*.json') if asn_file_lev3_root in f]
@@ -580,15 +603,17 @@ if __name__ == '__main__':
 
     lev1_root_dir = '/home/egorov/Science/PHANGS/JWST/Lev1/'
     lev2_root_dir = '/home/egorov/Science/PHANGS/JWST/Reduction/Lev2/'
-    reduced_root_dir = "/home/egorov/Science/PHANGS/JWST/Reduction/Lev3/"
+    reduced_root_dir = "/home/egorov/Science/PHANGS/JWST/Reduction/Lev3_v1/"
 
-    ref_file_for_astrometry = "/my/absolute/path/file.fits"
+    use_flats_dir = "/home/egorov/Science/PHANGS/JWST/config/flats/"
+
+    ref_file_for_astrometry = "/data/HST/v1.0/ngc628mosaic/hlsp_phangs-hst_hst_acs-wfc_ngc628mosaic-j8ol04f0q_f814w_v1_flc.fits"
 
     # This values can be adjusted depending on the galaxy.
     # Current recomendation
     #   - use do_adjust_lyot = True and max_bgr_level = 0.3 for NGC628 and NGC7496;
     #   - use do_adjust_lyot = False and max_bgr_level = 5.5 for IC5332
-    do_adjust_lyot = True  # Set True if you want to adjust background level in Lyot area (for proper sky matching)
+    do_adjust_lyot = False  # Set True if you want to adjust background level in Lyot area (for proper sky matching)
     max_bgr_level = 0.7  # Maximal brightness in calibrated images to be considered as sky (for proper sky matching)
     do_destriping = False
 
@@ -602,9 +627,9 @@ if __name__ == '__main__':
     # Select steps:
     do_steps = {
         'process1': False,
-        'asn2': False,
-        'process2': False,
-        'mask_level3': True,
+        'asn2': True,
+        'process2': True,
+        'mask_level3': False,
         'asn3': True,
         'process3': True,
         'align_astrometry': False,  # implemented, but not tested yet
@@ -613,6 +638,9 @@ if __name__ == '__main__':
     run_reprocessing(galname=galname, lev1_root_dir=lev1_root_dir, lev2_root_dir=lev2_root_dir,
                      reduced_root_dir=reduced_root_dir, asn_lev2_rules=asn_lev2_rules, do_steps=do_steps,
                      do_adjust_lyot=do_adjust_lyot, max_bgr_level=max_bgr_level, do_destriping=do_destriping,
-                     ref_file_for_astrometry = ref_file_for_astrometry)
+                     ref_file_for_astrometry=ref_file_for_astrometry, use_flats_dir=use_flats_dir)
 
 
+    for cur_filter in ['F770W', 'F1000W', 'F1130W', 'F2100W']:
+        shutil.copy(f'/home/egorov/Science/PHANGS/JWST/Reduction/Lev3_v1/{galname}/{cur_filter}/{galname}_miri_lvl3_{cur_filter.lower()}_i2d.fits',
+                    '/home/egorov/Dropbox/PHANGS/JWST/v1/')
