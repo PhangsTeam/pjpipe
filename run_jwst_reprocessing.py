@@ -26,15 +26,15 @@ if flush_crds:
     os.system('rm -rf %s' % crds_dir)
     os.makedirs(crds_dir)
 
-reprocess_dir_ext = 'v0p4p1'
+reprocess_dir_ext = 'v0p4p2'
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
 galaxies = [
-    'ic5332',
+    # 'ic5332',
     'ngc0628',
     'ngc1365',
-    # 'ngc7320',
+    'ngc7320',
     'ngc7496',
 ]
 
@@ -67,9 +67,9 @@ for galaxy in galaxies:
             'F356W',
             'F444W',
             # MIRI
-            'F770W',
-            'F1000W',
-            'F1500W',
+            # 'F770W',
+            # 'F1000W',
+            # 'F1500W',
         ]
     else:
 
@@ -95,10 +95,10 @@ for galaxy in galaxies:
             'F335M',
             'F360M',
             # MIRI
-            'F770W',
-            'F1000W',
-            'F1130W',
-            'F2100W'
+            # 'F770W',
+            # 'F1000W',
+            # 'F1130W',
+            # 'F2100W'
         ]
 
     reproc = JWSTReprocess(galaxy=galaxy,

@@ -209,8 +209,10 @@ def parse_fits_to_table(file,
                 f_type = 'bgr'
 
         elif check_type == 'off_in_name':
-            raise NotImplementedError('Not yet implemented!')
-            # f_type = 'bgr'
+            hdu = fits.open(file)
+            if 'off' in hdu[0].header['TARGPROP'].lower():
+                f_type = 'bgr'
+            hdu.close()
         else:
             raise Warning('check_type %s not known' % check_type)
     else:
@@ -1090,14 +1092,15 @@ class JWSTReprocess:
                     ]
                 })
 
-            # Associate background files
-            for product in json_content['products']:
-                for row in bgr_tab:
-                    product['members'].append({
-                        'expname': row['File'],
-                        'exptype': 'background',
-                        'exposerr': 'null'
-                    })
+            # Associate background files, but only for MIRI
+            if band_type == 'miri':
+                for product in json_content['products']:
+                    for row in bgr_tab:
+                        product['members'].append({
+                            'expname': row['File'],
+                            'exptype': 'background',
+                            'exposerr': 'null'
+                        })
 
             with open(asn_lv2_filename, 'w') as f:
                 json.dump(json_content, f)
@@ -1232,6 +1235,8 @@ class JWSTReprocess:
 
                         if qual == 'PLANNED':
                             os.system('set_telescope_pointing.py %s' % uncal_file)
+
+                        uncal_hdu.close()
 
                     detector1 = calwebb_detector1.Detector1Pipeline()
 
