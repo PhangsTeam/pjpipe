@@ -1036,12 +1036,16 @@ class JWSTReprocess:
         if band is None:
             raise Warning('Band should be specified!')
 
+        check_bgr = True
+
         if band in NIRCAM_BANDS:
             band_type = 'nircam'
-            check_bgr = False
+
+            # Turn off checking background for parallel off NIRCAM images:
+            if self.bgr_check_type == 'parallel_off':
+                check_bgr = False
         elif band in MIRI_BANDS:
             band_type = 'miri'
-            check_bgr = True
         else:
             raise Warning('Band %s not recognised!' % band)
 
@@ -1122,12 +1126,15 @@ class JWSTReprocess:
         if band is None:
             raise Warning('Band must be specified!')
 
+        check_bgr = True
+
         if band in NIRCAM_BANDS:
             band_type = 'nircam'
-            check_bgr = False
+            # Turn off checking background for parallel off NIRCAM images:
+            if self.bgr_check_type == 'parallel_off':
+                check_bgr = False
         elif band in MIRI_BANDS:
             band_type = 'miri'
-            check_bgr = True
         else:
             raise Warning('Band %s not recognised!' % band)
 
