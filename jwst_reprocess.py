@@ -1,4 +1,5 @@
 import copy
+import functools
 import glob
 import json
 import logging
@@ -33,6 +34,7 @@ jwst = None
 calwebb_detector1 = None
 calwebb_image2 = None
 calwebb_image3 = None
+TweakRegStep = None
 
 # All NIRCAM bands
 NIRCAM_BANDS = [
@@ -207,8 +209,10 @@ def parse_fits_to_table(file,
                 f_type = 'bgr'
 
         elif check_type == 'off_in_name':
-            raise NotImplementedError('Not yet implemented!')
-            # f_type = 'bgr'
+            hdu = fits.open(file)
+            if 'off' in hdu[0].header['TARGPROP'].lower():
+                f_type = 'bgr'
+            hdu.close()
         else:
             raise Warning('check_type %s not known' % check_type)
     else:
@@ -254,11 +258,23 @@ def parse_parameter_dict(parameter_dict,
         else:
             value = 'VAL_NOT_FOUND'
 
-    # Finally, if we have a 'pix' in there, we need to convert to arcsec
-    if isinstance(value, str) and 'pix' in value:
-        value = float(value.strip('pix')) * pixel_scale
+    # Finally, if we have a string with a 'pix' in there, we need to convert to arcsec
+    if isinstance(value, str):
+        if 'pix' in value:
+            value = float(value.strip('pix')) * pixel_scale
 
     return value
+
+
+def recursive_setattr(f, attribute, value):
+    pre, _, post = attribute.rpartition('.')
+    return setattr(recursive_getattr(f, pre) if pre else f, post, value)
+
+
+def recursive_getattr(f, attribute, *args):
+    def _getattr(f, attribute):
+        return getattr(f, attribute, *args)
+    return functools.reduce(_getattr, [f] + attribute.split('.'))
 
 
 class JWSTReprocess:
@@ -269,9 +285,10 @@ class JWSTReprocess:
                  reprocess_dir,
                  crds_dir,
                  bands=None,
-                 lv1_parameter_dict=None,
-                 lv2_parameter_dict=None,
-                 lv3_parameter_dict=None,
+                 lv1_parameter_dict='phangs',
+                 lv2_parameter_dict='phangs',
+                 lv3_parameter_dict='phangs',
+                 degroup_short_nircam=True,
                  bgr_check_type='parallel_off',
                  astrometric_alignment_type='image',
                  astrometric_alignment_image=None,
@@ -292,19 +309,23 @@ class JWSTReprocess:
                  overwrite_lv3=False,
                  overwrite_astrometric_alignment=False,
                  overwrite_astrometric_ref_cat=False,
+                 correct_lv1_wcs=False,
                  crds_url='https://jwst-crds.stsci.edu',
-                 procs=None,
-                 alternative_flats_dir=None
+                 procs=None
                  ):
         """JWST reprocessing routines.
 
         Will run through whole JWST pipeline, allowing for fine-tuning along the way.
 
         It's worth talking a little about how parameter dictionaries are passed. They should be of the form
-            {'parameter': value}
+
+                {'parameter': value}
+
         where parameter is how the pipeline names it, e.g. 'save_results', 'tweakreg.fitgeometry'. Because you might
         want to break these out per observing mode, you can also pass a dict, like
-            {'parameter': {'miri': miri_val, 'nircam': nircam_val}}
+
+                {'parameter': {'miri': miri_val, 'nircam': nircam_val}}
+
         where the acceptable variants are 'miri', 'nircam', 'nircam_long', and 'nircam_short'. As many bits of the
         pipeline require a number in arcsec rather than pixels, you can pass a value as 'Xpix', and it will parse
         according to the band you're processing.
@@ -315,6 +336,13 @@ class JWSTReprocess:
             * reprocess_dir (str): Path to reprocess data into
             * crds_dir (str): Path to CRDS data
             * bands (list): JWST filters to loop over
+            * lv1_parameter_dict (dict): Dictionary of parameters to feed to level 1 pipeline. See description above
+                for how this should be formatted. Defaults to 'phangs', which will use the parameters for the
+                PHANGS-JWST reduction. To keep pipeline default, use 'None'
+            * lv2_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 2 pipeline
+            * lv3_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 3 pipeline
+            * degroup_short_nircam (bool): Will degroup short wavelength NIRCAM observations for all steps beyond
+                relative alignment. This can alleviate steps between mosaic pointings
             * bgr_check_type (str): Method to check if MIRI obs is science or background. Options are 'parallel_off' and
                 off_in_name. Defaults to 'parallel_off'
             * astrometric_alignment_image (str): Path to image to align astrometry to
@@ -338,26 +366,26 @@ class JWSTReprocess:
             * overwrite_astrometric_alignment (bool): Whether to overwrite astrometric alignment. Defaults to False
             * overwrite_astrometric_ref_cat (bool): Whether to overwrite the generated reference catalogue for
                 astrometric alignment. Defaults to False
+            * correct_lv1_wcs (bool): Check WCS in uncal files, since there is a bug that some don't have this populated
+                when pulled from the archive. Defaults to False
             * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds.stsci.edu', which will be the
                 latest versions of the files
             * procs (int): Number of parallel processes to run during destriping. Will default to half the number of
                 cores in the system
-            * alternative_flats_dir (str): path to the directory with the flats to be used instead of default ones.
 
         TODO:
             * Update destriping algorithm as we improve it
             * Record alignment parameters into the fits header
-            * Skip skymatch for MIRI (according to Karl Gordon)
-            * Pass pipeline config through dictionaries. The machinery has been built but needs to be tested
 
         """
 
         os.environ['CRDS_SERVER_URL'] = crds_url
         os.environ['CRDS_PATH'] = crds_dir
 
-        global jwst, calwebb_detector1, calwebb_image2, calwebb_image3
+        global jwst, calwebb_detector1, calwebb_image2, calwebb_image3, TweakRegStep
         import jwst
         from jwst.pipeline import calwebb_detector1, calwebb_image2, calwebb_image3
+        from jwst.tweakreg import TweakRegStep
 
         self.galaxy = galaxy
 
@@ -406,6 +434,7 @@ class JWSTReprocess:
 
                 'tweakreg.align_to_gaia': False,
                 'tweakreg.brightest': 500,
+                'tweakreg.snr_threshold': 3,
                 'tweakreg.expand_refcat': True,
                 'tweakreg.fitgeometry': 'shift',
                 'tweakreg.minobj': 3,
@@ -415,13 +444,13 @@ class JWSTReprocess:
                 'tweakreg.tolerance': {'nircam_short': '5pix', 'nircam_long': '10pix', 'miri': '10pix'},
                 'tweakreg.use2dhist': False,
 
+                'skymatch.skip': {'miri': True},
                 'skymatch.skymethod': 'global+match',
-                'skymatch.subtract': {'nircam': True, 'miri': False},
+                'skymatch.subtract': True,
                 'skymatch.skystat': 'median',
                 'skymatch.nclip': 20,
                 'skymatch.lsigma': 3,
                 'skymatch.usigma': 3,
-                'skymatch.match_down': {'miri': False},
 
                 'outlier_detection.in_memory': True,
 
@@ -435,6 +464,8 @@ class JWSTReprocess:
             }
 
         self.lv3_parameter_dict = lv3_parameter_dict
+
+        self.degroup_short_nircam = degroup_short_nircam
 
         if do_all:
             do_lv1 = True
@@ -475,6 +506,8 @@ class JWSTReprocess:
         self.overwrite_astrometric_alignment = overwrite_astrometric_alignment
         self.overwrite_astrometric_ref_cat = overwrite_astrometric_ref_cat
 
+        self.correct_lv1_wcs = correct_lv1_wcs
+
         if procs is None:
             procs = cpu_count() // 2
 
@@ -483,13 +516,9 @@ class JWSTReprocess:
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
 
-        if os.path.isdir(alternative_flats_dir):
-            self.alternative_flats_dir = alternative_flats_dir
-        else:
-            self.alternative_flats_dir = None
-
     def run_all(self):
         """Run the whole pipeline reprocess"""
+
         self.logger.info('Reprocessing %s' % self.galaxy)
 
         for band in self.bands:
@@ -501,7 +530,7 @@ class JWSTReprocess:
             elif band in MIRI_BANDS:
                 band_type = 'miri'
                 do_destriping = False
-                do_lyot_adjust = None  # self.do_lyot_adjust
+                do_lyot_adjust = self.do_lyot_adjust
             else:
                 raise Warning('Unknown band %s' % band)
 
@@ -704,7 +733,7 @@ class JWSTReprocess:
                                   out_dir=destripe_dir
                                   )
 
-            # The Lyot coronagraph is only in the MIRI bands (deprecated -> no needs anymore)
+            # The Lyot coronagraph is only in the MIRI bands
             if do_lyot_adjust is not None:
 
                 self.logger.info('-> Adjusting lyot with method %s' % do_lyot_adjust)
@@ -1007,12 +1036,16 @@ class JWSTReprocess:
         if band is None:
             raise Warning('Band should be specified!')
 
+        check_bgr = True
+
         if band in NIRCAM_BANDS:
             band_type = 'nircam'
-            check_bgr = False
+
+            # Turn off checking background for parallel off NIRCAM images:
+            if self.bgr_check_type == 'parallel_off':
+                check_bgr = False
         elif band in MIRI_BANDS:
             band_type = 'miri'
-            check_bgr = True
         else:
             raise Warning('Band %s not recognised!' % band)
 
@@ -1063,14 +1096,15 @@ class JWSTReprocess:
                     ]
                 })
 
-            # Associate background files
-            for product in json_content['products']:
-                for row in bgr_tab:
-                    product['members'].append({
-                        'expname': row['File'],
-                        'exptype': 'background',
-                        'exposerr': 'null'
-                    })
+            # Associate background files, but only for MIRI
+            if band_type == 'miri':
+                for product in json_content['products']:
+                    for row in bgr_tab:
+                        product['members'].append({
+                            'expname': row['File'],
+                            'exptype': 'background',
+                            'exposerr': 'null'
+                        })
 
             with open(asn_lv2_filename, 'w') as f:
                 json.dump(json_content, f)
@@ -1092,12 +1126,15 @@ class JWSTReprocess:
         if band is None:
             raise Warning('Band must be specified!')
 
+        check_bgr = True
+
         if band in NIRCAM_BANDS:
             band_type = 'nircam'
-            check_bgr = False
+            # Turn off checking background for parallel off NIRCAM images:
+            if self.bgr_check_type == 'parallel_off':
+                check_bgr = False
         elif band in MIRI_BANDS:
             band_type = 'miri'
-            check_bgr = True
         else:
             raise Warning('Band %s not recognised!' % band)
 
@@ -1120,7 +1157,7 @@ class JWSTReprocess:
                                                 check_bgr=check_bgr,
                                                 check_type=self.bgr_check_type)
                             )
-            print(tab['Program'])
+
             json_content = {"asn_type": "None",
                             "asn_rule": "DMS_Level3_Base",
                             "version_id": time.strftime('%Y%m%dt%H%M%S'),
@@ -1193,6 +1230,21 @@ class JWSTReprocess:
 
                 for uncal_file in uncal_files:
 
+                    # There appears to be a bug that sometimes WCS info isn't populated through to the uncal files.
+                    # Fix that here
+                    if self.correct_lv1_wcs:
+                        if 'MAST_API_TOKEN' not in os.environ.keys():
+                            os.environ['MAST_API_TOKEN'] = input('Input MAST API token: ')
+
+                        uncal_hdu = fits.open(uncal_file)
+
+                        qual = uncal_hdu[0].header['ENGQLPTG']
+
+                        if qual == 'PLANNED':
+                            os.system('set_telescope_pointing.py %s' % uncal_file)
+
+                        uncal_hdu.close()
+
                     detector1 = calwebb_detector1.Detector1Pipeline()
 
                     # Set some parameters that pertain to the
@@ -1201,23 +1253,15 @@ class JWSTReprocess:
                     if not os.path.isdir(detector1.output_dir):
                         os.makedirs(detector1.output_dir)
 
-                    # for key in self.lv1_parameter_dict.keys():
-                    #
-                    #     value = parse_parameter_dict(self.lv1_parameter_dict,
-                    #                                  key,
-                    #                                  band)
-                    #     if value == 'VAL_NOT_FOUND':
-                    #         continue
-                    #
-                    #     setattr(detector1, key, value)
+                    for key in self.lv1_parameter_dict.keys():
 
-                    detector1.save_results = True
+                        value = parse_parameter_dict(self.lv1_parameter_dict,
+                                                     key,
+                                                     band)
+                        if value == 'VAL_NOT_FOUND':
+                            continue
 
-                    # Don't flag everything if only the first sample is saturated
-                    detector1.ramp_fit.suppress_one_group = False
-
-                    # Tweak settings
-                    detector1.refpix.use_side_ref_pixels = True
+                        recursive_setattr(detector1, key, value)
 
                     # Pull out the trapsfilled file from preceding exposure if needed. Only for NIRCAM
 
@@ -1254,25 +1298,15 @@ class JWSTReprocess:
                 if not os.path.isdir(im2.output_dir):
                     os.makedirs(im2.output_dir)
 
-                # for key in self.lv2_parameter_dict.keys():
-                #
-                #     value = parse_parameter_dict(self.lv2_parameter_dict,
-                #                                  key,
-                #                                  band)
-                #     if value == 'VAL_NOT_FOUND':
-                #         continue
-                #
-                #     setattr(im2, key, value)
+                for key in self.lv2_parameter_dict.keys():
 
-                im2.save_results = True
+                    value = parse_parameter_dict(self.lv2_parameter_dict,
+                                                 key,
+                                                 band)
+                    if value == 'VAL_NOT_FOUND':
+                        continue
 
-                # Any settings to tweak go here
-                im2.bkg_subtract.save_combined_background = True
-                im2.bkg_subtract.sigma = 1.5
-                if self.alternative_flats_dir is not None:
-                    my_flat = [f for f in glob.glob(os.path.join(self.alternative_flats_dir, '*.fits')) if band in f]
-                    if len(my_flat) !=0:
-                        im2.flat_field.override_flat = my_flat[0]
+                    recursive_setattr(im2, key, value)
 
                 # Run the level 2 pipeline
                 im2.run(asn_file)
@@ -1289,107 +1323,69 @@ class JWSTReprocess:
 
                 os.system('rm -rf %s' % output_dir)
 
-                im3 = calwebb_image3.Image3Pipeline()
-                im3.output_dir = output_dir
-                if not os.path.isdir(im3.output_dir):
-                    os.makedirs(im3.output_dir)
+                if not os.path.isdir(output_dir):
+                    os.makedirs(output_dir)
 
                 # FWHM should be set per-band for both tweakreg and source catalogue
                 fwhm_pix = FWHM_PIX[band]
+
+                # If we're degrouping short NIRCAM observations, we still want to align grouped
+                if self.degroup_short_nircam:
+                    tweakreg = TweakRegStep()
+                    tweakreg.output_dir = output_dir
+                    tweakreg.save_results = False
+                    tweakreg.kernel_fwhm = fwhm_pix
+
+                    for key in self.lv3_parameter_dict.keys():
+                        if key.split('.')[0] == 'tweakreg':
+
+                            tweakreg_key = '.'.join(key.split('.')[1:])
+
+                            value = parse_parameter_dict(self.lv3_parameter_dict,
+                                                         key,
+                                                         band)
+                            if value == 'VAL_NOT_FOUND':
+                                continue
+
+                            recursive_setattr(tweakreg, tweakreg_key, value)
+
+                    asn_file = tweakreg.run(asn_file)
+
+                # Now run through the rest of the pipeline
+
+                im3 = calwebb_image3.Image3Pipeline()
+                im3.output_dir = output_dir
+
                 im3.tweakreg.kernel_fwhm = fwhm_pix
                 im3.source_catalog.kernel_fwhm = fwhm_pix
 
-                im3.save_results = True
-
-                # Alignment settings edited to roughly match the HST setup
-                # Pixel scale based on wavelength
-                if band_type == 'nircam':
-                    if int(band[1:4]) <= 212:
-                        pixel_scale = 0.031
-                    else:
-                        pixel_scale = 0.063
-                elif band_type == 'miri':
-                    pixel_scale = 0.11
-                else:
-                    raise Warning('Pixel scale not know for band type %s!' % band_type)
-
-                # Set separation relatively small, 0.7" is default
-                im3.tweakreg.separation = 10 * pixel_scale
-
-                # Set tolerance small, 0.7" is default. Smaller for shorter NIRCAM wavelengths to avoid multiple matches
-                tolerance = 10 * pixel_scale
-                if band_type == 'nircam' and int(band[1:4]) <= 212:
-                    tolerance = 5 * pixel_scale
-
-                im3.tweakreg.tolerance = tolerance
-
-                im3.tweakreg.brightest = 500  # 200 is default
-
-                im3.tweakreg.snr_threshold = 5  # 10 is default
-                im3.tweakreg.minobj = 3  # 15 is default
-
-                # Filter out bright sources in the NIRCAM
-                if band_type == 'nircam':
-                    peakmax = 20
-                else:
-                    peakmax = None
-
-                im3.tweakreg.peakmax = peakmax
-
-                im3.tweakreg.searchrad = 10 * pixel_scale  # 2.0 is default
-                im3.tweakreg.expand_refcat = True  # False is the default
-                im3.tweakreg.fitgeometry = 'shift'  # rshift is the default
-                # im3.tweakreg.align_to_gaia = True  # False is the default
-
-                # Assume we're pretty well aligned already
-                im3.tweakreg.use2dhist = False  # True is the default
-
-                # Background matching settings
-                im3.skymatch.skymethod = 'global+match'  # 'match' is the default
-                im3.skymatch.subtract = True  # False is the default
-
-                im3.skymatch.skystat = 'median'  # mode is the default
-                im3.skymatch.nclip = 20  # 5 is the default
-                im3.skymatch.lsigma = 3  # 4 is the default
-                im3.skymatch.usigma = 3  # 4 is the default
-
-                # Resample settings
-                im3.resample.rotation = 0.0  # Ensure north up
-
-                # Source catalogue settings
-                im3.source_catalog.snr_threshold = 3.
-                im3.source_catalog.npixels = 5
-                im3.source_catalog.bkg_boxsize = 100
-                im3.source_catalog.deblend = True
-
-                # Keep things in memory for speed
-                im3.outlier_detection.in_memory = True
-                im3.resample.in_memory = True
-
-                # Degroup the short NIRCAM observations, to avoid background issues
-                if int(band[1:4]) <= 212 and band_type == 'nircam':
-                    degroup = True
-                else:
-                    degroup = False
-
-                model_container = datamodels.open(asn_file)
-
-                if degroup:
-                    for i, model in enumerate(model_container._models):
-                        model.meta.observation.exposure_number = str(i)
-
-                # Adjustment of the parameters above
                 for key in self.lv3_parameter_dict.keys():
+
                     value = parse_parameter_dict(self.lv3_parameter_dict,
                                                  key,
                                                  band)
                     if value == 'VAL_NOT_FOUND':
                         continue
-                    # print(key, value)
-                    # setattr(im3, key, value)
+
+                    recursive_setattr(im3, key, value)
+
+                if self.degroup_short_nircam:
+
+                    # Make sure we skip tweakreg since we've already done it
+                    im3.tweakreg.skip = True
+
+                    # Degroup the short NIRCAM observations, to avoid background issues
+                    if int(band[1:4]) <= 212 and band_type == 'nircam':
+                        degroup = True
+                    else:
+                        degroup = False
+
+                    if degroup:
+                        for i, model in enumerate(asn_file._models):
+                            model.meta.observation.exposure_number = str(i)
 
                 # Run the level 3 pipeline
-                im3.run(model_container)
+                im3.run(asn_file)
 
         else:
 

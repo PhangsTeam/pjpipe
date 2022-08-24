@@ -38,6 +38,7 @@ class ArchiveDownload:
 
     def __init__(self,
                  target=None,
+                 radius=None,
                  telescope='JWST',
                  prop_id=None,
                  instrument_name=None,
@@ -67,6 +68,7 @@ class ArchiveDownload:
             ]
 
         self.target = target
+        self.radius = radius
         self.telescope = telescope
         self.prop_id = prop_id
         self.instrument_name = instrument_name
@@ -104,12 +106,15 @@ class ArchiveDownload:
 
         if self.verbose:
             print('[%s] Beginning archive query:' % get_time())
-            print('[%s] -> Target: %s' % self.target)
-            print('[%s] -> Telescope: %s' % self.telescope)
-            print('[%s] -> Proposal ID: %s' % self.proposal_id)
-            print('[%s] -> Instrument name: %s' % self.instrument_name)
+            print('[%s] -> Target: %s' % (get_time(), self.target))
+            print('[%s] -> Telescope: %s' % (get_time(), self.telescope))
+            print('[%s] -> Proposal ID: %s' % (get_time(), self.prop_id))
+            print('[%s] -> Instrument name: %s' % (get_time(), self.instrument_name))
 
-        self.obs_list = self.observations.query_object(self.target)
+        if self.radius is None:
+            self.obs_list = self.observations.query_object(self.target)
+        else:
+            self.obs_list = self.observations.query_object(self.target, radius=self.radius)
 
         if np.all(self.obs_list['calib_level'] < 0):
             print('[%s] No available data' % get_time())
@@ -152,13 +157,11 @@ class ArchiveDownload:
                                                              extension=self.extension,
                                                              )
                 if len(products) > 0:
-                    # self.observations.download_products(products)
                     download(self.observations, products)
                 else:
                     print('[%s] Filtered data not available' % get_time())
                     continue
             else:
-                # self.observations.download_products(product_list)
                 download(self.observations, product_list)
 
         return True
