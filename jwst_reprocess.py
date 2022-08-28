@@ -299,6 +299,7 @@ class JWSTReprocess:
                  tpmatch_separation=0.000001,
                  tpmatch_tolerance=0.7,
                  tpmatch_use2dhist=True,
+                 tpmatch_fitgeom='shift',
                  tpmatch_nclip=3,
                  tpmatch_sigma=3,
                  do_all=True,
@@ -358,10 +359,11 @@ class JWSTReprocess:
                 band. Should be of the form {'band': 'reference_band'}
             * tpmatch_searchrad (float): Distance to search for a match when astrometric aligning. Defaults to 10
             * tpmatch_separation (float): Separation for objects to be considered separate in astrometric alignment.
-                Defaultss to 0.000001
+                Defaults to 0.000001
             * tpmatch_tolerance (float): Max tolerance for astrometric alignment match. Defaults to 0.7
             * tpmatch_use2dhist (bool): Whether to use 2D histogram to get initial astrometric alignment offsets.
                 Defaults to True.
+            * tpmatch_fitgeom (str): Type of fit to do in astrometric alignment. Defaults to 'shift'
             * tpmatch_nclip (int): Number of iterations to clip in astrometric alignment matching. Defaults to 3
             * tpmatch_sigma (float): Sigma-limit for clipping in astrometric alignment. Defaults to 3
             * do_all (bool): Do all processing steps. Defaults to True
@@ -505,6 +507,7 @@ class JWSTReprocess:
         self.tpmatch_separation = tpmatch_separation
         self.tpmatch_tolerance = tpmatch_tolerance
         self.tpmatch_use2dhist = tpmatch_use2dhist
+        self.tpmatch_fitgeom = tpmatch_fitgeom
         self.tpmatch_nclip = tpmatch_nclip
         self.tpmatch_sigma = tpmatch_sigma
 
@@ -1256,20 +1259,12 @@ class JWSTReprocess:
 
                 for uncal_file in uncal_files:
 
-                    # There appears to be a bug that sometimes WCS info isn't populated through to the uncal files.
-                    # Fix that here
+                    # Sometimes the WCS is catastrophically wrong. Try to correct that here
                     if self.correct_lv1_wcs:
                         if 'MAST_API_TOKEN' not in os.environ.keys():
                             os.environ['MAST_API_TOKEN'] = input('Input MAST API token: ')
 
-                        uncal_hdu = fits.open(uncal_file)
-
-                        qual = uncal_hdu[0].header['ENGQLPTG']
-
-                        if qual == 'PLANNED':
-                            os.system('set_telescope_pointing.py %s' % uncal_file)
-
-                        uncal_hdu.close()
+                        os.system('set_telescope_pointing.py %s' % uncal_file)
 
                     detector1 = calwebb_detector1.Detector1Pipeline()
 
@@ -1554,7 +1549,7 @@ class JWSTReprocess:
                 wcs_aligned_fit = fit_wcs(ref_tab[ref_idx],
                                           jwst_tab[jwst_idx],
                                           wcs_jwst_corrector,
-                                          fitgeom='shift',
+                                          fitgeom=self.tpmatch_fitgeom,
                                           nclip=self.tpmatch_nclip,
                                           sigma=(self.tpmatch_sigma, 'rmse'),
                                           )
