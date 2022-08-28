@@ -1,3 +1,5 @@
+import glob
+
 import os
 import socket
 
@@ -11,9 +13,11 @@ host = socket.gethostname()
 if 'node' in host:
     raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data'
     working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_working'
+    updated_flats_dir = None
 else:
-    raw_dir = '/Users/williams/Documents/phangs/jwst_data'
-    working_dir = '/Users/williams/Documents/phangs/jwst_working'
+    raw_dir = '/home/egorov/Science/PHANGS/JWST/Lev1/'  # '/Users/williams/Documents/phangs/jwst_data'
+    working_dir = '/home/egorov/Science/PHANGS/JWST/Reduction/merge/'  # '/Users/williams/Documents/phangs/jwst_working'
+    updated_flats_dir = "/home/egorov/Science/PHANGS/JWST/config/flats/"
 
 # We may want to occasionally flush out the CRDS directory to avoid weirdness between mappings. Probably do this at
 # the start of another version cycle
@@ -33,9 +37,9 @@ reprocess_dir += '_%s' % reprocess_dir_ext
 galaxies = [
     # 'ic5332',
     'ngc0628',
-    'ngc1365',
-    'ngc7320',
-    'ngc7496',
+    # 'ngc1365',
+    # 'ngc7320',
+    # 'ngc7496',
 ]
 
 for galaxy in galaxies:
@@ -95,10 +99,10 @@ for galaxy in galaxies:
             'F335M',
             'F360M',
             # MIRI
-            # 'F770W',
-            # 'F1000W',
-            # 'F1130W',
-            # 'F2100W'
+            'F770W',
+            'F1000W',
+            'F1130W',
+            'F2100W'
         ]
 
     reproc = JWSTReprocess(galaxy=galaxy,
@@ -110,9 +114,18 @@ for galaxy in galaxies:
                            alignment_mapping=alignment_mapping,
                            bands=bands,
                            procs=20,
+                           overwrite_all=False,
+                           overwrite_lv1=False,
+                           overwrite_lv2=True,
+                           # overwrite_lyot_adjust=False,
+                           overwrite_lv3=True,
+                           overwrite_astrometric_alignment=True,
                            lv1_parameter_dict='phangs',
                            lv2_parameter_dict='phangs',
                            lv3_parameter_dict='phangs',
+                           updated_flats_dir=updated_flats_dir,
+                           # do_lyot_adjust='adjust',
+                           # process_bgr_like_science=False,
                            )
     reproc.run_all()
 

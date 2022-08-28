@@ -552,9 +552,8 @@ def run_reprocessing(galname="ngc0628", lev1_root_dir='/home/egorov/Science/PHAN
                     use_flat = my_flat[0]
             else:
                 use_flat = None
-            print(use_flat)
-            # run_pipeline(asn_file_lev2, level='level2', data_dir=lev2_dir_cur_obj, output_dir=reduced_dir_cur_obj,
-            #              use_flat=use_flat)
+            run_pipeline(asn_file_lev2, level='level2', data_dir=lev2_dir_cur_obj, output_dir=reduced_dir_cur_obj,
+                         use_flat=use_flat)
 
     # === Step 4: Mask the input frames before level2 processing
     if (do_adjust_lyot or do_destriping) and do_steps['mask_level3']:

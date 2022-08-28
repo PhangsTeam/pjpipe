@@ -311,7 +311,9 @@ class JWSTReprocess:
                  overwrite_astrometric_ref_cat=False,
                  correct_lv1_wcs=False,
                  crds_url='https://jwst-crds.stsci.edu',
-                 procs=None
+                 procs=None,
+                 updated_flats_dir=None,
+                 process_bgr_like_science=False,
                  ):
         """JWST reprocessing routines.
 
@@ -372,6 +374,9 @@ class JWSTReprocess:
                 latest versions of the files
             * procs (int): Number of parallel processes to run during destriping. Will default to half the number of
                 cores in the system
+            * updated_flats_dir (str): Directory with the updated flats to use instead of default ones.
+            * process_bgr_like_science (bool): if True, than additionally process the offset images
+                in the same way as the science (for testing purposes only)
 
         TODO:
             * Update destriping algorithm as we improve it
@@ -446,11 +451,12 @@ class JWSTReprocess:
 
                 'skymatch.skip': {'miri': True},
                 'skymatch.skymethod': 'global+match',
-                'skymatch.subtract': True,
+                'skymatch.subtract': {'nircam': True, 'miri': False},
                 'skymatch.skystat': 'median',
-                'skymatch.nclip': 20,
-                'skymatch.lsigma': 3,
-                'skymatch.usigma': 3,
+                'skymatch.match_down': {'miri': False},
+                'skymatch.nclip': {'nircam':20, 'miri':10},
+                'skymatch.lsigma': {'nircam':3, 'miri':1.5},
+                'skymatch.usigma': {'nircam':3, 'miri':1.5},
 
                 'outlier_detection.in_memory': True,
 
@@ -471,7 +477,7 @@ class JWSTReprocess:
             do_lv1 = True
             do_lv2 = True
             do_destriping = True
-            do_lyot_adjust = 'adjust'
+            # do_lyot_adjust = 'adjust'
             do_lv3 = True
             do_astrometric_alignment = True
 
@@ -513,6 +519,11 @@ class JWSTReprocess:
 
         self.procs = procs
 
+        if updated_flats_dir is not None and os.path.isdir(updated_flats_dir):
+            self.updated_flats_dir = updated_flats_dir
+        else:
+            self.updated_flats_dir = None
+        self.process_bgr_like_science = process_bgr_like_science
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
 
@@ -663,7 +674,7 @@ class JWSTReprocess:
 
                 # Run lv2 asn generation
                 asn_file = self.run_asn2(directory=rate_dir,
-                                         band=band)
+                                         band=band, process_bgr_like_science=self.process_bgr_like_science)
 
                 # Run pipeline
                 self.run_pipeline(band=band,
@@ -835,13 +846,12 @@ class JWSTReprocess:
                     if not os.path.exists(input_dir):
                         os.makedirs(input_dir)
 
-                    cal_files = glob.glob(os.path.join(self.raw_dir,
+                    cal_files = [f for f in glob.glob(os.path.join(self.raw_dir,
                                                        self.galaxy,
                                                        'mastDownload',
                                                        'JWST',
                                                        '*%s' % band_ext,
-                                                       '*%s_cal.fits' % band_ext)
-                                          )
+                                                       '*%s_cal.fits' % band_ext)) if ('offset' not in f)]
 
                     if len(cal_files) == 0:
                         self.logger.info('-> No cal files found. Skipping')
@@ -872,6 +882,17 @@ class JWSTReprocess:
                                   output_dir=output_dir,
                                   asn_file=asn_file,
                                   pipeline_stage='lv3')
+
+                if self.process_bgr_like_science:
+                    asn_file_bgr = self.run_asn3(directory=input_dir,
+                                                 band=band, process_bgr_like_science=True)
+                    output_dir_bgr = os.path.join(self.reprocess_dir, self.galaxy, band, 'bgr')
+                    self.run_pipeline(band=band,
+                                      input_dir=input_dir,
+                                      output_dir=output_dir_bgr,
+                                      asn_file=asn_file_bgr,
+                                      pipeline_stage='lv3')
+
 
             if self.do_astrometric_alignment:
                 self.logger.info('-> Astrometric alignment')
@@ -1023,12 +1044,15 @@ class JWSTReprocess:
     def run_asn2(self,
                  directory=None,
                  band=None,
+                 process_bgr_like_science=False
                  ):
         """Setup asn lv2 files
 
         Args:
             * directory (str): Directory for files and asn file
             * band (str): JWST filter
+            * process_bgr_like_science (bool): if True, than additionally process the offset images
+                in the same way as the science (for testing purposes only)
         """
 
         if directory is None:
@@ -1096,6 +1120,18 @@ class JWSTReprocess:
                     ]
                 })
 
+            # For testing purposes - enable level2 reduction for off images in the same way as the science
+            if (band_type == 'miri') and process_bgr_like_science:
+                for row_id, row in enumerate(bgr_tab):
+                    json_content['products'].append({
+                        'name': f'offset_{band}_{row_id+1}',
+                        'members': [
+                            {'expname': row['File'],
+                             'exptype': 'science',
+                             'exposerr': 'null'}
+                        ]
+                    })
+
             # Associate background files, but only for MIRI
             if band_type == 'miri':
                 for product in json_content['products']:
@@ -1115,7 +1151,8 @@ class JWSTReprocess:
 
     def run_asn3(self,
                  directory=None,
-                 band=None):
+                 band=None,
+                 process_bgr_like_science=False):
         """Setup asn lv3 files
 
         Args:
@@ -1145,10 +1182,16 @@ class JWSTReprocess:
         os.chdir(directory)
 
         asn_lv3_filename = 'asn_lv3_%s.json' % band
+        if process_bgr_like_science:
+            asn_lv3_filename = 'asn_lv3_%s_offset.json' % band
+
 
         if not os.path.exists(asn_lv3_filename) or self.overwrite_lv3:
 
-            lv2_files = glob.glob('*%s_cal.fits' % band_ext)
+            if not process_bgr_like_science:
+                lv2_files = [f for f in glob.glob('*%s_cal.fits' % band_ext) if 'offset' not in f]
+            else:
+                lv2_files = [f for f in glob.glob('*_cal.fits') if 'offset' in f]
             tab = Table(names=['File', 'Type', 'Obs_ID', 'Filter', 'Start', 'Exptime', 'Objname', 'Program'],
                         dtype=[str, str, str, str, str, float, str, str])
 
@@ -1172,7 +1215,10 @@ class JWSTReprocess:
                             }
 
             # Make sure we're not including the MIRI backgrounds here
-            sci_tab = tab[tab['Type'] == 'sci']
+            if not process_bgr_like_science:
+                sci_tab = tab[tab['Type'] == 'sci']
+            else:
+                sci_tab = tab
 
             for row in sci_tab:
                 json_content['products'][-1]['members'].append(
@@ -1308,6 +1354,10 @@ class JWSTReprocess:
 
                     recursive_setattr(im2, key, value)
 
+                if self.updated_flats_dir is not None:
+                    my_flat = [f for f in glob.glob(os.path.join(self.updated_flats_dir,"*.fits")) if band in f]
+                    if len(my_flat) != 0:
+                        im2.flat_field.user_supplied_flat = my_flat[0]
                 # Run the level 2 pipeline
                 im2.run(asn_file)
 
