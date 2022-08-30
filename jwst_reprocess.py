@@ -471,9 +471,9 @@ class JWSTReprocess:
                 'skymatch.subtract': {'nircam': True, 'miri': False},
                 'skymatch.skystat': 'median',
                 'skymatch.match_down': {'miri': False},
-                'skymatch.nclip': {'nircam':20, 'miri':10},
-                'skymatch.lsigma': {'nircam':3, 'miri':1.5},
-                'skymatch.usigma': {'nircam':3, 'miri':1.5},
+                'skymatch.nclip': {'nircam': 20, 'miri': 10},
+                'skymatch.lsigma': {'nircam': 3, 'miri': 1.5},
+                'skymatch.usigma': {'nircam': 3, 'miri': 1.5},
 
                 'outlier_detection.in_memory': True,
 
@@ -875,11 +875,11 @@ class JWSTReprocess:
                         os.makedirs(input_dir)
 
                     cal_files = [f for f in glob.glob(os.path.join(self.raw_dir,
-                                                       self.galaxy,
-                                                       'mastDownload',
-                                                       'JWST',
-                                                       '*%s' % band_ext,
-                                                       '*%s_cal.fits' % band_ext)) if ('offset' not in f)]
+                                                                   self.galaxy,
+                                                                   'mastDownload',
+                                                                   'JWST',
+                                                                   '*%s' % band_ext,
+                                                                   '*%s_cal.fits' % band_ext)) if ('offset' not in f)]
 
                     if len(cal_files) == 0:
                         self.logger.info('-> No cal files found. Skipping')
@@ -920,7 +920,6 @@ class JWSTReprocess:
                                       output_dir=output_dir_bgr,
                                       asn_file=asn_file_bgr,
                                       pipeline_stage='lv3')
-
 
             if self.do_astrometric_alignment:
                 self.logger.info('-> Astrometric alignment')
@@ -1153,7 +1152,7 @@ class JWSTReprocess:
             if (band_type == 'miri') and process_bgr_like_science:
                 for row_id, row in enumerate(bgr_tab):
                     json_content['products'].append({
-                        'name': f'offset_{band}_{row_id+1}',
+                        'name': f'offset_{band}_{row_id + 1}',
                         'members': [
                             {'expname': row['File'],
                              'exptype': 'science',
@@ -1187,6 +1186,7 @@ class JWSTReprocess:
         Args:
             * directory (str): Directory for files and asn file
             * band (str): JWST filter
+            * process_bgr_like_science (bool): Additionally process the offset images in the same way as the science
         """
 
         if band is None:
@@ -1213,7 +1213,6 @@ class JWSTReprocess:
         asn_lv3_filename = 'asn_lv3_%s.json' % band
         if process_bgr_like_science:
             asn_lv3_filename = 'asn_lv3_%s_offset.json' % band
-
 
         if not os.path.exists(asn_lv3_filename) or self.overwrite_lv3:
 
@@ -1376,7 +1375,7 @@ class JWSTReprocess:
                     recursive_setattr(im2, key, value)
 
                 if self.updated_flats_dir is not None:
-                    my_flat = [f for f in glob.glob(os.path.join(self.updated_flats_dir,"*.fits")) if band in f]
+                    my_flat = [f for f in glob.glob(os.path.join(self.updated_flats_dir, "*.fits")) if band in f]
                     if len(my_flat) != 0:
                         im2.flat_field.user_supplied_flat = my_flat[0]
                 # Run the level 2 pipeline
