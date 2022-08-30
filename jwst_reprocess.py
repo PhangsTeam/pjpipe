@@ -274,6 +274,7 @@ def recursive_setattr(f, attribute, value):
 def recursive_getattr(f, attribute, *args):
     def _getattr(f, attribute):
         return getattr(f, attribute, *args)
+
     return functools.reduce(_getattr, [f] + attribute.split('.'))
 
 
@@ -294,6 +295,13 @@ class JWSTReprocess:
                  astrometric_alignment_image=None,
                  astrometric_alignment_table=None,
                  alignment_mapping=None,
+                 tpmatch_searchrad=10,
+                 tpmatch_separation=0.000001,
+                 tpmatch_tolerance=0.7,
+                 tpmatch_use2dhist=True,
+                 tpmatch_fitgeom='shift',
+                 tpmatch_nclip=3,
+                 tpmatch_sigma=3,
                  do_all=True,
                  do_lv1=False,
                  do_lv2=False,
@@ -351,6 +359,15 @@ class JWSTReprocess:
             * astrometric_alignment_table (str): Path to table to align astrometry to
             * alignment_mapping (dict): Dictionary to map basing alignments off cross-correlation with other aligned
                 band. Should be of the form {'band': 'reference_band'}
+            * tpmatch_searchrad (float): Distance to search for a match when astrometric aligning. Defaults to 10
+            * tpmatch_separation (float): Separation for objects to be considered separate in astrometric alignment.
+                Defaults to 0.000001
+            * tpmatch_tolerance (float): Max tolerance for astrometric alignment match. Defaults to 0.7
+            * tpmatch_use2dhist (bool): Whether to use 2D histogram to get initial astrometric alignment offsets.
+                Defaults to True.
+            * tpmatch_fitgeom (str): Type of fit to do in astrometric alignment. Defaults to 'shift'
+            * tpmatch_nclip (int): Number of iterations to clip in astrometric alignment matching. Defaults to 3
+            * tpmatch_sigma (float): Sigma-limit for clipping in astrometric alignment. Defaults to 3
             * do_all (bool): Do all processing steps. Defaults to True
             * do_lv1 (bool): Run lv1 pipeline. Defaults to False
             * do_lv2 (bool): Run lv2 pipeline. Defaults to False
@@ -477,7 +494,6 @@ class JWSTReprocess:
             do_lv1 = True
             do_lv2 = True
             do_destriping = True
-            # do_lyot_adjust = 'adjust'
             do_lv3 = True
             do_astrometric_alignment = True
 
@@ -492,6 +508,14 @@ class JWSTReprocess:
         self.astrometric_alignment_type = astrometric_alignment_type
         self.astrometric_alignment_image = astrometric_alignment_image
         self.astrometric_alignment_table = astrometric_alignment_table
+
+        self.tpmatch_searchrad = tpmatch_searchrad
+        self.tpmatch_separation = tpmatch_separation
+        self.tpmatch_tolerance = tpmatch_tolerance
+        self.tpmatch_use2dhist = tpmatch_use2dhist
+        self.tpmatch_fitgeom = tpmatch_fitgeom
+        self.tpmatch_nclip = tpmatch_nclip
+        self.tpmatch_sigma = tpmatch_sigma
 
         self.bgr_check_type = bgr_check_type
 
@@ -597,7 +621,11 @@ class JWSTReprocess:
 
                         if not os.path.exists(hdu_out_name) or self.overwrite_lv1:
 
-                            hdu = fits.open(uncal_file)
+                            try:
+                                hdu = fits.open(uncal_file)
+                            except OSError:
+                                raise Warning('Issue with %s!' % uncal_file)
+
                             if hdu[0].header['FILTER'].strip() == band:
                                 hdu.writeto(hdu_out_name, overwrite=True)
 
@@ -981,8 +1009,8 @@ class JWSTReprocess:
             zero_idx = np.where(hdu['SCI'].data == 0)
 
             # Pull out coronagraph, mask 0s and bad data quality
-            lyot = copy.deepcopy(hdu['SCI'].data[750:, :280])
-            lyot_dq = copy.deepcopy(hdu['DQ'].data[750:, :280])
+            lyot = copy.deepcopy(hdu['SCI'].data[735:, :290])
+            lyot_dq = copy.deepcopy(hdu['DQ'].data[735:, :290])
             lyot[lyot == 0] = np.nan
             lyot[lyot_dq != 0] = np.nan
 
@@ -1008,7 +1036,7 @@ class JWSTReprocess:
                 bgr_lyot = sigma_clipped_stats(lyot, mask=lyot_mask)[1]
                 bgr_image = sigma_clipped_stats(image, mask=image_mask)[1]
 
-            hdu['SCI'].data[750:, :280] += (bgr_image - bgr_lyot)
+            hdu['SCI'].data[735:, :290] += (bgr_image - bgr_lyot)
             hdu['SCI'].data[zero_idx] = 0
 
             hdu.writeto(out_name, overwrite=True)
@@ -1036,7 +1064,8 @@ class JWSTReprocess:
             if os.path.exists(out_name):
                 return True
 
-            hdu['DQ'].data[750:, :280] = 513  # Masks the coronagraph area
+            hdu['SCI'].data[735:, :290] = 0
+            hdu['DQ'].data[735:, :290] = 1  # Masks the coronagraph area
             hdu.writeto(out_name, overwrite=True)
 
             hdu.close()
@@ -1276,20 +1305,12 @@ class JWSTReprocess:
 
                 for uncal_file in uncal_files:
 
-                    # There appears to be a bug that sometimes WCS info isn't populated through to the uncal files.
-                    # Fix that here
+                    # Sometimes the WCS is catastrophically wrong. Try to correct that here
                     if self.correct_lv1_wcs:
                         if 'MAST_API_TOKEN' not in os.environ.keys():
                             os.environ['MAST_API_TOKEN'] = input('Input MAST API token: ')
 
-                        uncal_hdu = fits.open(uncal_file)
-
-                        qual = uncal_hdu[0].header['ENGQLPTG']
-
-                        if qual == 'PLANNED':
-                            os.system('set_telescope_pointing.py %s' % uncal_file)
-
-                        uncal_hdu.close()
+                        os.system('set_telescope_pointing.py %s' % uncal_file)
 
                     detector1 = calwebb_detector1.Detector1Pipeline()
 
@@ -1508,12 +1529,13 @@ class JWSTReprocess:
 
             astro_table = QTable.read(self.astrometric_alignment_table, format='fits')
 
-            # if 'parallax' in astro_table.colnames:
-            #     # This should be a GAIA query, so cut down based on whether there is a parallax measurement
-            #     idx = np.where(~np.isnan(astro_table['parallax']))
-            #     # idx = np.where(np.logical_and(astro_table['ra_error'].value < 1,
-            #     #                               astro_table['dec_error'].value < 1))
-            #     astro_table = astro_table[idx]
+            if 'parallax' in astro_table.colnames:
+                # This should be a GAIA query, so cut down based on whether there is a parallax measurement
+                idx = np.where(~np.isnan(astro_table['parallax']))
+                # This should be a GAIA query, so cut down based on whether there is good RA/Dec values
+                # idx = np.where(np.logical_and(astro_table['ra_error'].value < 1,
+                #                               astro_table['dec_error'].value < 1))
+                astro_table = astro_table[idx]
 
             ref_tab = Table()
 
@@ -1547,6 +1569,12 @@ class JWSTReprocess:
                 # Filter out extended
                 sources = sources[~sources['is_extended']]
 
+                # Filter based on roundness and sharpness
+                # sources = sources[np.logical_and(sources['sharpness'] >= 0.2,
+                #                                  sources['sharpness'] <= 1.0)]
+                # sources = sources[np.logical_and(sources['roundness'] >= -1.0,
+                #                                  sources['roundness'] <= 1.0)]
+
                 # Convert sources into a reference catalogue
                 wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
                 wcs_jwst_corrector = FITSWCS(wcs_jwst)
@@ -1557,12 +1585,12 @@ class JWSTReprocess:
                 jwst_tab['ra'] = sources['sky_centroid'].ra.value
                 jwst_tab['dec'] = sources['sky_centroid'].dec.value
 
-                # Run a match with fairly strict tolerance
+                # Run a match
                 match = TPMatch(
-                    searchrad=10,
-                    separation=0.000001,
-                    tolerance=0.7,
-                    use2dhist=True,
+                    searchrad=self.tpmatch_searchrad,
+                    separation=self.tpmatch_separation,
+                    tolerance=self.tpmatch_tolerance,
+                    use2dhist=self.tpmatch_use2dhist,
                 )
                 ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
 
@@ -1571,7 +1599,9 @@ class JWSTReprocess:
                 wcs_aligned_fit = fit_wcs(ref_tab[ref_idx],
                                           jwst_tab[jwst_idx],
                                           wcs_jwst_corrector,
-                                          fitgeom='shift',
+                                          fitgeom=self.tpmatch_fitgeom,
+                                          nclip=self.tpmatch_nclip,
+                                          sigma=(self.tpmatch_sigma, 'rmse'),
                                           )
 
                 wcs_aligned = wcs_aligned_fit.wcs
@@ -1588,6 +1618,7 @@ class JWSTReprocess:
                                      reusename=True)
 
                 fit_info = wcs_aligned_fit.meta['fit_info']
+                fit_mask = fit_info['fitmask']
 
                 # Pull out useful alignment info to the table -- HST x/y/RA/Dec, JWST x/y/RA/Dec (corrected and
                 # uncorrected)
@@ -1597,14 +1628,14 @@ class JWSTReprocess:
                 if 'xcentroid' in ref_tab.colnames:
                     aligned_tab['xcentroid_ref'] = ref_tab[ref_idx]['xcentroid']
                     aligned_tab['ycentroid_ref'] = ref_tab[ref_idx]['ycentroid']
-                aligned_tab['ra_ref'] = ref_tab[ref_idx]['RA']
-                aligned_tab['dec_ref'] = ref_tab[ref_idx]['DEC']
+                aligned_tab['ra_ref'] = ref_tab[ref_idx]['RA'][fit_mask]
+                aligned_tab['dec_ref'] = ref_tab[ref_idx]['DEC'][fit_mask]
 
                 # Since we're pulling from the source catalogue, these should all exist
-                aligned_tab['xcentroid_jwst'] = jwst_tab[jwst_idx]['x']
-                aligned_tab['ycentroid_jwst'] = jwst_tab[jwst_idx]['y']
-                aligned_tab['ra_jwst_uncorr'] = jwst_tab[jwst_idx]['ra']
-                aligned_tab['dec_jwst_uncorr'] = jwst_tab[jwst_idx]['dec']
+                aligned_tab['xcentroid_jwst'] = jwst_tab[jwst_idx]['x'][fit_mask]
+                aligned_tab['ycentroid_jwst'] = jwst_tab[jwst_idx]['y'][fit_mask]
+                aligned_tab['ra_jwst_uncorr'] = jwst_tab[jwst_idx]['ra'][fit_mask]
+                aligned_tab['dec_jwst_uncorr'] = jwst_tab[jwst_idx]['dec'][fit_mask]
 
                 aligned_tab['ra_jwst_corr'] = fit_info['fit_RA']
                 aligned_tab['dec_jwst_corr'] = fit_info['fit_DEC']
