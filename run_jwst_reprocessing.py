@@ -19,6 +19,9 @@ else:
 # the start of another version cycle
 flush_crds = False
 
+# Force in working context if required
+# os.environ['CRDS_CONTEXT'] = 'jwst_0956.pmap'
+
 reprocess_dir = os.path.join(working_dir, 'jwst_lv3_reprocessed')
 crds_dir = os.path.join(working_dir, 'crds')
 
