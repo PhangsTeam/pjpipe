@@ -322,6 +322,7 @@ class JWSTReprocess:
                  procs=None,
                  updated_flats_dir=None,
                  process_bgr_like_science=False,
+                 use_field_in_lev3=None
                  ):
         """JWST reprocessing routines.
 
@@ -394,6 +395,8 @@ class JWSTReprocess:
             * updated_flats_dir (str): Directory with the updated flats to use instead of default ones.
             * process_bgr_like_science (bool): if True, than additionally process the offset images
                 in the same way as the science (for testing purposes only)
+            * use_field_in_lev3 (list): if not None, then should be a list of indexes corresponding to
+                the number of pointings to use (jwxxxxxyyyzzz_...), where zzz is the considered numbers
 
         TODO:
             * Update destriping algorithm as we improve it
@@ -466,11 +469,16 @@ class JWSTReprocess:
                 'tweakreg.tolerance': {'nircam_short': '5pix', 'nircam_long': '10pix', 'miri': '10pix'},
                 'tweakreg.use2dhist': False,
 
-                'skymatch.skip': {'miri': True},
-                'skymatch.skymethod': 'global+match',
-                'skymatch.subtract': {'nircam': True, 'miri': False},
+                'tweakreg.roundlo': -0.5,
+                'tweakreg.roundhi': 0.5,
+                # Tweak boxsize, so we detect objects in diffuse emission
+                'tweakreg.bkg_boxsize': 100,
+
+                'skymatch.skip': {'miri': False},
+                'skymatch.skymethod': {'nircam': 'global+match', 'miri': 'match'},
+                'skymatch.subtract': {'nircam': True, 'miri': True},
                 'skymatch.skystat': 'median',
-                'skymatch.match_down': {'miri': False},
+                'skymatch.match_down': {'miri': True},
                 'skymatch.nclip': {'nircam': 20, 'miri': 10},
                 'skymatch.lsigma': {'nircam': 3, 'miri': 1.5},
                 'skymatch.usigma': {'nircam': 3, 'miri': 1.5},
@@ -548,6 +556,7 @@ class JWSTReprocess:
         else:
             self.updated_flats_dir = None
         self.process_bgr_like_science = process_bgr_like_science
+        self.use_field_in_lev3 = use_field_in_lev3
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
 
@@ -841,10 +850,18 @@ class JWSTReprocess:
 
                 self.logger.info('-> Level 3')
 
-                output_dir = os.path.join(self.reprocess_dir,
-                                          self.galaxy,
-                                          band,
-                                          'lv3')
+                if self.use_field_in_lev3 is None:
+
+                    output_dir = os.path.join(self.reprocess_dir,
+                                              self.galaxy,
+                                              band,
+                                              'lv3')
+
+                else:
+                    output_dir = os.path.join(self.reprocess_dir,
+                                              self.galaxy, band,
+                                              'lv3_field_' + '_'.join(np.atleast_1d(
+                                                  self.use_field_in_lev3).astype(str)))
 
                 if self.overwrite_lv3:
                     os.system('rm -rf %s' % output_dir)
@@ -924,10 +941,18 @@ class JWSTReprocess:
             if self.do_astrometric_alignment:
                 self.logger.info('-> Astrometric alignment')
 
-                input_dir = os.path.join(self.reprocess_dir,
-                                         self.galaxy,
-                                         band,
-                                         'lv3')
+                if self.use_field_in_lev3 is None:
+
+                    input_dir = os.path.join(self.reprocess_dir,
+                                             self.galaxy,
+                                             band,
+                                             'lv3')
+
+                else:
+                    input_dir = os.path.join(self.reprocess_dir,
+                                             self.galaxy, band,
+                                             'lv3_field_' + '_'.join(np.atleast_1d(
+                                                 self.use_field_in_lev3).astype(str)))
 
                 if band in self.alignment_mapping.keys():
                     self.align_wcs_to_jwst(input_dir,
@@ -1210,9 +1235,12 @@ class JWSTReprocess:
 
         os.chdir(directory)
 
-        asn_lv3_filename = 'asn_lv3_%s.json' % band
+        ending = ''
+        if self.use_field_in_lev3 is not None and not process_bgr_like_science:
+            ending += ('_'+'_'.join(np.atleast_1d(self.use_field_in_lev3).astype(str)))
         if process_bgr_like_science:
-            asn_lv3_filename = 'asn_lv3_%s_offset.json' % band
+            ending += '_offset'
+        asn_lv3_filename = 'asn_lv3_%s%s.json' % (band, ending)
 
         if not os.path.exists(asn_lv3_filename) or self.overwrite_lv3:
 
@@ -1224,6 +1252,11 @@ class JWSTReprocess:
                         dtype=[str, str, str, str, str, float, str, str])
 
             for f in lv2_files:
+                if self.use_field_in_lev3 is not None:
+                    curfield_num = int(f.split("_")[-5][-3:])
+                    if not any(np.atleast_1d(self.use_field_in_lev3) == curfield_num):
+                        continue
+
                 tab.add_row(parse_fits_to_table(f,
                                                 check_bgr=check_bgr,
                                                 check_type=self.bgr_check_type)
@@ -1594,7 +1627,6 @@ class JWSTReprocess:
                 ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
 
                 # Do alignment
-
                 wcs_aligned_fit = fit_wcs(ref_tab[ref_idx],
                                           jwst_tab[jwst_idx],
                                           wcs_jwst_corrector,
@@ -1670,10 +1702,20 @@ class JWSTReprocess:
         else:
             raise Warning('Reference band %s not recognised!' % band)
 
+        if self.use_field_in_lev3 is not None:
+            ref_dir = 'lv3'  # _field_' + '_'.join(np.atleast_1d(self.use_field_in_lev3).astype(str))
+            ref_band = band
+            if ref_band in NIRCAM_BANDS:
+                ref_band_type = 'nircam'
+            elif band in MIRI_BANDS:
+                ref_band_type = 'miri'
+        else:
+            ref_dir = 'lv3'
+
         ref_hdu_name = os.path.join(self.reprocess_dir,
                                     self.galaxy,
                                     ref_band,
-                                    'lv3',
+                                    ref_dir,
                                     '%s_%s_lv3_%s_i2d_align.fits' % (self.galaxy, ref_band_type, ref_band.lower()))
 
         if not os.path.exists(ref_hdu_name):
@@ -1718,6 +1760,16 @@ class JWSTReprocess:
 
                 ref_data[nan_idx] = np.nan
                 jwst_data[nan_idx] = np.nan
+
+                # ref_data[:,520:920] = np.nan
+                # jwst_data[:, 520:920] = np.nan
+                # ref_err[:, 520:920] = np.nan
+                # jwst_err[:, 520:920] = np.nan
+                #
+                # ref_err[(ref_data > 100) | (ref_data<-0.1)] = np.nan
+                # jwst_err[(jwst_data > 100) | (jwst_data<-0.1)] = np.nan
+                # jwst_data[(jwst_data>100) | (jwst_data<-0.1)] = np.nan
+                # ref_data[(ref_data > 100) | (ref_data<-0.1)] = np.nan
 
                 ref_err[nan_idx] = np.nan
                 jwst_err[nan_idx] = np.nan

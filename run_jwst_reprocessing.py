@@ -16,7 +16,7 @@ if 'node' in host:
     updated_flats_dir = None
 else:
     raw_dir = '/home/egorov/Science/PHANGS/JWST/Lev1/'  # '/Users/williams/Documents/phangs/jwst_data'
-    working_dir = '/home/egorov/Science/PHANGS/JWST/Reduction/merge/'  # '/Users/williams/Documents/phangs/jwst_working'
+    working_dir = '/home/egorov/Science/PHANGS/JWST/Reduction/'  # '/Users/williams/Documents/phangs/jwst_working'
     updated_flats_dir = "/home/egorov/Science/PHANGS/JWST/config/flats/"
 
 # We may want to occasionally flush out the CRDS directory to avoid weirdness between mappings. Probably do this at
@@ -38,9 +38,9 @@ reprocess_dir_ext = 'v0p4p2'
 reprocess_dir += '_%s' % reprocess_dir_ext
 
 galaxies = [
+    # 'ngc0628',
+    'ngc1365',
     # 'ic5332',
-    'ngc0628',
-    # 'ngc1365',
     # 'ngc7320',
     # 'ngc7496',
 ]
@@ -107,7 +107,8 @@ for galaxy in galaxies:
             'F1130W',
             'F2100W'
         ]
-
+    cur_field = None  # indicate numbers of particular field if you want to limit the level3 and further reduction
+                      # by only selected pointings (e.g. [1], or [1,2], or 1)
     reproc = JWSTReprocess(galaxy=galaxy,
                            raw_dir=raw_dir,
                            reprocess_dir=reprocess_dir,
@@ -119,17 +120,21 @@ for galaxy in galaxies:
                            procs=20,
                            overwrite_all=False,
                            overwrite_lv1=False,
-                           overwrite_lv2=True,
-                           # overwrite_lyot_adjust=False,
+                           overwrite_lv2=False,
+                           overwrite_lyot_adjust=True,
                            overwrite_lv3=True,
                            overwrite_astrometric_alignment=True,
+                           overwrite_astrometric_ref_cat=False,
                            lv1_parameter_dict='phangs',
                            lv2_parameter_dict='phangs',
                            lv3_parameter_dict='phangs',
                            updated_flats_dir=updated_flats_dir,
-                           # do_lyot_adjust='adjust',
+                           do_lyot_adjust='mask',
                            # process_bgr_like_science=False,
+                           use_field_in_lev3=cur_field
                            )
     reproc.run_all()
+
+
 
 print('Complete!')
