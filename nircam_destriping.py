@@ -23,6 +23,8 @@ matplotlib.rcParams['mathtext.fontset'] = 'stix'
 matplotlib.rcParams['font.family'] = 'STIXGeneral'
 matplotlib.rcParams['font.size'] = 14
 
+matplotlib.use('Agg')
+
 
 class NircamDestriper:
 
@@ -76,7 +78,7 @@ class NircamDestriper:
             raise Warning('destriping_method should be one of %s' % DESTRIPING_METHODS)
 
         self.hdu_name = hdu_name
-        self.hdu = fits.open(self.hdu_name)
+        self.hdu = fits.open(self.hdu_name, memmap=False)
 
         if hdu_out_name is None:
             hdu_out_name = self.hdu_name.replace('.fits', '_destriped.fits')
