@@ -5,6 +5,9 @@ import socket
 
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
 
 from jwst_reprocess import JWSTReprocess
 
@@ -21,7 +24,7 @@ else:
 
 # We may want to occasionally flush out the CRDS directory to avoid weirdness between mappings. Probably do this at
 # the start of another version cycle
-flush_crds = False
+flush_crds = True
 
 # Force in working context if required
 # os.environ['CRDS_CONTEXT'] = 'jwst_0956.pmap'
@@ -33,7 +36,7 @@ if flush_crds:
     os.system('rm -rf %s' % crds_dir)
     os.makedirs(crds_dir)
 
-reprocess_dir_ext = 'v0p4p2'
+reprocess_dir_ext = 'v0p4p2_new'
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
@@ -42,7 +45,7 @@ galaxies = [
     'ngc1365',
     # 'ic5332',
     # 'ngc7320',
-    # 'ngc7496',
+    'ngc7496',
 ]
 
 for galaxy in galaxies:
@@ -102,10 +105,10 @@ for galaxy in galaxies:
             'F335M',
             'F360M',
             # MIRI
-            'F770W',
-            'F1000W',
-            'F1130W',
-            'F2100W'
+            # 'F770W',
+            # 'F1000W',
+            # 'F1130W',
+            # 'F2100W'
         ]
     cur_field = None  # indicate numbers of particular field if you want to limit the level3 and further reduction
                       # by only selected pointings (e.g. [1], or [1,2], or 1)

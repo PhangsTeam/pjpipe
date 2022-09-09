@@ -3,16 +3,19 @@ import functools
 import glob
 import json
 import logging
+import multiprocessing as mp
 import os
 import shutil
 import time
 import warnings
 from functools import partial
-from multiprocessing import Pool, cpu_count, set_start_method
+from multiprocessing import cpu_count
 
-set_start_method('fork')
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
 
 import numpy as np
 from astropy.io import fits
@@ -979,21 +982,21 @@ class JWSTReprocess:
             if not os.path.exists(directory):
                 os.makedirs(directory)
 
-        with Pool(self.procs) as pool:
+        with mp.get_context('fork').Pool(self.procs) as pool:
 
             results = []
 
-            for result in tqdm(pool.imap_unordered(partial(parallel_destripe,
-                                                           quadrants=True,
-                                                           destriping_method='pca+median',
-                                                           dilate_size=7,
-                                                           pca_reconstruct_components=5,
-                                                           pca_diffuse=True,
-                                                           pca_dir=pca_dir,
-                                                           out_dir=out_dir,
-                                                           plot_dir=plot_dir,
-                                                           ),
-                                                   files),
+            for result in tqdm(pool.imap(partial(parallel_destripe,
+                                                 quadrants=True,
+                                                 destriping_method='pca+median',
+                                                 dilate_size=7,
+                                                 pca_reconstruct_components=5,
+                                                 pca_diffuse=True,
+                                                 pca_dir=pca_dir,
+                                                 out_dir=out_dir,
+                                                 plot_dir=plot_dir,
+                                                 ),
+                                         files),
                                total=len(files), ascii=True):
                 results.append(result)
 
@@ -1248,6 +1251,9 @@ class JWSTReprocess:
                 lv2_files = [f for f in glob.glob('*%s_cal.fits' % band_ext) if 'offset' not in f]
             else:
                 lv2_files = [f for f in glob.glob('*_cal.fits') if 'offset' in f]
+
+            lv2_files.sort()
+
             tab = Table(names=['File', 'Type', 'Obs_ID', 'Filter', 'Start', 'Exptime', 'Objname', 'Program'],
                         dtype=[str, str, str, str, str, float, str, str])
 
@@ -1437,7 +1443,7 @@ class JWSTReprocess:
                     tweakreg = TweakRegStep()
                     tweakreg.output_dir = output_dir
                     tweakreg.save_results = False
-                    tweakreg.kernel_fwhm = fwhm_pix
+                    tweakreg.kernel_fwhm = fwhm_pix * 2
 
                     for key in self.lv3_parameter_dict.keys():
                         if key.split('.')[0] == 'tweakreg':
@@ -1459,8 +1465,8 @@ class JWSTReprocess:
                 im3 = calwebb_image3.Image3Pipeline()
                 im3.output_dir = output_dir
 
-                im3.tweakreg.kernel_fwhm = fwhm_pix
-                im3.source_catalog.kernel_fwhm = fwhm_pix
+                im3.tweakreg.kernel_fwhm = fwhm_pix * 2
+                im3.source_catalog.kernel_fwhm = fwhm_pix * 2
 
                 for key in self.lv3_parameter_dict.keys():
 

@@ -14,7 +14,7 @@ else:
 reprocess_dir = os.path.join(working_dir, 'jwst_lv3_reprocessed')
 release_dir = os.path.join(working_dir, 'jwst_release')
 
-version = 'v0p4p1'
+version = 'v0p4p2'
 
 reprocess_dir += '_%s' % version
 release_dir = os.path.join(release_dir, version)
@@ -30,6 +30,12 @@ galaxies = [
     'ic5332',
 ]
 
+file_exts = ['i2d.fits',
+             'i2d_align.fits',
+             'i2d_align_table.fits',
+             'cat.ecsv',
+             'segm.fits']
+
 for galaxy in galaxies:
 
     print(galaxy)
@@ -38,28 +44,14 @@ for galaxy in galaxies:
     if not os.path.exists(release_gal_dir):
         os.makedirs(release_gal_dir)
 
-    i2d_files = glob.glob(os.path.join(reprocess_dir,
-                                       galaxy,
-                                       '*',
-                                       'lv3',
-                                       '*_i2d.fits'))
-    for i2d_file in i2d_files:
-        os.system('cp %s %s' % (i2d_file, release_gal_dir))
+    for file_ext in file_exts:
 
-    align_files = glob.glob(os.path.join(reprocess_dir,
-                                         galaxy,
-                                         '*',
-                                         'lv3',
-                                         '*_i2d_align.fits'))
-    for align_file in align_files:
-        os.system('cp %s %s' % (align_file, release_gal_dir))
-
-    align_tables = glob.glob(os.path.join(reprocess_dir,
-                                          galaxy,
-                                          '*',
-                                          'lv3',
-                                          '*_i2d_align_table.fits'))
-    for align_table in align_tables:
-        os.system('cp %s %s' % (align_table, release_gal_dir))
+        file_names = glob.glob(os.path.join(reprocess_dir,
+                                            galaxy,
+                                            '*',
+                                            'lv3',
+                                            '*_%s' % file_ext))
+        for file_name in file_names:
+            os.system('cp %s %s' % (file_name, release_gal_dir))
 
 print('Complete!')
