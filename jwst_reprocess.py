@@ -25,8 +25,8 @@ from reproject import reproject_interp
 from stwcs.wcsutil import HSTWCS
 from threadpoolctl import threadpool_limits
 from tqdm import tqdm
-from tweakwcs import fit_wcs, TPMatch, FITSWCS
-from tweakwcs.correctors import JWSTWCSCorrector
+from tweakwcs import fit_wcs, XYXYMatch
+from tweakwcs.correctors import FITSWCSCorrector, JWSTWCSCorrector
 
 from nircam_destriping import NircamDestriper
 
@@ -1770,7 +1770,7 @@ class JWSTReprocess:
 
                 # Convert sources into a reference catalogue
                 wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
-                wcs_jwst_corrector = FITSWCS(wcs_jwst)
+                wcs_jwst_corrector = FITSWCSCorrector(wcs_jwst)
 
                 jwst_tab = Table()
                 jwst_tab['x'] = sources['xcentroid']
@@ -1779,7 +1779,7 @@ class JWSTReprocess:
                 jwst_tab['dec'] = sources['sky_centroid'].dec.value
 
                 # Run a match
-                match = TPMatch(
+                match = XYXYMatch(
                     searchrad=self.tpmatch_searchrad,
                     separation=self.tpmatch_separation,
                     tolerance=self.tpmatch_tolerance,
