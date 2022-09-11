@@ -11,12 +11,6 @@ import warnings
 from functools import partial
 from multiprocessing import cpu_count
 
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
-os.environ['OMP_NUM_THREADS'] = '1'
-os.environ['NUMEXPR_NUM_THREADS'] = '1'
-os.environ['MKL_NUM_THREADS'] = '1'
-os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
-
 import numpy as np
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
@@ -24,12 +18,15 @@ from astropy.table import Table, QTable
 from drizzlepac import updatehdr
 from image_registration import cross_correlation_shifts
 from jwst import datamodels
+from jwst.assign_wcs.util import update_fits_wcsinfo
 from photutils import make_source_mask
 from photutils.detection import DAOStarFinder
 from reproject import reproject_interp
 from stwcs.wcsutil import HSTWCS
+from threadpoolctl import threadpool_limits
 from tqdm import tqdm
 from tweakwcs import fit_wcs, TPMatch, FITSWCS
+from tweakwcs.correctors import JWSTWCSCorrector
 
 from nircam_destriping import NircamDestriper
 
@@ -181,7 +178,8 @@ def parallel_destripe(hdu_name,
                                   )
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        nc_destripe.run_destriping()
+        with threadpool_limits(limits=1, user_api='blas'):
+            nc_destripe.run_destriping()
 
     return True
 
@@ -298,6 +296,7 @@ class JWSTReprocess:
                  astrometric_alignment_image=None,
                  astrometric_alignment_table=None,
                  alignment_mapping=None,
+                 wcs_adjust_dict=None,
                  tpmatch_searchrad=10,
                  tpmatch_separation=0.000001,
                  tpmatch_tolerance=0.7,
@@ -310,6 +309,7 @@ class JWSTReprocess:
                  do_lv2=False,
                  do_destriping=False,
                  do_lyot_adjust=None,
+                 do_wcs_adjust=False,
                  do_lv3=False,
                  do_astrometric_alignment=False,
                  overwrite_all=False,
@@ -317,6 +317,7 @@ class JWSTReprocess:
                  overwrite_lv2=False,
                  overwrite_destriping=False,
                  overwrite_lyot_adjust=False,
+                 overwrite_wcs_adjust=False,
                  overwrite_lv3=False,
                  overwrite_astrometric_alignment=False,
                  overwrite_astrometric_ref_cat=False,
@@ -363,6 +364,8 @@ class JWSTReprocess:
             * astrometric_alignment_table (str): Path to table to align astrometry to
             * alignment_mapping (dict): Dictionary to map basing alignments off cross-correlation with other aligned
                 band. Should be of the form {'band': 'reference_band'}
+            * wcs_adjust_dict (dict): dict to adjust image group WCS before tweakreg step. Should be of form
+                {filter: {'group': {'matrix': [[1, 0], [0, 1]], 'shift': [dx, dy]}}}. Defaults to None.
             * tpmatch_searchrad (float): Distance to search for a match when astrometric aligning. Defaults to 10
             * tpmatch_separation (float): Separation for objects to be considered separate in astrometric alignment.
                 Defaults to 0.000001
@@ -378,6 +381,7 @@ class JWSTReprocess:
             * do_destriping (bool): Run destriping algorithm on lv2 data. Defaults to False
             * do_lyot_adjust (str): How to deal with the MIRI coronagraph. Options are 'mask', which masks it out, or
                 'adjust', which will adjust the background level to match the main array
+            * do_wcs_adjust (bool): Whether to run WCS adjustment before tweakreg
             * do_lv3 (bool): Run lv3 pipeline. Defaults to False
             * do_astrometric_alignment (bool): Run astrometric alignment on lv3 data. Defaults to False
             * overwrite_all (bool): Whether to overwrite everything. Defaults to False
@@ -385,6 +389,7 @@ class JWSTReprocess:
             * overwrite_lv2 (bool): Whether to overwrite lv2 data. Defaults to False
             * overwrite_destriping (bool): Whether to overwrite destriped data. Defaults to False
             * overwrite_lyot_adjust (bool): Whether to overwrite MIRI coronagraph edits. Defaults to False
+            * overwrite_wcs_adjust (bool): Whether to overwrite initial WCS adjustments. Defaults to False
             * overwrite_lv3 (bool): Whether to overwrite lv3 data. Defaults to False
             * overwrite_astrometric_alignment (bool): Whether to overwrite astrometric alignment. Defaults to False
             * overwrite_astrometric_ref_cat (bool): Whether to overwrite the generated reference catalogue for
@@ -428,6 +433,11 @@ class JWSTReprocess:
 
         if alignment_mapping is None:
             alignment_mapping = {}
+        self.alignment_mapping = alignment_mapping
+
+        if wcs_adjust_dict is None:
+            wcs_adjust_dict = {}
+        self.wcs_adjust_dict = wcs_adjust_dict
 
         if lv1_parameter_dict is None:
             lv1_parameter_dict = {}
@@ -512,9 +522,9 @@ class JWSTReprocess:
         self.do_lv2 = do_lv2
         self.do_destriping = do_destriping
         self.do_lyot_adjust = do_lyot_adjust
+        self.do_wcs_adjust = do_wcs_adjust
         self.do_lv3 = do_lv3
         self.do_astrometric_alignment = do_astrometric_alignment
-        self.alignment_mapping = alignment_mapping
 
         self.astrometric_alignment_type = astrometric_alignment_type
         self.astrometric_alignment_image = astrometric_alignment_image
@@ -535,6 +545,7 @@ class JWSTReprocess:
             overwrite_lv2 = True
             overwrite_destriping = True
             overwrite_lyot_adjust = True
+            overwrite_wcs_adjust = True
             overwrite_lv3 = True
             overwrite_astrometric_alignment = True
 
@@ -543,6 +554,7 @@ class JWSTReprocess:
         self.overwrite_lv2 = overwrite_lv2
         self.overwrite_destriping = overwrite_destriping
         self.overwrite_lyot_adjust = overwrite_lyot_adjust
+        self.overwrite_wcs_adjust = overwrite_wcs_adjust
         self.overwrite_lv3 = overwrite_lv3
         self.overwrite_astrometric_alignment = overwrite_astrometric_alignment
         self.overwrite_astrometric_ref_cat = overwrite_astrometric_ref_cat
@@ -849,6 +861,76 @@ class JWSTReprocess:
                     self.mask_lyot(in_files=cal_files,
                                    out_dir=lyot_adjust_dir)
 
+            if self.do_wcs_adjust and band in self.wcs_adjust_dict.keys():
+
+                self.logger.info('-> Adjusting WCS')
+
+                if self.do_lv2 and not (do_destriping or do_lyot_adjust is not None):
+                    input_dir = os.path.join(self.reprocess_dir,
+                                             self.galaxy,
+                                             band,
+                                             'cal')
+                elif do_lyot_adjust is not None:
+                    input_dir = os.path.join(self.reprocess_dir,
+                                             self.galaxy,
+                                             band,
+                                             'lyot_adjust')
+                elif do_destriping:
+                    input_dir = os.path.join(self.reprocess_dir,
+                                             self.galaxy,
+                                             band,
+                                             'destripe')
+                else:
+                    # At this point, we pull the cal files from the raw directories
+                    input_dir = os.path.join(self.reprocess_dir,
+                                             self.galaxy,
+                                             band,
+                                             'lv2')
+
+                    if not os.path.exists(input_dir):
+                        os.makedirs(input_dir)
+
+                    cal_files = [f for f in glob.glob(os.path.join(self.raw_dir,
+                                                                   self.galaxy,
+                                                                   'mastDownload',
+                                                                   'JWST',
+                                                                   '*%s' % band_ext,
+                                                                   '*%s_cal.fits' % band_ext)) if ('offset' not in f)]
+
+                    if len(cal_files) == 0:
+                        self.logger.info('-> No cal files found. Skipping')
+                        os.system('rm -rf %s' % input_dir)
+                        shutil.rmtree(os.path.join(self.reprocess_dir,
+                                                   self.galaxy,
+                                                   band))
+                        continue
+
+                    for cal_file in tqdm(cal_files, ascii=True):
+
+                        fits_name = cal_file.split(os.path.sep)[-1]
+                        if os.path.exists(os.path.join(input_dir, fits_name)) or self.overwrite_lv3:
+                            continue
+
+                        hdu = fits.open(cal_file)
+                        if hdu[0].header['FILTER'].strip() == band:
+                            os.system('cp %s %s/' % (cal_file, input_dir))
+                        hdu.close()
+
+                output_dir = os.path.join(self.reprocess_dir,
+                                          self.galaxy,
+                                          band,
+                                          'wcs_adjust')
+
+                if self.overwrite_wcs_adjust:
+                    os.system('rm -rf %s' % output_dir)
+
+                if not os.path.exists(output_dir):
+                    os.makedirs(output_dir)
+
+                self.wcs_adjust(input_dir=input_dir,
+                                output_dir=output_dir,
+                                band=band)
+
             if self.do_lv3:
 
                 self.logger.info('-> Level 3')
@@ -869,7 +951,12 @@ class JWSTReprocess:
                 if self.overwrite_lv3:
                     os.system('rm -rf %s' % output_dir)
 
-                if self.do_lv2 and not (do_destriping or do_lyot_adjust is not None):
+                if self.wcs_adjust_dict and band in self.wcs_adjust_dict.keys():
+                    input_dir = os.path.join(self.reprocess_dir,
+                                             self.galaxy,
+                                             band,
+                                             'wcs_adjust')
+                elif self.do_lv2 and not (do_destriping or do_lyot_adjust is not None):
                     input_dir = os.path.join(self.reprocess_dir,
                                              self.galaxy,
                                              band,
@@ -1097,6 +1184,74 @@ class JWSTReprocess:
 
             hdu.close()
 
+    def wcs_adjust(self,
+                   input_dir,
+                   output_dir,
+                   band):
+        """Adjust WCS so the tweakreg solution is closer to 0. Should be run on cal.fits files
+
+        Args:
+            input_dir (str): Input directory
+            output_dir (str): Where to save files to
+            band (str): JWST filter
+        """
+
+        input_files = glob.glob(os.path.join(input_dir,
+                                             '*cal.fits')
+                                )
+        input_files.sort()
+
+        for input_file in tqdm(input_files,
+                               ascii=True):
+
+            # Set up the WCSCorrector per tweakreg
+            input_im = datamodels.open(input_file)
+            output_file = os.path.join(output_dir,
+                                       os.path.split(input_file)[-1],
+                                       )
+
+            model_name = os.path.splitext(input_im.meta.filename)[0].strip('_- ')
+            refang = input_im.meta.wcsinfo.instance
+
+            im = JWSTWCSCorrector(
+                wcs=input_im.meta.wcs,
+                wcsinfo={
+                    'roll_ref': refang['roll_ref'],
+                    'v2_ref': refang['v2_ref'],
+                    'v3_ref': refang['v3_ref']
+                },
+                meta={
+                    'image_model': input_im,
+                    'name': model_name
+                }
+            )
+
+            # Pull out the info we need to shift
+            group = os.path.split(input_file)[-1]
+            group = '_'.join(group.split('_')[:3])
+
+            try:
+                wcs_adjust_vals = self.wcs_adjust_dict[band][group]
+                matrix = wcs_adjust_vals['matrix']
+                shift = wcs_adjust_vals['shift']
+            except KeyError:
+                self.logger.info('No WCS adjust info found for %s. Defaulting to no shift' % group)
+                matrix = [[1, 0], [0, 1]]
+                shift = [0, 0]
+
+            im.set_correction(matrix=matrix, shift=shift)
+
+            input_im.meta.wcs = im.wcs
+
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                update_fits_wcsinfo(
+                    input_im,
+                    max_pix_error=0.005
+                )
+
+            input_im.save(output_file)
+
     def run_asn2(self,
                  directory=None,
                  band=None,
@@ -1240,7 +1395,7 @@ class JWSTReprocess:
 
         ending = ''
         if self.use_field_in_lev3 is not None and not process_bgr_like_science:
-            ending += ('_'+'_'.join(np.atleast_1d(self.use_field_in_lev3).astype(str)))
+            ending += ('_' + '_'.join(np.atleast_1d(self.use_field_in_lev3).astype(str)))
         if process_bgr_like_science:
             ending += '_offset'
         asn_lv3_filename = 'asn_lv3_%s%s.json' % (band, ending)
