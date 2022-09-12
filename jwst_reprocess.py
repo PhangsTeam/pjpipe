@@ -17,8 +17,6 @@ from astropy.stats import sigma_clipped_stats
 from astropy.table import Table, QTable
 from drizzlepac import updatehdr
 from image_registration import cross_correlation_shifts
-from jwst import datamodels
-from jwst.assign_wcs.util import update_fits_wcsinfo
 from photutils import make_source_mask
 from photutils.detection import DAOStarFinder
 from reproject import reproject_interp
@@ -31,6 +29,8 @@ from tweakwcs.correctors import FITSWCSCorrector, JWSTWCSCorrector
 from nircam_destriping import NircamDestriper
 
 jwst = None
+datamodels = None
+update_fits_wcsinfo = None
 calwebb_detector1 = None
 calwebb_image2 = None
 calwebb_image3 = None
@@ -415,8 +415,15 @@ class JWSTReprocess:
         os.environ['CRDS_SERVER_URL'] = crds_url
         os.environ['CRDS_PATH'] = crds_dir
 
-        global jwst, calwebb_detector1, calwebb_image2, calwebb_image3, TweakRegStep
+        # Use global variables so we can import JWST stuff preserving environment variables
+        global jwst
+        global calwebb_detector1, calwebb_image2, calwebb_image3
+        global TweakRegStep
+        global datamodels, update_fits_wcsinfo
+
         import jwst
+        from jwst import datamodels
+        from jwst.assign_wcs.util import update_fits_wcsinfo
         from jwst.pipeline import calwebb_detector1, calwebb_image2, calwebb_image3
         from jwst.tweakreg import TweakRegStep
 
