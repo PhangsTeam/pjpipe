@@ -41,6 +41,7 @@ class NircamDestriper:
                  pca_components=50,
                  pca_reconstruct_components=10,
                  pca_diffuse=False,
+                 pca_final_med_row_subtraction=False,
                  pca_file=None,
                  just_sci_hdu=False,
                  plot_dir=None,
@@ -65,6 +66,9 @@ class NircamDestriper:
             * pca_reconstruct_components (int): Number of PCA components to use in reconstruction. Defaults to 10
             * pca_diffuse (bool): Whether to perform high-pass filter on data before PCA, to remove diffuse, extended
                 emission. Defaults to False, but should be set True for observations where emission fills the FOV
+            * pca_final_med_row_subtraction (bool): Whether to perform a final row-by-row median subtraction from the
+                data after PCA. Generally this isn't needed, but may be required for the shortest filters. Defaults to
+                False.
             * pca_file (str): Path to save PCA model to (should be a .pkl file). If using quadrants, it will append
                 the quadrant number accordingly automatically. Defaults to None, which means will not save out files
             * just_sci_hdu (bool): Write full fits HDU, or just SCI? Useful for testing, defaults to False
@@ -102,6 +106,7 @@ class NircamDestriper:
         self.pca_components = pca_components
         self.pca_reconstruct_components = pca_reconstruct_components
         self.pca_diffuse = pca_diffuse
+        self.pca_final_med_row_subtraction = pca_final_med_row_subtraction
         self.pca_file = pca_file
 
         self.plot_dir = plot_dir
@@ -361,22 +366,35 @@ class NircamDestriper:
                                             )[1]
             full_noise_model -= noise_med
 
-        self.hdu['SCI'].data -= full_noise_model
+        if self.pca_final_med_row_subtraction:
 
-        # if self.destriping_method == 'pca+median':
-        #     # Finally, subtract a row median to remove any large-scale stuff we may have filtered out
-        #     row_med = sigma_clipped_stats(self.hdu['SCI'].data,
-        #                                   mask=original_mask,
-        #                                   sigma=self.sigma,
-        #                                   maxiters=self.max_iters,
-        #                                   axis=1,
-        #                                   )[1]
-        #
-        #     print(np.nanmedian(row_med))
-        #     no
-        #
-        #     self.hdu['SCI'].data -= row_med[:, np.newaxis] - np.nanmedian(row_med)
-        #     self.hdu['SCI'].data[~np.isfinite(self.hdu['SCI'].data)] = 0
+            # Do a final, row-by-row clipped median subtraction
+
+            med = sigma_clipped_stats(data=self.hdu['SCI'].data - full_noise_model,
+                                      mask=original_mask,
+                                      sigma=self.sigma,
+                                      maxiters=self.max_iters,
+                                      axis=1
+                                      )[1]
+
+            nan_idx = np.where(~np.isfinite(med))
+
+            # We expect there to be 8 NaNs here, if there's more it's an issue
+            if len(nan_idx[0]) > 8:
+                raise Warning('Median failing -- likely too much masked data')
+
+            # pca_med_array = np.ma.array(data=self.hdu['SCI'].data - full_noise_model,
+            #                             mask=original_mask)
+            #
+            # med = np.ma.median(pca_med_array, axis=1)
+            # med = med.data
+
+            med[~np.isfinite(med)] = 0
+            med -= np.nanmedian(med)
+
+            full_noise_model += med[:, np.newaxis]
+
+        self.hdu['SCI'].data -= full_noise_model
 
         self.hdu['SCI'].data[zero_idx] = 0
 

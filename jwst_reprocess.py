@@ -131,22 +131,16 @@ FWHM_PIX = {
 
 
 def parallel_destripe(hdu_name,
-                      quadrants=True,
-                      destriping_method='row_median',
-                      sigma=3,
-                      npixels=3,
-                      max_iters=20,
-                      dilate_size=11,
-                      median_filter_scales=None,
-                      pca_components=50,
-                      pca_reconstruct_components=10,
-                      pca_diffuse=False,
+                      band,
+                      destripe_parameter_dict=None,
                       pca_dir=None,
-                      just_sci_hdu=False,
                       out_dir=None,
                       plot_dir=None,
                       ):
     """Function to parallelise destriping"""
+
+    if destripe_parameter_dict is None:
+        destripe_parameter_dict = {}
 
     out_file = os.path.join(out_dir, os.path.split(hdu_name)[-1])
 
@@ -162,20 +156,20 @@ def parallel_destripe(hdu_name,
 
     nc_destripe = NircamDestriper(hdu_name=hdu_name,
                                   hdu_out_name=out_file,
-                                  quadrants=quadrants,
-                                  destriping_method=destriping_method,
-                                  sigma=sigma,
-                                  npixels=npixels,
-                                  max_iters=max_iters,
-                                  dilate_size=dilate_size,
-                                  median_filter_scales=median_filter_scales,
-                                  pca_components=pca_components,
-                                  pca_reconstruct_components=pca_reconstruct_components,
-                                  pca_diffuse=pca_diffuse,
                                   pca_file=pca_file,
-                                  just_sci_hdu=just_sci_hdu,
                                   plot_dir=plot_dir,
                                   )
+
+    for key in destripe_parameter_dict.keys():
+
+        value = parse_parameter_dict(destripe_parameter_dict,
+                                     key,
+                                     band)
+        if value == 'VAL_NOT_FOUND':
+            continue
+
+        recursive_setattr(nc_destripe, key, value)
+
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         with threadpool_limits(limits=1, user_api='blas'):
@@ -301,6 +295,7 @@ class JWSTReprocess:
                  lv1_parameter_dict='phangs',
                  lv2_parameter_dict='phangs',
                  lv3_parameter_dict='phangs',
+                 destripe_parameter_dict='phangs',
                  degroup_short_nircam=True,
                  bgr_check_type='parallel_off',
                  astrometric_alignment_type='image',
@@ -352,9 +347,9 @@ class JWSTReprocess:
 
                 {'parameter': {'miri': miri_val, 'nircam': nircam_val}}
 
-        where the acceptable variants are 'miri', 'nircam', 'nircam_long', and 'nircam_short'. As many bits of the
-        pipeline require a number in arcsec rather than pixels, you can pass a value as 'Xpix', and it will parse
-        according to the band you're processing.
+        where the acceptable variants are 'miri', 'nircam', 'nircam_long', 'nircam_short', and a specific filter. As
+        many bits of the pipeline require a number in arcsec rather than pixels, you can pass a value as 'Xpix', and it
+        will parse according to the band you're processing.
 
         Args:
             * galaxy (str): Galaxy to run reprocessing for
@@ -367,6 +362,7 @@ class JWSTReprocess:
                 PHANGS-JWST reduction. To keep pipeline default, use 'None'
             * lv2_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 2 pipeline
             * lv3_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 3 pipeline
+            * destripe_parameter_dict (dict): As `lv1_parameter_dict`, but for the destriping procedure
             * degroup_short_nircam (bool): Will degroup short wavelength NIRCAM observations for all steps beyond
                 relative alignment. This can alleviate steps between mosaic pointings
             * bgr_check_type (str): Method to check if MIRI obs is science or background. Options are 'parallel_off' and
@@ -426,7 +422,7 @@ class JWSTReprocess:
         os.environ['CRDS_SERVER_URL'] = crds_url
         os.environ['CRDS_PATH'] = crds_dir
 
-        # Use global variables so we can import JWST stuff preserving environment variables
+        # Use global variables, so we can import JWST stuff preserving environment variables
         global jwst
         global calwebb_detector1, calwebb_image2, calwebb_image3
         global TweakRegStep
@@ -526,6 +522,20 @@ class JWSTReprocess:
             }
 
         self.lv3_parameter_dict = lv3_parameter_dict
+
+        if destripe_parameter_dict is None:
+            destripe_parameter_dict = {}
+        elif destripe_parameter_dict == 'phangs':
+            destripe_parameter_dict = {
+                'quadrants': True,
+                'destriping_method': 'pca+median',
+                'dilate_size': 7,
+                'pca_reconstruct_components': 5,
+                'pca_diffuse': True,
+                'pca_final_med_row_subtraction': False,
+            }
+
+        self.destripe_parameter_dict = destripe_parameter_dict
 
         self.degroup_short_nircam = degroup_short_nircam
 
@@ -811,7 +821,8 @@ class JWSTReprocess:
 
                 cal_files.sort()
                 self.run_destripe(files=cal_files,
-                                  out_dir=destripe_dir
+                                  out_dir=destripe_dir,
+                                  band=band,
                                   )
 
             # The Lyot coronagraph is only in the MIRI bands
@@ -1072,12 +1083,14 @@ class JWSTReprocess:
     def run_destripe(self,
                      files,
                      out_dir,
+                     band,
                      ):
         """Run destriping algorithm, looping over calibrated files
 
         Args:
             * files (list): List of files to loop over
             * out_dir (str): Where to save destriped files to
+            * band (str): JWST band
         """
 
         plot_dir = os.path.join(out_dir, 'plots')
@@ -1092,11 +1105,8 @@ class JWSTReprocess:
             results = []
 
             for result in tqdm(pool.imap(partial(parallel_destripe,
-                                                 quadrants=True,
-                                                 destriping_method='pca+median',
-                                                 dilate_size=7,
-                                                 pca_reconstruct_components=5,
-                                                 pca_diffuse=True,
+                                                 band=band,
+                                                 destripe_parameter_dict=self.destripe_parameter_dict,
                                                  pca_dir=pca_dir,
                                                  out_dir=out_dir,
                                                  plot_dir=plot_dir,
