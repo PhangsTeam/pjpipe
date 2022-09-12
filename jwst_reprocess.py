@@ -227,7 +227,15 @@ def parse_fits_to_table(file,
 def parse_parameter_dict(parameter_dict,
                          key,
                          band):
-    """Pull values out of a parameter dictionary"""
+    """Pull values out of a parameter dictionary
+
+    Args:
+        parameter_dict (dict): Dictionary of parameters and associated values
+        key (str): Particular key in parameter_dict to consider
+        band (str): JWST band, to parse out band type and potentially per-band
+            values
+
+    """
 
     value = parameter_dict[key]
 
@@ -255,6 +263,9 @@ def parse_parameter_dict(parameter_dict,
 
         elif band_type == 'nircam' and short_long in value.keys():
             value = value[short_long]
+
+        elif band in value.keys():
+            value = value[band]
 
         else:
             value = 'VAL_NOT_FOUND'
@@ -1514,22 +1525,6 @@ class JWSTReprocess:
 
                     detector1 = calwebb_detector1.Detector1Pipeline()
 
-                    # Set some parameters that pertain to the
-                    # entire pipeline
-                    detector1.output_dir = output_dir
-                    if not os.path.isdir(detector1.output_dir):
-                        os.makedirs(detector1.output_dir)
-
-                    for key in self.lv1_parameter_dict.keys():
-
-                        value = parse_parameter_dict(self.lv1_parameter_dict,
-                                                     key,
-                                                     band)
-                        if value == 'VAL_NOT_FOUND':
-                            continue
-
-                        recursive_setattr(detector1, key, value)
-
                     # Pull out the trapsfilled file from preceding exposure if needed. Only for NIRCAM
 
                     persist_file = ''
@@ -1547,6 +1542,21 @@ class JWSTReprocess:
 
                     # Specify the name of the trapsfilled file
                     detector1.persistence.input_trapsfilled = persist_file
+
+                    # Set other parameters
+                    detector1.output_dir = output_dir
+                    if not os.path.isdir(detector1.output_dir):
+                        os.makedirs(detector1.output_dir)
+
+                    for key in self.lv1_parameter_dict.keys():
+
+                        value = parse_parameter_dict(self.lv1_parameter_dict,
+                                                     key,
+                                                     band)
+                        if value == 'VAL_NOT_FOUND':
+                            continue
+
+                        recursive_setattr(detector1, key, value)
 
                     # Run the level 1 pipeline
                     detector1.run(uncal_file)
