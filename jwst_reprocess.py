@@ -535,6 +535,14 @@ class JWSTReprocess:
                 'pca_final_med_row_subtraction': False,
             }
 
+            # Old version, using median filter
+            # destripe_parameter_dict = {
+            #     'quadrants': False,
+            #     'destriping_method': 'median_filter',
+            #     'dilate_size': 7,
+            #     'median_filter_scales': [7, 31, 63, 127, 511]
+            # }
+
         self.destripe_parameter_dict = destripe_parameter_dict
 
         self.degroup_short_nircam = degroup_short_nircam
@@ -1114,18 +1122,6 @@ class JWSTReprocess:
                                          files),
                                total=len(files), ascii=True):
                 results.append(result)
-
-            # median_filter_scales = [7, 31, 63, 127, 511]
-            #
-            # for result in tqdm(pool.imap_unordered(partial(parallel_destripe,
-            #                                                quadrants=False,
-            #                                                destriping_method='median_filter',
-            #                                                dilate_size=7,
-            #                                                out_dir=out_dir,
-            #                                                ),
-            #                                        files),
-            #                    total=len(files), ascii=True):
-            #     results.append(result)
 
     def adjust_lyot(self,
                     in_files,
