@@ -618,10 +618,26 @@ class JWSTReprocess:
 
         for band in self.bands:
 
+            pupil = 'CLEAR'
+            jwst_filter = copy.deepcopy(band)
+
             if band in NIRCAM_BANDS:
                 band_type = 'nircam'
                 do_destriping = self.do_destriping
                 do_lyot_adjust = None
+
+                # For some NIRCAM filters, we need to distinguish filter/pupil.
+                # TODO: These may not be unique, so may need editing
+                if band in ['F162M', 'F164N']:
+                    pupil = copy.deepcopy(band)
+                    jwst_filter = 'F150W2'
+                if band == 'F323N':
+                    pupil = copy.deepcopy(band)
+                    jwst_filter = 'F322W2'
+                if band in ['F405N', 'F466N', 'F470N']:
+                    pupil = copy.deepcopy(band)
+                    jwst_filter = 'F444W'
+
             elif band in MIRI_BANDS:
                 band_type = 'miri'
                 do_destriping = False
@@ -686,8 +702,13 @@ class JWSTReprocess:
                             except OSError:
                                 raise Warning('Issue with %s!' % uncal_file)
 
-                            if hdu[0].header['FILTER'].strip() == band:
-                                hdu.writeto(hdu_out_name, overwrite=True)
+                            if band_type == 'nircam':
+                                if hdu[0].header['FILTER'].strip() == jwst_filter and \
+                                        hdu[0].header['PUPIL'].strip() == pupil:
+                                    hdu.writeto(hdu_out_name, overwrite=True)
+                            elif band_type == 'miri':
+                                if hdu[0].header['FILTER'].strip() == jwst_filter:
+                                    hdu.writeto(hdu_out_name, overwrite=True)
 
                             hdu.close()
 
@@ -756,8 +777,14 @@ class JWSTReprocess:
                         if not os.path.exists(os.path.join(rate_dir, fits_name)) or self.overwrite_lv2:
 
                             hdu = fits.open(rate_file)
-                            if hdu[0].header['FILTER'].strip() == band:
-                                os.system('cp %s %s/' % (rate_file, rate_dir))
+                            if band_type == 'nircam':
+                                if hdu[0].header['FILTER'].strip() == jwst_filter and \
+                                        hdu[0].header['PUPIL'].strip() == pupil:
+                                    os.system('cp %s %s/' % (rate_file, rate_dir))
+                            elif band_type == 'miri':
+                                if hdu[0].header['FILTER'].strip() == jwst_filter:
+                                    os.system('cp %s %s/' % (rate_file, rate_dir))
+
                             hdu.close()
 
                 # Run lv2 asn generation
@@ -823,8 +850,13 @@ class JWSTReprocess:
                     for cal_file in initial_cal_files:
 
                         hdu = fits.open(cal_file)
-                        if hdu[0].header['FILTER'].strip() == band:
-                            cal_files.append(cal_file)
+                        if band_type == 'nircam':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter and \
+                                    hdu[0].header['PUPIL'].strip() == pupil:
+                                cal_files.append(cal_file)
+                        elif band_type == 'miri':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter:
+                                cal_files.append(cal_file)
                         hdu.close()
 
                 cal_files.sort()
@@ -885,8 +917,13 @@ class JWSTReprocess:
                     for cal_file in initial_cal_files:
 
                         hdu = fits.open(cal_file)
-                        if hdu[0].header['FILTER'].strip() == band:
-                            cal_files.append(cal_file)
+                        if band_type == 'nircam':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter and \
+                                    hdu[0].header['PUPIL'].strip() == pupil:
+                                cal_files.append(cal_file)
+                        elif band_type == 'miri':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter:
+                                cal_files.append(cal_file)
                         hdu.close()
 
                 cal_files.sort()
@@ -949,8 +986,13 @@ class JWSTReprocess:
                             continue
 
                         hdu = fits.open(cal_file)
-                        if hdu[0].header['FILTER'].strip() == band:
-                            os.system('cp %s %s/' % (cal_file, input_dir))
+                        if band_type == 'nircam':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter and \
+                                    hdu[0].header['PUPIL'].strip() == pupil:
+                                os.system('cp %s %s/' % (cal_file, input_dir))
+                        elif band_type == 'miri':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter:
+                                os.system('cp %s %s/' % (cal_file, input_dir))
                         hdu.close()
 
                 output_dir = os.path.join(self.reprocess_dir,
@@ -1040,8 +1082,13 @@ class JWSTReprocess:
                             continue
 
                         hdu = fits.open(cal_file)
-                        if hdu[0].header['FILTER'].strip() == band:
-                            os.system('cp %s %s/' % (cal_file, input_dir))
+                        if band_type == 'nircam':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter and \
+                                    hdu[0].header['PUPIL'].strip() == pupil:
+                                os.system('cp %s %s/' % (cal_file, input_dir))
+                        elif band_type == 'miri':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter:
+                                os.system('cp %s %s/' % (cal_file, input_dir))
                         hdu.close()
 
                 # Run lv3 asn generation
