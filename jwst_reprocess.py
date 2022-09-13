@@ -1238,6 +1238,9 @@ class JWSTReprocess:
                                        os.path.split(input_file)[-1],
                                        )
 
+            if os.path.exists(output_file):
+                continue
+
             model_name = os.path.splitext(input_im.meta.filename)[0].strip('_- ')
             refang = input_im.meta.wcsinfo.instance
 
@@ -1271,11 +1274,15 @@ class JWSTReprocess:
 
             input_im.meta.wcs = im.wcs
 
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
+            try:
                 update_fits_wcsinfo(
                     input_im,
-                    max_pix_error=0.005
+                    max_pix_error=0.05
+                )
+            except (ValueError, RuntimeError) as e:
+                self.logger.warning(
+                    "Failed to update 'meta.wcsinfo' with FITS SIP "
+                    f'approximation. Reported error is:\n"{e.args[0]}"'
                 )
 
             input_im.save(output_file)
