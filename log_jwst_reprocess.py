@@ -5,11 +5,9 @@ from datetime import datetime
 host = socket.gethostname()
 
 if 'node' in host:
-    raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data'
-    working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_working'
+    working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_phangs_reprocessed'
 else:
-    raw_dir = '/Users/williams/Documents/phangs/jwst_data'
-    working_dir = '/Users/williams/Documents/phangs/jwst_working'
+    working_dir = '/Users/williams/Documents/phangs/jwst_reprocessed'
 
 date_str = datetime.today().strftime('%Y%m%d_%H:%M:%S')
 

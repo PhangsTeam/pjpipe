@@ -8,8 +8,8 @@ from jwst_reprocess import JWSTReprocess
 host = socket.gethostname()
 
 if 'node' in host:
-    raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data'
-    working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_working'
+    raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw'
+    working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_phangs_reprocessed'
     updated_flats_dir = None
 else:
     raw_dir = '/home/egorov/Science/PHANGS/JWST/Lev1/'  # '/Users/williams/Documents/phangs/jwst_data'
