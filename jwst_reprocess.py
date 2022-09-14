@@ -1275,14 +1275,15 @@ class JWSTReprocess:
         for input_file in tqdm(input_files,
                                ascii=True):
 
-            # Set up the WCSCorrector per tweakreg
-            input_im = datamodels.open(input_file)
             output_file = os.path.join(output_dir,
                                        os.path.split(input_file)[-1],
                                        )
 
             if os.path.exists(output_file):
                 continue
+
+            # Set up the WCSCorrector per tweakreg
+            input_im = datamodels.open(input_file)
 
             model_name = os.path.splitext(input_im.meta.filename)[0].strip('_- ')
             refang = input_im.meta.wcsinfo.instance
