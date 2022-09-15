@@ -16,9 +16,13 @@ def get_time():
     return current_time
 
 
-def download(observations, product, max_retries=5):
+def download(observations, product, filter_gs=True, max_retries=5):
     """Wrap around astroquery download with retry option"""
     retry = 0
+
+    if filter_gs:
+        mask = np.char.find(product['dataURI'], '_gs-') == -1
+        product = product[mask]
 
     while retry < max_retries:
 
@@ -46,6 +50,7 @@ class ArchiveDownload:
                  extension=None,
                  do_filter=True,
                  product_type=None,
+                 filter_gs=True,
                  login=False,
                  api_key=None,
                  verbose=False,
@@ -75,6 +80,7 @@ class ArchiveDownload:
         self.calib_level = calib_level
         self.extension = extension
         self.do_filter = do_filter
+        self.filter_gs = filter_gs
         self.product_type = product_type
         self.verbose = verbose
         self.overwrite = overwrite
@@ -157,11 +163,11 @@ class ArchiveDownload:
                                                              extension=self.extension,
                                                              )
                 if len(products) > 0:
-                    download(self.observations, products)
+                    download(self.observations, products, filter_gs=self.filter_gs)
                 else:
                     print('[%s] Filtered data not available' % get_time())
                     continue
             else:
-                download(self.observations, product_list)
+                download(self.observations, product_list, filter_gs=self.filter_gs)
 
         return True
