@@ -1584,7 +1584,8 @@ class JWSTReprocess:
 
                         os.system('set_telescope_pointing.py %s' % uncal_file)
 
-                    detector1 = calwebb_detector1.Detector1Pipeline()
+                    config = calwebb_detector1.Detector1Pipeline.get_config_from_reference(uncal_file)
+                    detector1 = calwebb_detector1.Detector1Pipeline.from_config_section(config)
 
                     # Pull out the trapsfilled file from preceding exposure if needed. Only for NIRCAM
 
@@ -1631,7 +1632,8 @@ class JWSTReprocess:
 
                 os.system('rm -rf %s' % output_dir)
 
-                im2 = calwebb_image2.Image2Pipeline()
+                config = calwebb_image2.Image2Pipeline.get_config_from_reference(asn_file)
+                im2 = calwebb_image2.Image2Pipeline.from_config_section(config)
                 im2.output_dir = output_dir
                 if not os.path.isdir(im2.output_dir):
                     os.makedirs(im2.output_dir)
@@ -1695,7 +1697,8 @@ class JWSTReprocess:
 
                 # Now run through the rest of the pipeline
 
-                im3 = calwebb_image3.Image3Pipeline()
+                config = calwebb_image3.Image3Pipeline.get_config_from_reference(asn_file)
+                im3 = calwebb_image3.Image3Pipeline.from_config_section(config)
                 im3.output_dir = output_dir
 
                 im3.tweakreg.kernel_fwhm = fwhm_pix * 2
