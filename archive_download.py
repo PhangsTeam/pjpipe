@@ -3,6 +3,7 @@ import warnings
 from datetime import datetime
 
 import numpy as np
+from astropy.table import unique
 from astroquery.exceptions import NoResultsWarning
 from astroquery.mast import Observations
 from requests.exceptions import ConnectionError, ChunkedEncodingError
@@ -23,6 +24,10 @@ def download(observations, product, filter_gs=True, max_retries=5):
     if filter_gs:
         mask = np.char.find(product['dataURI'], '_gs-') == -1
         product = product[mask]
+
+    # Remove duplicate filenames, especially important for spectroscopic data
+    if 'dataURI' in product.colnames:
+        product = unique(product, keys='dataURI')
 
     while retry < max_retries:
 

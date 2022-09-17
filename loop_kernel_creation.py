@@ -12,10 +12,10 @@ host = socket.gethostname()
 
 if 'node' in host:
     webbpsf_path = '/data/beegfs/astro-storage/groups/schinnerer/williams/webbpsf-data'
-    base_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_working/kernels'
+    base_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_phangs_reprocessed/kernels'
 else:
     webbpsf_path = '/Users/williams/Documents/webbpsf-data'
-    base_dir = '/Users/williams/Documents/phangs/jwst_working/kernels'
+    base_dir = '/Users/williams/Documents/phangs/jwst_reprocessed/kernels'
 
 os.environ['WEBBPSF_PATH'] = webbpsf_path
 
@@ -39,20 +39,22 @@ overwrite = False
 nircam_psfs = [
     # 'F200W',
     # 'F300M',
-    'F335M',
-    'F360M',
+    # 'F335M',
+    # 'F360M',
 ]
 
 miri_psfs = [
     # 'F770W',
     # 'F1000W',
     # 'F1130W',
-    # 'F2100W',
+    'F2100W',
 ]
 
 gauss_psfs = [
     # 'gauss0.73',
     # 'gauss1.66',
+    'gauss1.0',
+    'gauss1.3',
     'gauss1.67',
 ]
 all_psfs = nircam_psfs + miri_psfs + gauss_psfs
