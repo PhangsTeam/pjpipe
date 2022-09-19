@@ -1,6 +1,7 @@
 import copy
 import os
 import pickle
+import logging
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -84,6 +85,8 @@ class NircamDestriper:
         self.hdu_name = hdu_name
         self.hdu = fits.open(self.hdu_name, memmap=False)
 
+        self.full_noise_model = None
+
         if hdu_out_name is None:
             hdu_out_name = self.hdu_name.replace('.fits', '_destriped.fits')
         self.hdu_out_name = hdu_out_name
@@ -114,13 +117,22 @@ class NircamDestriper:
     def run_destriping(self):
 
         if self.destriping_method == 'row_median':
-            self.run_row_median()
+            self.full_noise_model = self.run_row_median()
         elif self.destriping_method == 'median_filter':
-            self.run_median_filter()
+            self.full_noise_model = self.run_median_filter()
         elif self.destriping_method in ['pca', 'pca+median']:
-            self.run_pca_denoise()
+            self.full_noise_model = self.run_pca_denoise()
         else:
             raise NotImplementedError('Destriping method %s not yet implemented!' % self.destriping_method)
+
+        zero_idx = np.where(self.hdu['SCI'].data == 0)
+
+        self.hdu['SCI'].data -= self.full_noise_model
+
+        self.hdu['SCI'].data[zero_idx] = 0
+
+        if self.plot_dir is not None:
+            self.make_destripe_plot()
 
         if self.just_sci_hdu:
             self.hdu['SCI'].writeto(self.hdu_out_name,
@@ -136,7 +148,7 @@ class NircamDestriper:
         """PCA-based de-noising
 
         Build a PCA model for the noise using the robust PCA implementation from Tamas Budavari and Vivienne Wild. We
-        mask the data, optionally high-pass filter (Butterwoth) to remove extended diffuse emission, and build the PCA
+        mask the data, optionally high-pass filter (Butterworth) to remove extended diffuse emission, and build the PCA
         model from there. If pca+median is selected, we do a final row-by-row median subtraction at the end, to catch
         the low-frequency striping the Butterworth filter will strip out
 
@@ -154,7 +166,6 @@ class NircamDestriper:
                                 nsigma=self.sigma,
                                 npixels=self.npixels,
                                 dilate_size=self.dilate_size,
-                                # dilate_size=1,
                                 sigclip_iters=self.max_iters,
                                 )
 
@@ -179,8 +190,6 @@ class NircamDestriper:
 
         data -= data_med
 
-        # data_fit = copy.deepcopy(data)
-
         if self.pca_diffuse:
 
             # Make a high signal-to-noise mask, because these guys will cause bad ol' negative bowls
@@ -203,8 +212,6 @@ class NircamDestriper:
             # Filter the image to remove any large scale structure.
             data_filter = filters.butterworth(data_pad,
                                               high_pass=True,
-                                              # order=0.1,
-                                              # cutoff_frequency_ratio=0.01,
                                               )
             data_filter = data_filter[data.shape[0] // 4:-data.shape[0] // 4, data.shape[1] // 4:-data.shape[1] // 4]
             data_filter[idx] = np.random.normal(loc=0, scale=data_std, size=len(idx[0]))
@@ -229,7 +236,7 @@ class NircamDestriper:
 
             if self.plot_dir is not None:
                 plot_name = os.path.join(self.plot_dir,
-                                         self.hdu_out_name.split(os.path.sep)[-1].replace('.fits', '_filter+mask.png')
+                                         self.hdu_out_name.split(os.path.sep)[-1].replace('.fits', '_filter+mask')
                                          )
 
                 vmin, vmax = np.nanpercentile(data_train, [1, 99])
@@ -248,7 +255,8 @@ class NircamDestriper:
 
                 plt.title('Mask')
 
-                plt.savefig(plot_name, bbox_inches='tight')
+                plt.savefig(plot_name + '.png', bbox_inches='tight')
+                plt.savefig(plot_name + '.pdf', bbox_inches='tight')
 
                 # plt.show()
                 plt.close()
@@ -381,13 +389,7 @@ class NircamDestriper:
 
             # We expect there to be 8 NaNs here, if there's more it's an issue
             if len(nan_idx[0]) > 8:
-                raise Warning('Median failing -- likely too much masked data')
-
-            # pca_med_array = np.ma.array(data=self.hdu['SCI'].data - full_noise_model,
-            #                             mask=original_mask)
-            #
-            # med = np.ma.median(pca_med_array, axis=1)
-            # med = med.data
+                logging.warning('Median failing -- likely too much masked data')
 
             med[~np.isfinite(med)] = 0
             med -= np.nanmedian(med)
@@ -396,63 +398,7 @@ class NircamDestriper:
 
         self.hdu['SCI'].data[zero_idx] = 0
 
-        original_data = copy.deepcopy(self.hdu['SCI'].data)
-
-        self.hdu['SCI'].data -= full_noise_model
-
-        if self.plot_dir is not None:
-            plot_name = os.path.join(self.plot_dir,
-                                     self.hdu_out_name.split(os.path.sep)[-1].replace('.fits', '_noise_model'),
-                                     )
-
-            vmin, vmax = np.nanpercentile(full_noise_model, [1, 99])
-            vmin_data, vmax_data = np.nanpercentile(self.hdu['SCI'].data, [10, 90])
-
-            plt.figure(figsize=(8, 4))
-
-            ax = plt.subplot(1, 3, 1)
-            im = plt.imshow(original_data, origin='lower', vmin=vmin_data, vmax=vmax_data)
-            plt.axis('off')
-
-            plt.title('Original Data')
-
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes('bottom', size='5%', pad=0)
-
-            plt.colorbar(im, cax=cax, label='MJy/sr', orientation='horizontal')
-
-            ax = plt.subplot(1, 3, 2)
-            im = plt.imshow(full_noise_model, origin='lower', vmin=vmin, vmax=vmax)
-            plt.axis('off')
-
-            plt.title('Noise Model')
-
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes('bottom', size='5%', pad=0)
-
-            plt.colorbar(im, cax=cax, label='MJy/sr', orientation='horizontal')
-
-            # cax.yaxis.set_ticks_position('left')
-            # cax.yaxis.set_label_position('left')
-
-            ax = plt.subplot(1, 3, 3)
-            im = plt.imshow(self.hdu['SCI'].data, origin='lower', vmin=vmin_data, vmax=vmax_data)
-            plt.axis('off')
-
-            plt.title('Destriped Data')
-
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes('bottom', size='5%', pad=0)
-
-            plt.colorbar(im, cax=cax, label='MJy/sr', orientation='horizontal')
-
-            plt.subplots_adjust(hspace=0, wspace=0)
-
-            plt.show()
-
-            plt.savefig(plot_name + '.png', bbox_inches='tight')
-            plt.savefig(plot_name + '.pdf', bbox_inches='tight')
-            plt.close()
+        return full_noise_model
 
     def fit_robust_pca(self,
                        data,
@@ -506,15 +452,6 @@ class NircamDestriper:
         mean_array = eigen_system_dict['m']
         eigen_vectors = eigen_system_dict['U']
 
-        # fig, axs = plt.subplots(5, 1, sharex=True, figsize=(10, 8))
-        # axs[0].plot(mean_array)
-        #
-        # for i in range(1, 5, 1):
-        #     axs[i].plot(eigen_vectors[:, i - 1])
-        #     # axs[i].set_ylim(-0.1, 0.3)
-
-        # # plt.show()
-
         eigen_reconstruct = eigen_vectors[:, :self.pca_reconstruct_components]
 
         data[mask] = 0
@@ -536,6 +473,8 @@ class NircamDestriper:
         zero_idx = np.where(self.hdu['SCI'].data == 0)
         self.hdu['SCI'].data[zero_idx] = np.nan
 
+        self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data)
+
         mask = make_source_mask(self.hdu['SCI'].data,
                                 nsigma=self.sigma,
                                 npixels=self.npixels,
@@ -543,41 +482,26 @@ class NircamDestriper:
                                 )
         mask = mask | ~np.isfinite(self.hdu['SCI'].data)
 
+        full_noise_model = np.zeros_like(self.hdu['SCI'].data)
+
         if self.quadrants:
 
             quadrant_size = int(self.hdu['SCI'].data.shape[1] / 4)
 
-            quadrants = {}
-
             # Calculate medians and apply
             for i in range(4):
-                quadrants[i] = {}
+                data_quadrants = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
+                mask_quadrants = mask[:, i * quadrant_size: (i + 1) * quadrant_size]
 
-                quadrants[i]['data'] = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
-                quadrants[i]['mask'] = mask[:, i * quadrant_size: (i + 1) * quadrant_size]
+                median_quadrants = sigma_clipped_stats(data_quadrants,
+                                                       mask=mask_quadrants,
+                                                       sigma=self.sigma,
+                                                       maxiters=self.max_iters,
+                                                       axis=1,
+                                                       )[1]
 
-                quadrants[i]['median'] = sigma_clipped_stats(quadrants[i]['data'],
-                                                             mask=quadrants[i]['mask'],
-                                                             sigma=self.sigma,
-                                                             maxiters=self.max_iters,
-                                                             axis=1,
-                                                             )[1]
-
-            # Apply this to the data
-            for i in range(4):
-                quadrants[i]['data_corr'] = \
-                    (quadrants[i]['data'] - quadrants[i]['median'][:, np.newaxis]) + \
-                    np.nanmedian(quadrants[i]['median'][:, np.newaxis])
-
-            # Match quadrants in the overlaps
-            for i in range(3):
-                quadrants[i + 1]['data_corr'] += \
-                    np.nanmedian(quadrants[i]['data_corr'][:, quadrant_size - 10:]) - \
-                    np.nanmedian(quadrants[i + 1]['data_corr'][:, 0:10])
-
-            # Reconstruct the data
-            for i in range(4):
-                self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size] = quadrants[i]['data_corr']
+                full_noise_model[:, i * quadrant_size: (i + 1) * quadrant_size] += median_quadrants[:, np.newaxis]
+                full_noise_model[:, i * quadrant_size: (i + 1) * quadrant_size] -= np.nanmedian(median_quadrants)
 
         else:
 
@@ -588,12 +512,14 @@ class NircamDestriper:
                                              axis=1,
                                              )[1]
 
-            self.hdu['SCI'].data -= median_arr[:, np.newaxis]
+            full_noise_model += median_arr[:, np.newaxis]
 
             # Bring everything back up to the median level
-            self.hdu['SCI'].data += np.nanmedian(median_arr)
+            full_noise_model -= np.nanmedian(median_arr)
 
         self.hdu['SCI'].data[zero_idx] = 0
+
+        return full_noise_model
 
     def run_median_filter(self,
                           use_mask=True
@@ -602,6 +528,10 @@ class NircamDestriper:
 
         zero_idx = np.where(self.hdu['SCI'].data == 0)
         self.hdu['SCI'].data[zero_idx] = np.nan
+
+        self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data)
+
+        full_noise_model = np.zeros_like(self.hdu['SCI'].data)
 
         mask = None
         if use_mask:
@@ -616,90 +546,55 @@ class NircamDestriper:
 
             quadrant_size = int(self.hdu['SCI'].data.shape[1] / 4)
 
-            quadrants = {}
-
             # Calculate medians and apply
             for i in range(4):
-                quadrants[i] = {}
 
                 if use_mask:
 
                     data_quadrant = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
                     mask_quadrant = mask[:, i * quadrant_size: (i + 1) * quadrant_size]
 
-                    quadrants[i]['data'] = np.ma.array(data_quadrant, mask=mask_quadrant)
+                    data_quadrant = np.ma.array(data_quadrant, mask=mask_quadrant)
                 else:
-                    quadrants[i]['data'] = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
-
-            for i in range(4):
+                    data_quadrant = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
 
                 for scale in self.median_filter_scales:
 
                     if use_mask:
-                        med = np.ma.median(quadrants[i]['data'], axis=1)
+                        med = np.ma.median(data_quadrant, axis=1)
                         mask_idx = np.where(med.mask)
                         med = med.data
                         med[mask_idx] = np.nan
                     else:
-                        med = np.nanmedian(quadrants[i]['data'], axis=1)
+                        med = np.nanmedian(data_quadrant, axis=1)
                     nan_idx = np.where(~np.isfinite(med))
 
                     # We expect there to be 8 NaNs here, if there's more it's an issue
                     if len(nan_idx[0]) > 8:
-                        raise Warning('Median filter failing on quadrants -- likely large extended source')
+                        logging.warning('Median filter failing on quadrants -- likely large extended source')
 
                     med[~np.isfinite(med)] = 0
                     noise = med - median_filter(med, scale)
 
                     if use_mask:
-                        quadrants[i]['data'] = np.ma.array(quadrants[i]['data'].data - noise[:, np.newaxis],
-                                                           mask=quadrants[i]['data'].mask)
+                        data_quadrant = np.ma.array(data_quadrant.data - noise[:, np.newaxis],
+                                                    mask=data_quadrant.mask)
                     else:
-                        quadrants[i]['data'] -= noise[:, np.newaxis]
+                        data_quadrant -= noise[:, np.newaxis]
 
-            for i in range(4):
-
-                # Remove the mask since we don't need it now
-                if use_mask:
-                    quadrants[i]['data'] = quadrants[i]['data'].data
-
-            # Match quadrants in the overlaps
-            for i in range(3):
-                quadrants[i + 1]['data'] += \
-                    np.nanmedian(quadrants[i]['data'][:, quadrant_size - 10:]) - \
-                    np.nanmedian(quadrants[i + 1]['data'][:, 0:10])
-
-            # Reconstruct the data
-            for i in range(4):
-                self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size] = quadrants[i]['data']
+                    full_noise_model[:, i * quadrant_size: (i + 1) * quadrant_size] += noise[:, np.newaxis]
 
         else:
 
-            quadrant_size = self.hdu['SCI'].data.shape[1] // 4
+            if use_mask:
+                data = np.ma.array(
+                    copy.deepcopy(self.hdu['SCI'].data),
+                    mask=copy.deepcopy(mask)
+                )
+            else:
+                data = copy.deepcopy(self.hdu['SCI'].data)
 
             for scale in self.median_filter_scales:
-
-                if use_mask:
-                    data = np.ma.array(
-                        copy.deepcopy(self.hdu['SCI'].data),
-                        mask=copy.deepcopy(mask)
-                    )
-                else:
-                    data = copy.deepcopy(self.hdu['SCI'].data)
-
-                # Subtract off any lingering median quadrants
-                quadrant_medians = []
-                for i in range(4):
-
-                    if use_mask:
-                        quadrant_median = np.ma.median(data[:, i * quadrant_size: (i + 1) * quadrant_size])
-                        quadrant_medians.append(quadrant_median)
-
-                    else:
-                        quadrant_median = np.nanpercentile(data[:, i * quadrant_size: (i + 1) * quadrant_size])
-                        quadrant_medians.append(quadrant_median)
-
-                    data[:, i * quadrant_size: (i + 1) * quadrant_size] -= quadrant_median
 
                 if use_mask:
                     med = np.ma.median(data, axis=1)
@@ -711,11 +606,13 @@ class NircamDestriper:
                 med[~np.isfinite(med)] = 0
                 noise = med - median_filter(med, scale)
 
-                self.hdu['SCI'].data -= noise[:, np.newaxis]
+                data -= noise[:, np.newaxis]
 
-            self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data)
+                full_noise_model += noise[:, np.newaxis]
 
         self.hdu['SCI'].data[zero_idx] = 0
+
+        return full_noise_model
 
     def level_data(self,
                    data,
@@ -729,7 +626,6 @@ class NircamDestriper:
                                 nsigma=self.sigma,
                                 npixels=self.npixels,
                                 dilate_size=self.dilate_size,
-                                # dilate_size=1,
                                 sigclip_iters=self.max_iters,
                                 )
 
@@ -758,3 +654,62 @@ class NircamDestriper:
                 data[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size] += med_1 - med_2
 
         return data
+
+    def make_destripe_plot(self):
+        """Create diagnostic plot for the destriping
+        """
+
+        zero_idx = np.where(self.hdu['SCI'].data == 0)
+        original_data = self.hdu['SCI'].data + self.full_noise_model
+        original_data[zero_idx] = 0
+
+        plot_name = os.path.join(self.plot_dir,
+                                 self.hdu_out_name.split(os.path.sep)[-1].replace('.fits', '_noise_model'),
+                                 )
+
+        vmin, vmax = np.nanpercentile(self.full_noise_model, [1, 99])
+        vmin_data, vmax_data = np.nanpercentile(self.hdu['SCI'].data, [10, 90])
+
+        plt.figure(figsize=(8, 4))
+
+        ax = plt.subplot(1, 3, 1)
+        im = plt.imshow(original_data,
+                        origin='lower', vmin=vmin_data, vmax=vmax_data)
+        plt.axis('off')
+
+        plt.title('Original Data')
+
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes('bottom', size='5%', pad=0)
+
+        plt.colorbar(im, cax=cax, label='MJy/sr', orientation='horizontal')
+
+        ax = plt.subplot(1, 3, 2)
+        im = plt.imshow(self.full_noise_model, origin='lower', vmin=vmin, vmax=vmax)
+        plt.axis('off')
+
+        plt.title('Noise Model')
+
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes('bottom', size='5%', pad=0)
+
+        plt.colorbar(im, cax=cax, label='MJy/sr', orientation='horizontal')
+
+        ax = plt.subplot(1, 3, 3)
+        im = plt.imshow(self.hdu['SCI'].data, origin='lower', vmin=vmin_data, vmax=vmax_data)
+        plt.axis('off')
+
+        plt.title('Destriped Data')
+
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes('bottom', size='5%', pad=0)
+
+        plt.colorbar(im, cax=cax, label='MJy/sr', orientation='horizontal')
+
+        plt.subplots_adjust(hspace=0, wspace=0)
+
+        # plt.show()
+
+        plt.savefig(plot_name + '.png', bbox_inches='tight')
+        plt.savefig(plot_name + '.pdf', bbox_inches='tight')
+        plt.close()
