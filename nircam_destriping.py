@@ -394,48 +394,64 @@ class NircamDestriper:
 
             full_noise_model += med[:, np.newaxis]
 
-        self.hdu['SCI'].data -= full_noise_model
-
         self.hdu['SCI'].data[zero_idx] = 0
+
+        original_data = copy.deepcopy(self.hdu['SCI'].data)
+
+        self.hdu['SCI'].data -= full_noise_model
 
         if self.plot_dir is not None:
             plot_name = os.path.join(self.plot_dir,
-                                     self.hdu_out_name.split(os.path.sep)[-1].replace('.fits', '_noise_model.png'),
+                                     self.hdu_out_name.split(os.path.sep)[-1].replace('.fits', '_noise_model'),
                                      )
 
             vmin, vmax = np.nanpercentile(full_noise_model, [1, 99])
-            vmin_data, vmax_data = np.nanpercentile(self.hdu['SCI'].data, [1, 99])
+            vmin_data, vmax_data = np.nanpercentile(self.hdu['SCI'].data, [10, 90])
 
             plt.figure(figsize=(8, 4))
 
-            ax = plt.subplot(1, 2, 1)
+            ax = plt.subplot(1, 3, 1)
+            im = plt.imshow(original_data, origin='lower', vmin=vmin_data, vmax=vmax_data)
+            plt.axis('off')
+
+            plt.title('Original Data')
+
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes('bottom', size='5%', pad=0)
+
+            plt.colorbar(im, cax=cax, label='MJy/sr', orientation='horizontal')
+
+            ax = plt.subplot(1, 3, 2)
             im = plt.imshow(full_noise_model, origin='lower', vmin=vmin, vmax=vmax)
             plt.axis('off')
 
             plt.title('Noise Model')
 
             divider = make_axes_locatable(ax)
-            cax = divider.append_axes('left', size='5%', pad=0)
+            cax = divider.append_axes('bottom', size='5%', pad=0)
 
-            plt.colorbar(im, cax=cax, label='MJy/sr')
+            plt.colorbar(im, cax=cax, label='MJy/sr', orientation='horizontal')
 
-            cax.yaxis.set_ticks_position('left')
-            cax.yaxis.set_label_position('left')
+            # cax.yaxis.set_ticks_position('left')
+            # cax.yaxis.set_label_position('left')
 
-            ax = plt.subplot(1, 2, 2)
+            ax = plt.subplot(1, 3, 3)
             im = plt.imshow(self.hdu['SCI'].data, origin='lower', vmin=vmin_data, vmax=vmax_data)
             plt.axis('off')
 
             plt.title('Destriped Data')
 
             divider = make_axes_locatable(ax)
-            cax = divider.append_axes('right', size='5%', pad=0)
+            cax = divider.append_axes('bottom', size='5%', pad=0)
 
-            plt.colorbar(im, cax=cax, label='MJy/sr')
+            plt.colorbar(im, cax=cax, label='MJy/sr', orientation='horizontal')
+
+            plt.subplots_adjust(hspace=0, wspace=0)
 
             plt.show()
 
-            plt.savefig(plot_name, bbox_inches='tight')
+            plt.savefig(plot_name + '.png', bbox_inches='tight')
+            plt.savefig(plot_name + '.pdf', bbox_inches='tight')
             plt.close()
 
     def fit_robust_pca(self,
