@@ -528,7 +528,7 @@ class JWSTReprocess:
         elif destripe_parameter_dict == 'phangs':
             destripe_parameter_dict = {
                 'quadrants': True,
-                'destriping_method': 'pca+median',
+                'destriping_method': 'pca',
                 'dilate_size': 7,
                 'pca_reconstruct_components': 5,
                 'pca_diffuse': True,

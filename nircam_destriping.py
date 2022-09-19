@@ -18,7 +18,7 @@ from skimage import filters
 import pca.vwpca as vw
 import pca.vwpca_normgappy as gappy
 
-DESTRIPING_METHODS = ['row_median', 'median_filter', 'pca', 'pca+median']
+DESTRIPING_METHODS = ['row_median', 'median_filter', 'pca']
 
 matplotlib.rcParams['mathtext.fontset'] = 'stix'
 matplotlib.rcParams['font.family'] = 'STIXGeneral'
@@ -120,7 +120,7 @@ class NircamDestriper:
             self.full_noise_model = self.run_row_median()
         elif self.destriping_method == 'median_filter':
             self.full_noise_model = self.run_median_filter()
-        elif self.destriping_method in ['pca', 'pca+median']:
+        elif self.destriping_method == 'pca':
             self.full_noise_model = self.run_pca_denoise()
         else:
             raise NotImplementedError('Destriping method %s not yet implemented!' % self.destriping_method)
@@ -149,8 +149,8 @@ class NircamDestriper:
 
         Build a PCA model for the noise using the robust PCA implementation from Tamas Budavari and Vivienne Wild. We
         mask the data, optionally high-pass filter (Butterworth) to remove extended diffuse emission, and build the PCA
-        model from there. If pca+median is selected, we do a final row-by-row median subtraction at the end, to catch
-        the low-frequency striping the Butterworth filter will strip out
+        model from there. pca_final_med_row_subtraction is on, it will do a final row-by-row median subtraction, to
+        catch large-scale noise that might get filtered out.
 
         """
 
@@ -365,14 +365,13 @@ class NircamDestriper:
             full_noise_model = np.full_like(self.hdu['SCI'].data, np.nan)
             full_noise_model[4:-4, 4:-4] = copy.deepcopy(noise_model)
 
-        if self.destriping_method == 'pca+median':
-            # Centre the noise model around 0 to preserve flux
-            noise_med = sigma_clipped_stats(full_noise_model,
-                                            mask=original_mask,
-                                            sigma=self.sigma,
-                                            maxiters=self.max_iters,
-                                            )[1]
-            full_noise_model -= noise_med
+        # Centre the noise model around 0 to preserve flux
+        noise_med = sigma_clipped_stats(full_noise_model,
+                                        mask=original_mask,
+                                        sigma=self.sigma,
+                                        maxiters=self.max_iters,
+                                        )[1]
+        full_noise_model -= noise_med
 
         if self.pca_final_med_row_subtraction:
 
