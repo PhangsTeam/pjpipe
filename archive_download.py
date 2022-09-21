@@ -3,7 +3,7 @@ import warnings
 from datetime import datetime
 
 import numpy as np
-from astropy.table import unique
+from astropy.table import unique, vstack
 from astroquery.exceptions import NoResultsWarning
 from astroquery.mast import Observations
 from requests.exceptions import ConnectionError, ChunkedEncodingError
@@ -17,27 +17,26 @@ def get_time():
     return current_time
 
 
-def download(observations, product, filter_gs=True, max_retries=5):
+def download(observations, products, max_retries=5):
     """Wrap around astroquery download with retry option"""
-    retry = 0
 
-    if filter_gs:
-        mask = np.char.find(product['dataURI'], '_gs-') == -1
-        product = product[mask]
+    for product in products:
 
-    # Remove duplicate filenames, especially important for spectroscopic data
-    if 'dataURI' in product.colnames:
-        product = unique(product, keys='dataURI')
+        retry = 0
+        success = False
 
-    while retry < max_retries:
+        while retry < max_retries and not success:
 
-        try:
-            observations.download_products(product)
-            return True
-        except (ConnectionResetError, ConnectionError, ChunkedEncodingError):
-            retry += 1
+            try:
+                observations.download_products(product)
+                success = True
+            except (ConnectionResetError, ConnectionError, ChunkedEncodingError):
+                retry += 1
 
-    raise Warning('Max retries exceeded!')
+            if retry == max_retries:
+                raise Warning('Max retries exceeded!')
+
+    return True
 
 
 warnings.simplefilter('error', NoResultsWarning)
@@ -151,28 +150,42 @@ class ArchiveDownload:
     def run_download(self):
         """Download a list of observations"""
 
+        # Flatten down all the observations
+        products = []
+
         for obs in self.obs_list:
             try:
                 product_list = self.observations.get_product_list(obs)
+                products.append(product_list)
             except NoResultsWarning:
                 print('[%s] Data not available for %s' % (get_time(), obs['obs_id']))
                 continue
 
-            if self.verbose:
-                print('[%s] Downloading %s' % (get_time(), obs['obs_id']))
+        products = vstack(products)
 
-            if self.do_filter:
-                products = self.observations.filter_products(product_list,
-                                                             calib_level=self.calib_level,
-                                                             productType=self.product_type,
-                                                             extension=self.extension,
-                                                             )
-                if len(products) > 0:
-                    download(self.observations, products, filter_gs=self.filter_gs)
-                else:
-                    print('[%s] Filtered data not available' % get_time())
-                    continue
-            else:
-                download(self.observations, product_list, filter_gs=self.filter_gs)
+        if self.verbose:
+            print('[%s] Found a total %d files. Performing cuts...' % (get_time(), len(products)))
+
+        # Filter out guide stars if requested
+        if self.filter_gs:
+            mask = np.char.find(products['dataURI'], '_gs-') == -1
+            products = products[mask]
+
+        # Perform filtering if requested
+        if self.do_filter:
+            products = self.observations.filter_products(products,
+                                                         calib_level=self.calib_level,
+                                                         productType=self.product_type,
+                                                         extension=self.extension,
+                                                         )
+
+        # Finally, remove duplicates
+        if 'dataURI' in products.colnames:
+            products = unique(products, keys='dataURI')
+
+        if self.verbose:
+            print('[%s] Downloading %d files' % (get_time(), len(products)))
+
+        download(self.observations, products)
 
         return True
