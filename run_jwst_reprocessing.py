@@ -52,7 +52,7 @@ for galaxy in galaxies:
         'ngc7496': 'ngc7496_agb_cat.fits',
     }[galaxy]
     alignment_table = os.path.join(working_dir,
-                                   'alignment_images',
+                                   'alignment',
                                    alignment_table_name)
 
     if galaxy == 'ngc7320':

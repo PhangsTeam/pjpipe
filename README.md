@@ -34,3 +34,6 @@ PHANGS-JWST processing scripts
 * the `pca/` directory contains a number of robust PCA routines that we use for destriping data. They were ported to 
   Python by Elizabeth Watkins from IDL. These should reference Budavari+ 2009 (MNRAS 394, 1496–1502), and Wild+Hewett
   2005 (MNRAS 358, 1083-1099)
+
+## Alignment files
+* the `alignment/` directory contains .fits tables to provide absolute astrometric corrections
