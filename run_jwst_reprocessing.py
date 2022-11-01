@@ -30,16 +30,16 @@ if flush_crds:
     os.system('rm -rf %s' % crds_dir)
     os.makedirs(crds_dir)
 
-reprocess_dir_ext = 'v0p4p2_new'
+reprocess_dir_ext = 'v0p4p2'
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
 galaxies = [
-    # 'ngc0628',
-    'ngc1365',
+    'ngc0628',
+    # 'ngc1365',
     # 'ic5332',
     # 'ngc7320',
-    'ngc7496',
+    # 'ngc7496',
 ]
 
 for galaxy in galaxies:
@@ -94,10 +94,10 @@ for galaxy in galaxies:
 
         bands = [
             # NIRCAM
-            'F200W',
+            # 'F200W',
             'F300M',
-            'F335M',
-            'F360M',
+            # 'F335M',
+            # 'F360M',
             # MIRI
             # 'F770W',
             # 'F1000W',

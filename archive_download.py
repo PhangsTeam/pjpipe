@@ -1,12 +1,13 @@
+import numpy as np
 import os
 import warnings
-from datetime import datetime
 
-import numpy as np
 from astropy.table import unique, vstack
 from astroquery.exceptions import NoResultsWarning
 from astroquery.mast import Observations
+from datetime import datetime
 from requests.exceptions import ConnectionError, ChunkedEncodingError
+from tqdm import tqdm
 
 
 def get_time():
@@ -153,7 +154,10 @@ class ArchiveDownload:
         # Flatten down all the observations
         products = []
 
-        for obs in self.obs_list:
+        if self.verbose:
+            print('[%s] Getting obs' % get_time())
+
+        for obs in tqdm(self.obs_list, ascii=True):
             try:
                 product_list = self.observations.get_product_list(obs)
                 products.append(product_list)
