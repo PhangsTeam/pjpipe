@@ -7,9 +7,9 @@ from archive_download import ArchiveDownload
 host = socket.gethostname()
 
 if 'node' in host:
-    base_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data'
+    base_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw'
 else:
-    base_dir = '/Users/williams/Documents/phangs/jwst_data'
+    base_dir = '/Users/williams/Documents/jwst_raw'
 
 if not os.path.exists(base_dir):
     os.makedirs(base_dir)
@@ -34,16 +34,12 @@ else:
     api_key = None
 
 prop_ids = [
-    # '2732',  # Stephan's Quintet ERO
-    '2107',  # PHANGS-JWST
+    '2107',
 ]
 
 for prop_id in prop_ids:
 
     targets = {
-        '2732': [
-            'ngc7320',
-        ],
         '2107': [
             'ic5332',
             'ngc0628',

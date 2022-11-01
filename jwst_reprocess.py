@@ -11,29 +11,26 @@ import warnings
 from functools import partial
 from multiprocessing import cpu_count
 
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
-os.environ['OMP_NUM_THREADS'] = '1'
-os.environ['NUMEXPR_NUM_THREADS'] = '1'
-os.environ['MKL_NUM_THREADS'] = '1'
-os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
-
 import numpy as np
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from astropy.table import Table, QTable
 from drizzlepac import updatehdr
 from image_registration import cross_correlation_shifts
-from jwst import datamodels
 from photutils import make_source_mask
 from photutils.detection import DAOStarFinder
 from reproject import reproject_interp
 from stwcs.wcsutil import HSTWCS
+from threadpoolctl import threadpool_limits
 from tqdm import tqdm
-from tweakwcs import fit_wcs, TPMatch, FITSWCS
+from tweakwcs import fit_wcs, XYXYMatch
+from tweakwcs.correctors import FITSWCSCorrector, JWSTWCSCorrector
 
 from nircam_destriping import NircamDestriper
 
 jwst = None
+datamodels = None
+update_fits_wcsinfo = None
 calwebb_detector1 = None
 calwebb_image2 = None
 calwebb_image3 = None
@@ -134,22 +131,16 @@ FWHM_PIX = {
 
 
 def parallel_destripe(hdu_name,
-                      quadrants=True,
-                      destriping_method='row_median',
-                      sigma=3,
-                      npixels=3,
-                      max_iters=20,
-                      dilate_size=11,
-                      median_filter_scales=None,
-                      pca_components=50,
-                      pca_reconstruct_components=10,
-                      pca_diffuse=False,
+                      band,
+                      destripe_parameter_dict=None,
                       pca_dir=None,
-                      just_sci_hdu=False,
                       out_dir=None,
                       plot_dir=None,
                       ):
     """Function to parallelise destriping"""
+
+    if destripe_parameter_dict is None:
+        destripe_parameter_dict = {}
 
     out_file = os.path.join(out_dir, os.path.split(hdu_name)[-1])
 
@@ -165,23 +156,24 @@ def parallel_destripe(hdu_name,
 
     nc_destripe = NircamDestriper(hdu_name=hdu_name,
                                   hdu_out_name=out_file,
-                                  quadrants=quadrants,
-                                  destriping_method=destriping_method,
-                                  sigma=sigma,
-                                  npixels=npixels,
-                                  max_iters=max_iters,
-                                  dilate_size=dilate_size,
-                                  median_filter_scales=median_filter_scales,
-                                  pca_components=pca_components,
-                                  pca_reconstruct_components=pca_reconstruct_components,
-                                  pca_diffuse=pca_diffuse,
                                   pca_file=pca_file,
-                                  just_sci_hdu=just_sci_hdu,
                                   plot_dir=plot_dir,
                                   )
+
+    for key in destripe_parameter_dict.keys():
+
+        value = parse_parameter_dict(destripe_parameter_dict,
+                                     key,
+                                     band)
+        if value == 'VAL_NOT_FOUND':
+            continue
+
+        recursive_setattr(nc_destripe, key, value)
+
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        nc_destripe.run_destriping()
+        with threadpool_limits(limits=1, user_api='blas'):
+            nc_destripe.run_destriping()
 
     return True
 
@@ -229,7 +221,15 @@ def parse_fits_to_table(file,
 def parse_parameter_dict(parameter_dict,
                          key,
                          band):
-    """Pull values out of a parameter dictionary"""
+    """Pull values out of a parameter dictionary
+
+    Args:
+        parameter_dict (dict): Dictionary of parameters and associated values
+        key (str): Particular key in parameter_dict to consider
+        band (str): JWST band, to parse out band type and potentially per-band
+            values
+
+    """
 
     value = parameter_dict[key]
 
@@ -257,6 +257,9 @@ def parse_parameter_dict(parameter_dict,
 
         elif band_type == 'nircam' and short_long in value.keys():
             value = value[short_long]
+
+        elif band in value.keys():
+            value = value[band]
 
         else:
             value = 'VAL_NOT_FOUND'
@@ -292,12 +295,14 @@ class JWSTReprocess:
                  lv1_parameter_dict='phangs',
                  lv2_parameter_dict='phangs',
                  lv3_parameter_dict='phangs',
+                 destripe_parameter_dict='phangs',
                  degroup_short_nircam=True,
                  bgr_check_type='parallel_off',
                  astrometric_alignment_type='image',
                  astrometric_alignment_image=None,
                  astrometric_alignment_table=None,
                  alignment_mapping=None,
+                 wcs_adjust_dict=None,
                  tpmatch_searchrad=10,
                  tpmatch_separation=0.000001,
                  tpmatch_tolerance=0.7,
@@ -310,6 +315,7 @@ class JWSTReprocess:
                  do_lv2=False,
                  do_destriping=False,
                  do_lyot_adjust=None,
+                 do_wcs_adjust=False,
                  do_lv3=False,
                  do_astrometric_alignment=False,
                  overwrite_all=False,
@@ -317,6 +323,7 @@ class JWSTReprocess:
                  overwrite_lv2=False,
                  overwrite_destriping=False,
                  overwrite_lyot_adjust=False,
+                 overwrite_wcs_adjust=False,
                  overwrite_lv3=False,
                  overwrite_astrometric_alignment=False,
                  overwrite_astrometric_ref_cat=False,
@@ -340,9 +347,9 @@ class JWSTReprocess:
 
                 {'parameter': {'miri': miri_val, 'nircam': nircam_val}}
 
-        where the acceptable variants are 'miri', 'nircam', 'nircam_long', and 'nircam_short'. As many bits of the
-        pipeline require a number in arcsec rather than pixels, you can pass a value as 'Xpix', and it will parse
-        according to the band you're processing.
+        where the acceptable variants are 'miri', 'nircam', 'nircam_long', 'nircam_short', and a specific filter. As
+        many bits of the pipeline require a number in arcsec rather than pixels, you can pass a value as 'Xpix', and it
+        will parse according to the band you're processing.
 
         Args:
             * galaxy (str): Galaxy to run reprocessing for
@@ -355,6 +362,7 @@ class JWSTReprocess:
                 PHANGS-JWST reduction. To keep pipeline default, use 'None'
             * lv2_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 2 pipeline
             * lv3_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 3 pipeline
+            * destripe_parameter_dict (dict): As `lv1_parameter_dict`, but for the destriping procedure
             * degroup_short_nircam (bool): Will degroup short wavelength NIRCAM observations for all steps beyond
                 relative alignment. This can alleviate steps between mosaic pointings
             * bgr_check_type (str): Method to check if MIRI obs is science or background. Options are 'parallel_off' and
@@ -363,6 +371,8 @@ class JWSTReprocess:
             * astrometric_alignment_table (str): Path to table to align astrometry to
             * alignment_mapping (dict): Dictionary to map basing alignments off cross-correlation with other aligned
                 band. Should be of the form {'band': 'reference_band'}
+            * wcs_adjust_dict (dict): dict to adjust image group WCS before tweakreg step. Should be of form
+                {filter: {'group': {'matrix': [[1, 0], [0, 1]], 'shift': [dx, dy]}}}. Defaults to None.
             * tpmatch_searchrad (float): Distance to search for a match when astrometric aligning. Defaults to 10
             * tpmatch_separation (float): Separation for objects to be considered separate in astrometric alignment.
                 Defaults to 0.000001
@@ -378,6 +388,7 @@ class JWSTReprocess:
             * do_destriping (bool): Run destriping algorithm on lv2 data. Defaults to False
             * do_lyot_adjust (str): How to deal with the MIRI coronagraph. Options are 'mask', which masks it out, or
                 'adjust', which will adjust the background level to match the main array
+            * do_wcs_adjust (bool): Whether to run WCS adjustment before tweakreg
             * do_lv3 (bool): Run lv3 pipeline. Defaults to False
             * do_astrometric_alignment (bool): Run astrometric alignment on lv3 data. Defaults to False
             * overwrite_all (bool): Whether to overwrite everything. Defaults to False
@@ -385,6 +396,7 @@ class JWSTReprocess:
             * overwrite_lv2 (bool): Whether to overwrite lv2 data. Defaults to False
             * overwrite_destriping (bool): Whether to overwrite destriped data. Defaults to False
             * overwrite_lyot_adjust (bool): Whether to overwrite MIRI coronagraph edits. Defaults to False
+            * overwrite_wcs_adjust (bool): Whether to overwrite initial WCS adjustments. Defaults to False
             * overwrite_lv3 (bool): Whether to overwrite lv3 data. Defaults to False
             * overwrite_astrometric_alignment (bool): Whether to overwrite astrometric alignment. Defaults to False
             * overwrite_astrometric_ref_cat (bool): Whether to overwrite the generated reference catalogue for
@@ -410,8 +422,15 @@ class JWSTReprocess:
         os.environ['CRDS_SERVER_URL'] = crds_url
         os.environ['CRDS_PATH'] = crds_dir
 
-        global jwst, calwebb_detector1, calwebb_image2, calwebb_image3, TweakRegStep
+        # Use global variables, so we can import JWST stuff preserving environment variables
+        global jwst
+        global calwebb_detector1, calwebb_image2, calwebb_image3
+        global TweakRegStep
+        global datamodels, update_fits_wcsinfo
+
         import jwst
+        from jwst import datamodels
+        from jwst.assign_wcs.util import update_fits_wcsinfo
         from jwst.pipeline import calwebb_detector1, calwebb_image2, calwebb_image3
         from jwst.tweakreg import TweakRegStep
 
@@ -428,6 +447,11 @@ class JWSTReprocess:
 
         if alignment_mapping is None:
             alignment_mapping = {}
+        self.alignment_mapping = alignment_mapping
+
+        if wcs_adjust_dict is None:
+            wcs_adjust_dict = {}
+        self.wcs_adjust_dict = wcs_adjust_dict
 
         if lv1_parameter_dict is None:
             lv1_parameter_dict = {}
@@ -499,6 +523,28 @@ class JWSTReprocess:
 
         self.lv3_parameter_dict = lv3_parameter_dict
 
+        if destripe_parameter_dict is None:
+            destripe_parameter_dict = {}
+        elif destripe_parameter_dict == 'phangs':
+            destripe_parameter_dict = {
+                'quadrants': True,
+                'destriping_method': 'pca',
+                'dilate_size': 7,
+                'pca_reconstruct_components': 5,
+                'pca_diffuse': True,
+                'pca_final_med_row_subtraction': False,
+            }
+
+            # Old version, using median filter
+            # destripe_parameter_dict = {
+            #     'quadrants': False,
+            #     'destriping_method': 'median_filter',
+            #     'dilate_size': 7,
+            #     'median_filter_scales': [7, 31, 63, 127, 511]
+            # }
+
+        self.destripe_parameter_dict = destripe_parameter_dict
+
         self.degroup_short_nircam = degroup_short_nircam
 
         if do_all:
@@ -512,9 +558,9 @@ class JWSTReprocess:
         self.do_lv2 = do_lv2
         self.do_destriping = do_destriping
         self.do_lyot_adjust = do_lyot_adjust
+        self.do_wcs_adjust = do_wcs_adjust
         self.do_lv3 = do_lv3
         self.do_astrometric_alignment = do_astrometric_alignment
-        self.alignment_mapping = alignment_mapping
 
         self.astrometric_alignment_type = astrometric_alignment_type
         self.astrometric_alignment_image = astrometric_alignment_image
@@ -535,6 +581,7 @@ class JWSTReprocess:
             overwrite_lv2 = True
             overwrite_destriping = True
             overwrite_lyot_adjust = True
+            overwrite_wcs_adjust = True
             overwrite_lv3 = True
             overwrite_astrometric_alignment = True
 
@@ -543,6 +590,7 @@ class JWSTReprocess:
         self.overwrite_lv2 = overwrite_lv2
         self.overwrite_destriping = overwrite_destriping
         self.overwrite_lyot_adjust = overwrite_lyot_adjust
+        self.overwrite_wcs_adjust = overwrite_wcs_adjust
         self.overwrite_lv3 = overwrite_lv3
         self.overwrite_astrometric_alignment = overwrite_astrometric_alignment
         self.overwrite_astrometric_ref_cat = overwrite_astrometric_ref_cat
@@ -570,10 +618,26 @@ class JWSTReprocess:
 
         for band in self.bands:
 
+            pupil = 'CLEAR'
+            jwst_filter = copy.deepcopy(band)
+
             if band in NIRCAM_BANDS:
                 band_type = 'nircam'
                 do_destriping = self.do_destriping
                 do_lyot_adjust = None
+
+                # For some NIRCAM filters, we need to distinguish filter/pupil.
+                # TODO: These may not be unique, so may need editing
+                if band in ['F162M', 'F164N']:
+                    pupil = copy.deepcopy(band)
+                    jwst_filter = 'F150W2'
+                if band == 'F323N':
+                    pupil = copy.deepcopy(band)
+                    jwst_filter = 'F322W2'
+                if band in ['F405N', 'F466N', 'F470N']:
+                    pupil = copy.deepcopy(band)
+                    jwst_filter = 'F444W'
+
             elif band in MIRI_BANDS:
                 band_type = 'miri'
                 do_destriping = False
@@ -638,8 +702,13 @@ class JWSTReprocess:
                             except OSError:
                                 raise Warning('Issue with %s!' % uncal_file)
 
-                            if hdu[0].header['FILTER'].strip() == band:
-                                hdu.writeto(hdu_out_name, overwrite=True)
+                            if band_type == 'nircam':
+                                if hdu[0].header['FILTER'].strip() == jwst_filter and \
+                                        hdu[0].header['PUPIL'].strip() == pupil:
+                                    hdu.writeto(hdu_out_name, overwrite=True)
+                            elif band_type == 'miri':
+                                if hdu[0].header['FILTER'].strip() == jwst_filter:
+                                    hdu.writeto(hdu_out_name, overwrite=True)
 
                             hdu.close()
 
@@ -708,8 +777,14 @@ class JWSTReprocess:
                         if not os.path.exists(os.path.join(rate_dir, fits_name)) or self.overwrite_lv2:
 
                             hdu = fits.open(rate_file)
-                            if hdu[0].header['FILTER'].strip() == band:
-                                os.system('cp %s %s/' % (rate_file, rate_dir))
+                            if band_type == 'nircam':
+                                if hdu[0].header['FILTER'].strip() == jwst_filter and \
+                                        hdu[0].header['PUPIL'].strip() == pupil:
+                                    os.system('cp %s %s/' % (rate_file, rate_dir))
+                            elif band_type == 'miri':
+                                if hdu[0].header['FILTER'].strip() == jwst_filter:
+                                    os.system('cp %s %s/' % (rate_file, rate_dir))
+
                             hdu.close()
 
                 # Run lv2 asn generation
@@ -775,13 +850,19 @@ class JWSTReprocess:
                     for cal_file in initial_cal_files:
 
                         hdu = fits.open(cal_file)
-                        if hdu[0].header['FILTER'].strip() == band:
-                            cal_files.append(cal_file)
+                        if band_type == 'nircam':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter and \
+                                    hdu[0].header['PUPIL'].strip() == pupil:
+                                cal_files.append(cal_file)
+                        elif band_type == 'miri':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter:
+                                cal_files.append(cal_file)
                         hdu.close()
 
                 cal_files.sort()
                 self.run_destripe(files=cal_files,
-                                  out_dir=destripe_dir
+                                  out_dir=destripe_dir,
+                                  band=band,
                                   )
 
             # The Lyot coronagraph is only in the MIRI bands
@@ -836,8 +917,13 @@ class JWSTReprocess:
                     for cal_file in initial_cal_files:
 
                         hdu = fits.open(cal_file)
-                        if hdu[0].header['FILTER'].strip() == band:
-                            cal_files.append(cal_file)
+                        if band_type == 'nircam':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter and \
+                                    hdu[0].header['PUPIL'].strip() == pupil:
+                                cal_files.append(cal_file)
+                        elif band_type == 'miri':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter:
+                                cal_files.append(cal_file)
                         hdu.close()
 
                 cal_files.sort()
@@ -849,25 +935,9 @@ class JWSTReprocess:
                     self.mask_lyot(in_files=cal_files,
                                    out_dir=lyot_adjust_dir)
 
-            if self.do_lv3:
+            if self.do_wcs_adjust and band in self.wcs_adjust_dict.keys():
 
-                self.logger.info('-> Level 3')
-
-                if self.use_field_in_lev3 is None:
-
-                    output_dir = os.path.join(self.reprocess_dir,
-                                              self.galaxy,
-                                              band,
-                                              'lv3')
-
-                else:
-                    output_dir = os.path.join(self.reprocess_dir,
-                                              self.galaxy, band,
-                                              'lv3_field_' + '_'.join(np.atleast_1d(
-                                                  self.use_field_in_lev3).astype(str)))
-
-                if self.overwrite_lv3:
-                    os.system('rm -rf %s' % output_dir)
+                self.logger.info('-> Adjusting WCS')
 
                 if self.do_lv2 and not (do_destriping or do_lyot_adjust is not None):
                     input_dir = os.path.join(self.reprocess_dir,
@@ -916,8 +986,109 @@ class JWSTReprocess:
                             continue
 
                         hdu = fits.open(cal_file)
-                        if hdu[0].header['FILTER'].strip() == band:
-                            os.system('cp %s %s/' % (cal_file, input_dir))
+                        if band_type == 'nircam':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter and \
+                                    hdu[0].header['PUPIL'].strip() == pupil:
+                                os.system('cp %s %s/' % (cal_file, input_dir))
+                        elif band_type == 'miri':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter:
+                                os.system('cp %s %s/' % (cal_file, input_dir))
+                        hdu.close()
+
+                output_dir = os.path.join(self.reprocess_dir,
+                                          self.galaxy,
+                                          band,
+                                          'wcs_adjust')
+
+                if self.overwrite_wcs_adjust:
+                    os.system('rm -rf %s' % output_dir)
+
+                if not os.path.exists(output_dir):
+                    os.makedirs(output_dir)
+
+                self.wcs_adjust(input_dir=input_dir,
+                                output_dir=output_dir,
+                                band=band)
+
+            if self.do_lv3:
+
+                self.logger.info('-> Level 3')
+
+                if self.use_field_in_lev3 is None:
+
+                    output_dir = os.path.join(self.reprocess_dir,
+                                              self.galaxy,
+                                              band,
+                                              'lv3')
+
+                else:
+                    output_dir = os.path.join(self.reprocess_dir,
+                                              self.galaxy, band,
+                                              'lv3_field_' + '_'.join(np.atleast_1d(
+                                                  self.use_field_in_lev3).astype(str)))
+
+                if self.overwrite_lv3:
+                    os.system('rm -rf %s' % output_dir)
+
+                if self.wcs_adjust_dict and band in self.wcs_adjust_dict.keys():
+                    input_dir = os.path.join(self.reprocess_dir,
+                                             self.galaxy,
+                                             band,
+                                             'wcs_adjust')
+                elif self.do_lv2 and not (do_destriping or do_lyot_adjust is not None):
+                    input_dir = os.path.join(self.reprocess_dir,
+                                             self.galaxy,
+                                             band,
+                                             'cal')
+                elif do_lyot_adjust is not None:
+                    input_dir = os.path.join(self.reprocess_dir,
+                                             self.galaxy,
+                                             band,
+                                             'lyot_adjust')
+                elif do_destriping:
+                    input_dir = os.path.join(self.reprocess_dir,
+                                             self.galaxy,
+                                             band,
+                                             'destripe')
+                else:
+                    # At this point, we pull the cal files from the raw directories
+                    input_dir = os.path.join(self.reprocess_dir,
+                                             self.galaxy,
+                                             band,
+                                             'lv2')
+
+                    if not os.path.exists(input_dir):
+                        os.makedirs(input_dir)
+
+                    cal_files = [f for f in glob.glob(os.path.join(self.raw_dir,
+                                                                   self.galaxy,
+                                                                   'mastDownload',
+                                                                   'JWST',
+                                                                   '*%s' % band_ext,
+                                                                   '*%s_cal.fits' % band_ext)) if ('offset' not in f)]
+
+                    if len(cal_files) == 0:
+                        self.logger.info('-> No cal files found. Skipping')
+                        os.system('rm -rf %s' % input_dir)
+                        shutil.rmtree(os.path.join(self.reprocess_dir,
+                                                   self.galaxy,
+                                                   band))
+                        continue
+
+                    for cal_file in tqdm(cal_files, ascii=True):
+
+                        fits_name = cal_file.split(os.path.sep)[-1]
+                        if os.path.exists(os.path.join(input_dir, fits_name)) or self.overwrite_lv3:
+                            continue
+
+                        hdu = fits.open(cal_file)
+                        if band_type == 'nircam':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter and \
+                                    hdu[0].header['PUPIL'].strip() == pupil:
+                                os.system('cp %s %s/' % (cal_file, input_dir))
+                        elif band_type == 'miri':
+                            if hdu[0].header['FILTER'].strip() == jwst_filter:
+                                os.system('cp %s %s/' % (cal_file, input_dir))
                         hdu.close()
 
                 # Run lv3 asn generation
@@ -967,12 +1138,14 @@ class JWSTReprocess:
     def run_destripe(self,
                      files,
                      out_dir,
+                     band,
                      ):
         """Run destriping algorithm, looping over calibrated files
 
         Args:
             * files (list): List of files to loop over
             * out_dir (str): Where to save destriped files to
+            * band (str): JWST band
         """
 
         plot_dir = os.path.join(out_dir, 'plots')
@@ -987,11 +1160,8 @@ class JWSTReprocess:
             results = []
 
             for result in tqdm(pool.imap(partial(parallel_destripe,
-                                                 quadrants=True,
-                                                 destriping_method='pca+median',
-                                                 dilate_size=7,
-                                                 pca_reconstruct_components=5,
-                                                 pca_diffuse=True,
+                                                 band=band,
+                                                 destripe_parameter_dict=self.destripe_parameter_dict,
                                                  pca_dir=pca_dir,
                                                  out_dir=out_dir,
                                                  plot_dir=plot_dir,
@@ -999,18 +1169,6 @@ class JWSTReprocess:
                                          files),
                                total=len(files), ascii=True):
                 results.append(result)
-
-            # median_filter_scales = [7, 31, 63, 127, 511]
-            #
-            # for result in tqdm(pool.imap_unordered(partial(parallel_destripe,
-            #                                                quadrants=False,
-            #                                                destriping_method='median_filter',
-            #                                                dilate_size=7,
-            #                                                out_dir=out_dir,
-            #                                                ),
-            #                                        files),
-            #                    total=len(files), ascii=True):
-            #     results.append(result)
 
     def adjust_lyot(self,
                     in_files,
@@ -1096,6 +1254,82 @@ class JWSTReprocess:
             hdu.writeto(out_name, overwrite=True)
 
             hdu.close()
+
+    def wcs_adjust(self,
+                   input_dir,
+                   output_dir,
+                   band):
+        """Adjust WCS so the tweakreg solution is closer to 0. Should be run on cal.fits files
+
+        Args:
+            input_dir (str): Input directory
+            output_dir (str): Where to save files to
+            band (str): JWST filter
+        """
+
+        input_files = glob.glob(os.path.join(input_dir,
+                                             '*cal.fits')
+                                )
+        input_files.sort()
+
+        for input_file in tqdm(input_files,
+                               ascii=True):
+
+            output_file = os.path.join(output_dir,
+                                       os.path.split(input_file)[-1],
+                                       )
+
+            if os.path.exists(output_file):
+                continue
+
+            # Set up the WCSCorrector per tweakreg
+            input_im = datamodels.open(input_file)
+
+            model_name = os.path.splitext(input_im.meta.filename)[0].strip('_- ')
+            refang = input_im.meta.wcsinfo.instance
+
+            im = JWSTWCSCorrector(
+                wcs=input_im.meta.wcs,
+                wcsinfo={
+                    'roll_ref': refang['roll_ref'],
+                    'v2_ref': refang['v2_ref'],
+                    'v3_ref': refang['v3_ref']
+                },
+                meta={
+                    'image_model': input_im,
+                    'name': model_name
+                }
+            )
+
+            # Pull out the info we need to shift
+            group = os.path.split(input_file)[-1]
+            group = '_'.join(group.split('_')[:3])
+
+            try:
+                wcs_adjust_vals = self.wcs_adjust_dict[band][group]
+                matrix = wcs_adjust_vals['matrix']
+                shift = wcs_adjust_vals['shift']
+            except KeyError:
+                self.logger.info('No WCS adjust info found for %s. Defaulting to no shift' % group)
+                matrix = [[1, 0], [0, 1]]
+                shift = [0, 0]
+
+            im.set_correction(matrix=matrix, shift=shift)
+
+            input_im.meta.wcs = im.wcs
+
+            try:
+                update_fits_wcsinfo(
+                    input_im,
+                    max_pix_error=0.05
+                )
+            except (ValueError, RuntimeError) as e:
+                self.logger.warning(
+                    "Failed to update 'meta.wcsinfo' with FITS SIP "
+                    f'approximation. Reported error is:\n"{e.args[0]}"'
+                )
+
+            input_im.save(output_file)
 
     def run_asn2(self,
                  directory=None,
@@ -1240,7 +1474,7 @@ class JWSTReprocess:
 
         ending = ''
         if self.use_field_in_lev3 is not None and not process_bgr_like_science:
-            ending += ('_'+'_'.join(np.atleast_1d(self.use_field_in_lev3).astype(str)))
+            ending += ('_' + '_'.join(np.atleast_1d(self.use_field_in_lev3).astype(str)))
         if process_bgr_like_science:
             ending += '_offset'
         asn_lv3_filename = 'asn_lv3_%s%s.json' % (band, ending)
@@ -1350,23 +1584,8 @@ class JWSTReprocess:
 
                         os.system('set_telescope_pointing.py %s' % uncal_file)
 
-                    detector1 = calwebb_detector1.Detector1Pipeline()
-
-                    # Set some parameters that pertain to the
-                    # entire pipeline
-                    detector1.output_dir = output_dir
-                    if not os.path.isdir(detector1.output_dir):
-                        os.makedirs(detector1.output_dir)
-
-                    for key in self.lv1_parameter_dict.keys():
-
-                        value = parse_parameter_dict(self.lv1_parameter_dict,
-                                                     key,
-                                                     band)
-                        if value == 'VAL_NOT_FOUND':
-                            continue
-
-                        recursive_setattr(detector1, key, value)
+                    config = calwebb_detector1.Detector1Pipeline.get_config_from_reference(uncal_file)
+                    detector1 = calwebb_detector1.Detector1Pipeline.from_config_section(config)
 
                     # Pull out the trapsfilled file from preceding exposure if needed. Only for NIRCAM
 
@@ -1386,6 +1605,21 @@ class JWSTReprocess:
                     # Specify the name of the trapsfilled file
                     detector1.persistence.input_trapsfilled = persist_file
 
+                    # Set other parameters
+                    detector1.output_dir = output_dir
+                    if not os.path.isdir(detector1.output_dir):
+                        os.makedirs(detector1.output_dir)
+
+                    for key in self.lv1_parameter_dict.keys():
+
+                        value = parse_parameter_dict(self.lv1_parameter_dict,
+                                                     key,
+                                                     band)
+                        if value == 'VAL_NOT_FOUND':
+                            continue
+
+                        recursive_setattr(detector1, key, value)
+
                     # Run the level 1 pipeline
                     detector1.run(uncal_file)
 
@@ -1398,7 +1632,8 @@ class JWSTReprocess:
 
                 os.system('rm -rf %s' % output_dir)
 
-                im2 = calwebb_image2.Image2Pipeline()
+                config = calwebb_image2.Image2Pipeline.get_config_from_reference(asn_file)
+                im2 = calwebb_image2.Image2Pipeline.from_config_section(config)
                 im2.output_dir = output_dir
                 if not os.path.isdir(im2.output_dir):
                     os.makedirs(im2.output_dir)
@@ -1462,7 +1697,8 @@ class JWSTReprocess:
 
                 # Now run through the rest of the pipeline
 
-                im3 = calwebb_image3.Image3Pipeline()
+                config = calwebb_image3.Image3Pipeline.get_config_from_reference(asn_file)
+                im3 = calwebb_image3.Image3Pipeline.from_config_section(config)
                 im3.output_dir = output_dir
 
                 im3.tweakreg.kernel_fwhm = fwhm_pix * 2
@@ -1615,7 +1851,7 @@ class JWSTReprocess:
 
                 # Convert sources into a reference catalogue
                 wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
-                wcs_jwst_corrector = FITSWCS(wcs_jwst)
+                wcs_jwst_corrector = FITSWCSCorrector(wcs_jwst)
 
                 jwst_tab = Table()
                 jwst_tab['x'] = sources['xcentroid']
@@ -1624,7 +1860,7 @@ class JWSTReprocess:
                 jwst_tab['dec'] = sources['sky_centroid'].dec.value
 
                 # Run a match
-                match = TPMatch(
+                match = XYXYMatch(
                     searchrad=self.tpmatch_searchrad,
                     separation=self.tpmatch_separation,
                     tolerance=self.tpmatch_tolerance,

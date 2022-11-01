@@ -2,20 +2,12 @@ import os
 import socket
 from datetime import datetime
 
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
-os.environ['OMP_NUM_THREADS'] = '1'
-os.environ['NUMEXPR_NUM_THREADS'] = '1'
-os.environ['MKL_NUM_THREADS'] = '1'
-os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
-
 host = socket.gethostname()
 
 if 'node' in host:
-    raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data'
-    working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_working'
+    working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_phangs_reprocessed'
 else:
-    raw_dir = '/Users/williams/Documents/phangs/jwst_data'
-    working_dir = '/Users/williams/Documents/phangs/jwst_working'
+    working_dir = '/Users/williams/Documents/phangs/jwst_reprocessed'
 
 date_str = datetime.today().strftime('%Y%m%d_%H:%M:%S')
 

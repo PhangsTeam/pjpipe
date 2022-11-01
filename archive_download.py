@@ -1,11 +1,13 @@
+import numpy as np
 import os
 import warnings
-from datetime import datetime
 
-import numpy as np
+from astropy.table import unique, vstack
 from astroquery.exceptions import NoResultsWarning
 from astroquery.mast import Observations
+from datetime import datetime
 from requests.exceptions import ConnectionError, ChunkedEncodingError
+from tqdm import tqdm
 
 
 def get_time():
@@ -16,19 +18,26 @@ def get_time():
     return current_time
 
 
-def download(observations, product, max_retries=5):
+def download(observations, products, max_retries=5):
     """Wrap around astroquery download with retry option"""
-    retry = 0
 
-    while retry < max_retries:
+    for product in products:
 
-        try:
-            observations.download_products(product)
-            return True
-        except (ConnectionResetError, ConnectionError, ChunkedEncodingError):
-            retry += 1
+        retry = 0
+        success = False
 
-    raise Warning('Max retries exceeded!')
+        while retry < max_retries and not success:
+
+            try:
+                observations.download_products(product)
+                success = True
+            except (ConnectionResetError, ConnectionError, ChunkedEncodingError):
+                retry += 1
+
+            if retry == max_retries:
+                raise Warning('Max retries exceeded!')
+
+    return True
 
 
 warnings.simplefilter('error', NoResultsWarning)
@@ -46,6 +55,7 @@ class ArchiveDownload:
                  extension=None,
                  do_filter=True,
                  product_type=None,
+                 filter_gs=True,
                  login=False,
                  api_key=None,
                  verbose=False,
@@ -75,6 +85,7 @@ class ArchiveDownload:
         self.calib_level = calib_level
         self.extension = extension
         self.do_filter = do_filter
+        self.filter_gs = filter_gs
         self.product_type = product_type
         self.verbose = verbose
         self.overwrite = overwrite
@@ -140,28 +151,45 @@ class ArchiveDownload:
     def run_download(self):
         """Download a list of observations"""
 
-        for obs in self.obs_list:
+        # Flatten down all the observations
+        products = []
+
+        if self.verbose:
+            print('[%s] Getting obs' % get_time())
+
+        for obs in tqdm(self.obs_list, ascii=True):
             try:
                 product_list = self.observations.get_product_list(obs)
+                products.append(product_list)
             except NoResultsWarning:
                 print('[%s] Data not available for %s' % (get_time(), obs['obs_id']))
                 continue
 
-            if self.verbose:
-                print('[%s] Downloading %s' % (get_time(), obs['obs_id']))
+        products = vstack(products)
 
-            if self.do_filter:
-                products = self.observations.filter_products(product_list,
-                                                             calib_level=self.calib_level,
-                                                             productType=self.product_type,
-                                                             extension=self.extension,
-                                                             )
-                if len(products) > 0:
-                    download(self.observations, products)
-                else:
-                    print('[%s] Filtered data not available' % get_time())
-                    continue
-            else:
-                download(self.observations, product_list)
+        if self.verbose:
+            print('[%s] Found a total %d files. Performing cuts...' % (get_time(), len(products)))
+
+        # Filter out guide stars if requested
+        if self.filter_gs:
+            mask = np.char.find(products['dataURI'], '_gs-') == -1
+            products = products[mask]
+
+        # Perform filtering if requested
+        if self.do_filter:
+            products = self.observations.filter_products(products,
+                                                         calib_level=self.calib_level,
+                                                         productType=self.product_type,
+                                                         extension=self.extension,
+                                                         )
+
+        # Finally, remove duplicates
+        if 'dataURI' in products.colnames:
+            products = unique(products, keys='dataURI')
+
+        if self.verbose:
+            print('[%s] Downloading %d files' % (get_time(), len(products)))
+
+        download(self.observations, products)
 
         return True

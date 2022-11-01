@@ -3,19 +3,13 @@ import glob
 import os
 import socket
 
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
-os.environ['OMP_NUM_THREADS'] = '1'
-os.environ['NUMEXPR_NUM_THREADS'] = '1'
-os.environ['MKL_NUM_THREADS'] = '1'
-os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
-
 from jwst_reprocess import JWSTReprocess
 
 host = socket.gethostname()
 
 if 'node' in host:
-    raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data'
-    working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_working'
+    raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw'
+    working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_phangs_reprocessed'
     updated_flats_dir = None
 else:
     raw_dir = '/home/egorov/Science/PHANGS/JWST/Lev1/'  # '/Users/williams/Documents/phangs/jwst_data'
@@ -36,16 +30,16 @@ if flush_crds:
     os.system('rm -rf %s' % crds_dir)
     os.makedirs(crds_dir)
 
-reprocess_dir_ext = 'v0p4p2_new'
+reprocess_dir_ext = 'v0p4p2'
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
 galaxies = [
-    # 'ngc0628',
-    'ngc1365',
+    'ngc0628',
+    # 'ngc1365',
     # 'ic5332',
     # 'ngc7320',
-    'ngc7496',
+    # 'ngc7496',
 ]
 
 for galaxy in galaxies:
@@ -100,10 +94,10 @@ for galaxy in galaxies:
 
         bands = [
             # NIRCAM
-            'F200W',
+            # 'F200W',
             'F300M',
-            'F335M',
-            'F360M',
+            # 'F335M',
+            # 'F360M',
             # MIRI
             # 'F770W',
             # 'F1000W',
