@@ -1,0 +1,36 @@
+
+[download]
+products = ['SCIENCE','PREVIEW', 'INFO', 'AUXILIARY']
+calib_level = [1, 2, 3]
+projects = ['2107']
+
+[galaxies]
+targets = ['ic5332',
+	   'ngc0628',
+	   'ngc1365',
+	   'ngc7496']
+
+[pipeline]
+data_version = 'v0p6'
+flush_crds = true  # Set to flush out calibration files and download new
+# crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
+crds_context = ''
+nircam_bands = ['F200W','F300M','F335M','F360M']
+miri_bands = ['F770W','F1000W','F1130W','F2100W']
+lev3_fields = [] # indicate numbers of particular field if you want
+                 # to limit the level3
+		 # and further reduction by only selected
+		 # pointings (e.g. [1], or [1,2], or 1)
+
+
+[alignment]
+ic5332 = 'Gaia_DR3_IC5332.fits'
+ngc0628 = 'ngc0628_agb_cat.fits'
+ngc1365 = 'ngc1365_agb_cat.fits'
+ngc7320 = 'Gaia_DR3_NGC7320.fits'
+ngc7496 = 'ngc7496_agb_cat.fits'
+[alignment_mapping]
+F770W = 'F335M'
+F1000W = 'F770W'
+F1130W = 'F1000W'
+F2100W = 'F1130W'

@@ -1,0 +1,6 @@
+[local]
+api_key = ''
+base_dir = '/mnt/space/erosolow/phangs_jwst/'
+raw_dir = '/mnt/space/erosolow/phangs_jwst/'
+working_dir = '/mnt/space/erosolow/phangs_jwst/working/'
+updated_flats_dir = ''

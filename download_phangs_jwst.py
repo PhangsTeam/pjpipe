@@ -4,50 +4,50 @@ import getpass
 
 from archive_download import ArchiveDownload
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
+with open('config.toml','rb') as f:
+    config = tomllib.load(f)
+
+with open('local.toml','rb') as f:
+    local = tomllib.load(f)
+
+
 host = socket.gethostname()
 
-if 'node' in host:
-    base_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw'
-else:
-    base_dir = '/Users/williams/Documents/jwst_raw'
+base_dir = local['local']['base_dir']
+api_key = local['local']['api_key']
 
+login = False
+if api_key != '':
+    login = True
+else:
+    try:
+        api_key = os.environ['MAST_API_TOKEN']
+        login = True
+    except KeyError:
+        pass
+    
 if not os.path.exists(base_dir):
     os.makedirs(base_dir)
 
 os.chdir(base_dir)
 
-login = True
 overwrite = False
 
-product_type = [
-    'SCIENCE',
-    'PREVIEW',
-    'INFO',
-    'AUXILIARY',
-]
+product_type = config['download']['products']
 
-calib_level = [1, 2, 3]
+calib_level = config['download']['calib_level']
 
-if login:
-    api_key = getpass.getpass('Input API key: ')
-else:
-    api_key = None
 
-prop_ids = [
-    '2107',
-]
+
+prop_ids = config['download']['projects']
+targets = config['galaxies']['targets']
 
 for prop_id in prop_ids:
-
-    targets = {
-        '2107': [
-            'ic5332',
-            'ngc0628',
-            'ngc1365',
-            'ngc7496',
-        ],
-    }[prop_id]
-
     for target in targets:
         dl_dir = target.replace(' ', '_')
         if not os.path.exists(dl_dir):
