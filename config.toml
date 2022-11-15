@@ -21,7 +21,7 @@ lev3_fields = [] # indicate numbers of particular field if you want
                  # to limit the level3
 		 # and further reduction by only selected
 		 # pointings (e.g. [1], or [1,2], or 1)
-do_lyot_adjust = 'mask'
+lyot_adjust = 'mask'
 
 
 [overwrite]
@@ -61,3 +61,38 @@ bkg_subtract.save_combined_background = true
 bkg_subtract.sigma = 1.5
 
 [lv3_parameters]
+save_results = true
+tweakreg.align_to_gaia = false
+tweakreg.brightest = 500
+tweakreg.snr_threshold = 3
+tweakreg.expand_refcat = true
+tweakreg.fitgeometry = 'shift'
+tweakreg.minobj = 3
+tweakreg.peakmax = {nircam = 20, miri = ''}
+tweakreg.searchrad = '10pix'
+tweakreg.separation = '10pix'
+tweakreg.tolerance = {nircam_short = '5pix', nircam_long = '10pix', miri='10pix'}
+tweakreg.use2dhist = false
+tweakreg.roundlo = -0.5
+tweakreg.roundhi = 0.5
+# Tweak boxsize, so we detect objects in diffuse emission
+tweakreg.bkg_boxsize = 100
+
+skymatch.skip = {miri = false}
+skymatch.skymethod = {nircam = 'global+match', miri= 'match'}
+skymatch.subtract = {nircam = true, miri= true}
+skymatch.skystat = 'median'
+skymatch.match_down = {miri = true}
+skymatch.nclip =  {nircam = 20, miri= 10}
+skymatch.lsigma = {nircam =  3, miri = 1.5}
+skymatch.usigma = {nircam = 3, miri = 1.5}
+
+outlier_detection.in_memory = true
+
+resample.rotation = 0.0
+resample.in_memory = true
+
+source_catalog.snr_threshold = 3
+source_catalog.npixels = 5
+source_catalog.bkg_boxsize = 100
+source_catalog.deblend = true
