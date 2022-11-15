@@ -21,6 +21,17 @@ lev3_fields = [] # indicate numbers of particular field if you want
                  # to limit the level3
 		 # and further reduction by only selected
 		 # pointings (e.g. [1], or [1,2], or 1)
+do_lyot_adjust = 'mask'
+
+
+[overwrite]
+all = false
+lv1 = false
+lv2 = false
+lv3 = false
+lyot_adjust = false
+astrometric_alignment = true
+astrometric_ref_cat = false
 
 
 [alignment]
@@ -29,8 +40,24 @@ ngc0628 = 'ngc0628_agb_cat.fits'
 ngc1365 = 'ngc1365_agb_cat.fits'
 ngc7320 = 'Gaia_DR3_NGC7320.fits'
 ngc7496 = 'ngc7496_agb_cat.fits'
+
+# Currently has an embedded override for IC5332.
 [alignment_mapping]
 F770W = 'F335M'
 F1000W = 'F770W'
 F1130W = 'F1000W'
 F2100W = 'F1130W'
+
+
+[lv1_parameters]
+save_results = true
+ramp_fit.suppress_one_group = false
+refpix.use_side_ref_pixels = true
+
+
+[lv2_parameters]
+save_results = true
+bkg_subtract.save_combined_background = true
+bkg_subtract.sigma = 1.5
+
+[lv3_parameters]

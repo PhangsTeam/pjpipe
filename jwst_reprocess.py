@@ -23,7 +23,7 @@ from reproject import reproject_interp
 from stwcs.wcsutil import HSTWCS
 from threadpoolctl import threadpool_limits
 from tqdm import tqdm
-from tweakwcs import fit_wcs, XYXYMatch
+from tweakwcs import fit_wcs, XYXYMatch, FITSWCS
 from tweakwcs.correctors import FITSWCSCorrector, JWSTWCSCorrector
 
 from nircam_destriping import NircamDestriper
