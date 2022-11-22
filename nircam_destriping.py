@@ -395,6 +395,11 @@ class NircamDestriper:
 
             full_noise_model += med[:, np.newaxis]
 
+        # Finally, if there are any NaNs left set them to 0 -- this might affect the
+        # edges given updates to the STSci pipeline
+        nan_idx = np.where(np.isnan(self.hdu['SCI']))
+        self.hdu['SCI'][nan_idx] = 0
+
         self.hdu['SCI'].data[zero_idx] = 0
 
         return full_noise_model
