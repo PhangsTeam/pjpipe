@@ -85,6 +85,13 @@ class NircamDestriper:
         self.hdu_name = hdu_name
         self.hdu = fits.open(self.hdu_name, memmap=False)
 
+        # Check if this is a subarray
+        self.is_subarray = 'sub' in self.hdu[0].header['SUBARRAY'].lower()
+
+        if self.is_subarray:
+            # Force off quadrants if we're in subarray mode
+            quadrants = False
+
         self.full_noise_model = None
 
         if hdu_out_name is None:
@@ -160,7 +167,8 @@ class NircamDestriper:
 
         self.hdu['SCI'].data[zero_idx] = np.nan
 
-        self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data)
+        if not self.is_subarray:
+            self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data)
 
         mask = make_source_mask(self.hdu['SCI'].data,
                                 nsigma=self.sigma,
@@ -176,11 +184,13 @@ class NircamDestriper:
         err = copy.deepcopy(self.hdu['ERR'].data)
         original_mask = copy.deepcopy(mask)
 
-        # Trim off the 0 rows/cols
-        data = data[4:-4, 4:-4]
-        err = err[4:-4, 4:-4]
-        dq_mask = dq_mask[4:-4, 4:-4]
-        mask = mask[4:-4, 4:-4]
+        # Trim off the 0 rows/cols if we're using the full array
+
+        if not self.is_subarray:
+            data = data[4:-4, 4:-4]
+            err = err[4:-4, 4:-4]
+            dq_mask = dq_mask[4:-4, 4:-4]
+            mask = mask[4:-4, 4:-4]
 
         data_mean, data_med, data_std = sigma_clipped_stats(data,
                                                             mask=mask,
@@ -363,7 +373,11 @@ class NircamDestriper:
             noise_model = (noise_model.T - 1) * norm_mad
 
             full_noise_model = np.full_like(self.hdu['SCI'].data, np.nan)
-            full_noise_model[4:-4, 4:-4] = copy.deepcopy(noise_model)
+
+            if self.is_subarray:
+                full_noise_model = copy.deepcopy(noise_model)
+            else:
+                full_noise_model[4:-4, 4:-4] = copy.deepcopy(noise_model)
 
         # Centre the noise model around 0 to preserve flux
         noise_med = sigma_clipped_stats(full_noise_model,
@@ -386,8 +400,13 @@ class NircamDestriper:
 
             nan_idx = np.where(~np.isfinite(med))
 
-            # We expect there to be 8 NaNs here, if there's more it's an issue
-            if len(nan_idx[0]) > 8:
+            # We expect there to be 8 NaNs here for FULL mode, 0 for subarray, if there's more it's an issue
+
+            if self.is_subarray:
+                allowed_nans = 8
+            else:
+                allowed_nans = 0
+            if len(nan_idx[0]) > allowed_nans:
                 logging.warning('Median failing -- likely too much masked data')
 
             med[~np.isfinite(med)] = 0
@@ -472,7 +491,8 @@ class NircamDestriper:
         zero_idx = np.where(self.hdu['SCI'].data == 0)
         self.hdu['SCI'].data[zero_idx] = np.nan
 
-        self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data)
+        if not self.is_subarray:
+            self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data)
 
         mask = make_source_mask(self.hdu['SCI'].data,
                                 nsigma=self.sigma,
@@ -528,7 +548,8 @@ class NircamDestriper:
         zero_idx = np.where(self.hdu['SCI'].data == 0)
         self.hdu['SCI'].data[zero_idx] = np.nan
 
-        self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data)
+        if not self.is_subarray:
+            self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data)
 
         full_noise_model = np.zeros_like(self.hdu['SCI'].data)
 
