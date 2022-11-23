@@ -41,10 +41,11 @@ for prop_id in prop_ids:
 
     targets = {
         '2107': [
-            'ic5332',
-            'ngc0628',
-            'ngc1365',
-            'ngc7496',
+            # 'ic5332',
+            # 'ngc0628',
+            # 'ngc1365',
+            'ngc1566',
+            # 'ngc7496',
         ],
     }[prop_id]
 

@@ -35,8 +35,9 @@ reprocess_dir_ext = 'v0p4p2'
 reprocess_dir += '_%s' % reprocess_dir_ext
 
 galaxies = [
-    'ngc0628',
+    # 'ngc0628',
     # 'ngc1365',
+    'ngc1566',
     # 'ic5332',
     # 'ngc7320',
     # 'ngc7496',
@@ -48,6 +49,7 @@ for galaxy in galaxies:
         'ic5332': 'Gaia_DR3_IC5332.fits',
         'ngc0628': 'ngc0628_agb_cat.fits',
         'ngc1365': 'ngc1365_agb_cat.fits',
+        'ngc1566': 'ngc1566_agb_cat.fits',
         'ngc7320': 'Gaia_DR3_NGC7320.fits',
         'ngc7496': 'ngc7496_agb_cat.fits',
     }[galaxy]
