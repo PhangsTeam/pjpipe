@@ -57,10 +57,15 @@ def get_pixscale(hdu):
         Warning: If no suitable pixel scale keyword is found in header.
 
     """
+    if isinstance(hdu, (fits.hdu.image.PrimaryHDU, fits.hdu.image.ImageHDU) ):
+        header =hdu.header
+    elif isinstance(hdu, fits.header.Header ):
+        header =hdu
+    
     for pixel_keyword in PIXEL_SCALE_NAMES:
         try:
             try:
-                pix_scale = np.abs(float(hdu.header[pixel_keyword]))
+                pix_scale = np.abs(float(header[pixel_keyword]))
             except ValueError:
                 continue
             if pixel_keyword in ['CDELT1', 'CD1_1']:
