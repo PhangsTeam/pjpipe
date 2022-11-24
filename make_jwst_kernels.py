@@ -369,9 +369,7 @@ def trim_kernel_energy(kernel, energy_tol=0.999):
 
 
 class MakeConvolutionKernel:
-    """Short description.
-
-    Long description.
+    """Class to generate kernels following the Aniano 2011 algorithm.
 
     Args:
 
@@ -394,7 +392,9 @@ class MakeConvolutionKernel:
                  grid_size_arcsec=None,
                  verbose=True,
                  ):
-
+        """
+        test
+        """
         if not source_psf:
             raise Warning('original_psf should be defined')
         if not target_psf:
