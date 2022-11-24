@@ -12,7 +12,7 @@ else:
 reprocess_dir = os.path.join(working_dir, 'jwst_lv3_reprocessed')
 release_dir = os.path.join(working_dir, 'jwst_release')
 
-version = 'v0p4p2'
+version = 'v0p5'
 
 reprocess_dir += '_%s' % version
 release_dir = os.path.join(release_dir, version)
@@ -23,6 +23,7 @@ if not os.path.exists(release_dir):
 galaxies = [
     'ngc0628',
     'ngc1365',
+    'ngc1566',
     # 'ngc7320',
     'ngc7496',
     'ic5332',
