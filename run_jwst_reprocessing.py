@@ -18,7 +18,7 @@ else:
 
 # We may want to occasionally flush out the CRDS directory to avoid weirdness between mappings. Probably do this at
 # the start of another version cycle
-flush_crds = True
+flush_crds = False
 
 # Force in working context if required
 # os.environ['CRDS_CONTEXT'] = 'jwst_0956.pmap'
@@ -30,7 +30,7 @@ if flush_crds:
     os.system('rm -rf %s' % crds_dir)
     os.makedirs(crds_dir)
 
-reprocess_dir_ext = 'v0p4p2'
+reprocess_dir_ext = 'v0p5'
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
@@ -97,10 +97,10 @@ for galaxy in galaxies:
 
         bands = [
             # NIRCAM
-            # 'F200W',
+            'F200W',
             'F300M',
-            # 'F335M',
-            # 'F360M',
+            'F335M',
+            'F360M',
             # MIRI
             # 'F770W',
             # 'F1000W',
