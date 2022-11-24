@@ -217,10 +217,10 @@ def resize(data, pixscale, grid_size_arcsec=None):
         grid_size_arcsec = np.array([729, 729])
 
     grid_size_pix = grid_size_arcsec / pixscale
-    print(grid_size_pix)
+    
     if grid_size_pix[0] % 2 == 0:
         grid_size_pix += 1
-    print(grid_size_pix, data.shape)
+    
     if np.all(data.shape > grid_size_pix):
         data_resized = trim(data, grid_size_pix)
     elif np.all(data.shape < grid_size_pix):
@@ -458,10 +458,10 @@ class MakeConvolutionKernel:
         
 
         if not source_fwhm:
-            print('source_fwhm not supplied. Fitting using 2D Gaussian')
+            #print('source_fwhm not supplied. Fitting using 2D Gaussian')
             source_fwhm = fit_2d_gaussian(data=self.source_psf, pixscale=self.source_pixscale)
         if not target_fwhm:
-            print('target_fwhm not supplied. Fitting using 2D Gaussian')
+            # print('target_fwhm not supplied. Fitting using 2D Gaussian')
             target_fwhm = fit_2d_gaussian(data=self.target_psf, pixscale=self.target_pixscale)
 
         if source_fwhm >= target_fwhm:

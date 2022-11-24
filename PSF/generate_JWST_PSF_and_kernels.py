@@ -196,7 +196,7 @@ def save_jwst_cross_kernel(input_filter, target_filter, psf_dir='', outdir=''):
 
 
      
-def generate_kernels_to_Gauss(input_filter, target_gaussian, psf_dir='', outdir=''):
+def save_kernels_to_Gauss(input_filter, target_gaussian, psf_dir='', outdir=''):
     '''
     
 
@@ -228,15 +228,15 @@ def generate_kernels_to_Gauss(input_filter, target_gaussian, psf_dir='', outdir=
          target_gaussian['fwhm']/2.355/target_pixscale, \
              target_gaussian['fwhm']/2.355/target_pixscale) )
         
-    grid_size_arcsec = np.array([721 * target_pixscale,
-                                 721 * target_pixscale])
+    grid_size_arcsec = np.array([331 * target_pixscale,
+                                 331 * target_pixscale])
 
     kk = MakeConvolutionKernel(source_psf=source_psf,
                                source_pixscale=source_pixscale,
                                source_name=input_filter['filter'],
                                target_psf=target_psf,
                                target_pixscale=target_pixscale,
-                               target_name=target_filter['filter'],
+                               target_name= 'Gauss_{:.3f}'.format(target_gaussian['fwhm']),
                                common_pixscale = target_pixscale,
                                grid_size_arcsec =grid_size_arcsec
                                )
@@ -314,7 +314,7 @@ def plot_kernel(kk, save_plot=False, save_dir ='' ):
 output_dir = '/Volumes/fbdata2/CODE/JWST/jwst_scripts/PSF/PSF/'
 output_dir_kernels = '/Volumes/fbdata2/CODE/JWST/jwst_scripts/PSF/kernels/'
 
-
+# Example script
 # loop everything to F2100W
 miri_psfs_n = copy.copy(miri_psfs)
 miri_psfs_n.remove('F2100W')
@@ -329,51 +329,44 @@ for ii in range(len(all_PSFs)):
     kk = save_jwst_cross_kernel(input_filter, target_filter,
                                 psf_dir=output_dir, outdir=output_dir_kernels)
     plot_kernel(kk,save_plot=True, save_dir=output_dir_kernels)
-
-
-
-# %%
-# this matches the z0mgs parameters
-input_filter = {'camera':'MIRI', 'filter':'F2100W'}
-target_gaussian = {'fwhm':1.0, 'pixscale':0.2}
-
-
-psf_dir=output_dir
-outdir=output_dir_kernels
-
-source_psf_path = psf_dir+input_filter['camera']+'_PSF_filter_'+\
-            input_filter['filter']+'.fits'
-source_psf = fits.open(source_psf_path)[0]
-source_pixscale = source_psf.header['PIXELSCL']
-
-yy, xx = np.meshgrid(np.arange(361)-180,np.arange(361)-180 )
-target_pixscale = target_gaussian['pixscale']
-target_psf = makeGaussian_2D((xx, yy), (0,0), (
-      target_gaussian['fwhm']/2.355/target_pixscale, \
-          target_gaussian['fwhm']/2.355/target_pixscale) )
-
-grid_size_arcsec = np.array([721 * target_pixscale,
-                                 721 * target_pixscale])        
-
-kk = MakeConvolutionKernel(source_psf=source_psf,
-                                source_pixscale=source_pixscale,
-                                source_name=input_filter['filter'],
-                                target_psf=target_psf,
-                                target_pixscale=target_pixscale,
-                                target_name='Gauss',
-                                common_pixscale = target_pixscale,
-                                verbose=True)
-kk.make_convolution_kernel()
-# kk = generate_kernels_to_Gauss(input_filter, target_gaussian,
-#                             psf_dir=output_dir, outdir=output_dir_kernels)
 # %%
 
-plot_kernel(kk,save_plot=True, save_dir=output_dir_kernels)
+# Example script
+# loop all NIRCam to F360W
+all_PSFs = copy.copy(nircam_psfs)
+all_PSFs.remove('F360M')
+all_cameras = ['NIRCam']*len(all_PSFs) 
+
+for ii in range(len(all_PSFs)):
+    print( all_cameras[ii], all_PSFs[ii], ' to F360M')
+    input_filter = {'camera':all_cameras[ii], 'filter':all_PSFs[ii]}
+    target_filter = {'camera':'NIRCam', 'filter':'F360M'}
+    
+    kk = save_jwst_cross_kernel(input_filter, target_filter,
+                                psf_dir=output_dir, outdir=output_dir_kernels)
+    plot_kernel(kk,save_plot=True, save_dir=output_dir_kernels)
+
 # %%
 
+#get the copt PSF of the JWST galaxies
+jwst_gals = ['NGC0628', 'NGC1365', 'NGC7496', "IC5332"]
+copt_fwhm = np.zeros(len(jwst_gals))
+for ii, gal in enumerate(jwst_gals):
+    copt_fwhm[ii] = get_copt_fwhm(gal)
+    print(gal,copt_fwhm[ii]  )
 
- # 'Gauss_{:.3f}'.format(target_fwhm),
-    yy, xx = np.meshgrid(np.arange(361)-180,np.arange(361)-180 )
-    target_psf = makeGaussian_2D((xx, yy), (0,0), (
-         target_fwhm/2.355/target_pixscale, target_fwhm/2.355/target_pixscale) )
-    # #ker.info_psf(target_psf,target_pixscale)
+#Example script, loops everything to each copt PSF from MUSE
+all_PSFs = nircam_psfs+ miri_psfs
+all_cameras = ['NIRCam']*len(nircam_psfs) + ['MIRI']*len(miri_psfs)
+
+for jj in copt_fwhm:
+    for ii in range(len(all_PSFs)):
+        print( all_cameras[ii], all_PSFs[ii], ' to Gauss ' + '{:.3f}'.format(jj))
+        input_filter = {'camera':all_cameras[ii], 'filter':all_PSFs[ii]}
+        target_gaussian = {'fwhm':jj, 'pixscale':0.2/4.}
+        
+        kk = save_kernels_to_Gauss(input_filter, target_gaussian,
+                                    psf_dir=output_dir, outdir=output_dir_kernels)
+        plot_kernel(kk,save_plot=True, save_dir=output_dir_kernels)
+
+# %%
