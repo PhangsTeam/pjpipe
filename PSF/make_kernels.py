@@ -10,6 +10,36 @@ from scipy.ndimage import rotate, zoom
 
 PIXEL_SCALE_NAMES = ['XPIXSIZE', 'CDELT1', 'CD1_1', 'PIXELSCL']
 
+def profile(psf,bins=None, pixscale=1):
+    
+    i_cen = (psf.shape[0] - 1) / 2
+    j_cen = (psf.shape[1] - 1) / 2
+
+    ji, ii = np.meshgrid((np.arange(psf.shape[1]) - j_cen),
+                        (np.arange(psf.shape[0]) - i_cen))
+    dis = (ji**2 + ii**2)**0.5*pixscale
+    
+    if bins is None:
+        guess_sigma = np.sum(ii[:,int(i_cen)]**2*psf[:,int(i_cen)]/np.sum(psf[:,int(i_cen)]))**0.5*pixscale
+        extent = np.min([psf.shape[0]/2*pixscale, guess_sigma*5])
+        bins = np.linspace(0, int(extent), int(extent/pixscale/2))
+            
+ 
+    bin_means = (np.histogram(dis, bins, weights=psf)[0] /
+                 np.histogram(dis, bins)[0])
+
+    norm_bins = (bins[:-1]+np.diff(bins)/2)
+    return norm_bins, bin_means
+
+
+def get_fwhm(psf, pixscale=1):
+
+    psf=psf/np.nanmax(psf)
+    norm_bins, bin_means = profile(psf,  pixscale=pixscale)
+
+    hwhm = np.interp(0.5, bin_means[::-1]/np.nanmax(bin_means), norm_bins[::-1])
+    fwhm = 2*hwhm
+    return fwhm
 
 def get_pixscale(hdu):
     """Get pixel scale from header.
@@ -187,9 +217,10 @@ def resize(data, pixscale, grid_size_arcsec=None):
         grid_size_arcsec = np.array([729, 729])
 
     grid_size_pix = grid_size_arcsec / pixscale
+    print(grid_size_pix)
     if grid_size_pix[0] % 2 == 0:
         grid_size_pix += 1
-
+    print(grid_size_pix, data.shape)
     if np.all(data.shape > grid_size_pix):
         data_resized = trim(data, grid_size_pix)
     elif np.all(data.shape < grid_size_pix):
@@ -385,26 +416,46 @@ class MakeConvolutionKernel:
                  source_psf=None,
                  source_fwhm=None,
                  source_name='source',
+                 source_pixscale=1,
                  target_psf=None,
                  target_fwhm=None,
                  target_name='target',
+                 target_pixscale=1,
                  common_pixscale=0.2,
                  grid_size_arcsec=None,
-                 verbose=True,
+                 verbose=False,
                  ):
         """
         test
         """
-        if not source_psf:
+        if source_psf is None:
             raise Warning('original_psf should be defined')
-        if not target_psf:
+        if target_psf is None:
             raise Warning('target_psf should be defined')
 
-        self.source_psf = copy.deepcopy(source_psf.data)
-        self.target_psf = copy.deepcopy(target_psf.data)
+        if isinstance(source_psf, (fits.hdu.image.PrimaryHDU, fits.hdu.image.ImageHDU) ):
+            # get input PSF from file
+            self.source_psf = copy.deepcopy(source_psf.data)
+            self.source_pixscale = get_pixscale(source_psf)
+        elif isinstance(source_psf, np.ndarray):
+            self.source_psf = copy.deepcopy(source_psf)
+            self.source_pixscale = source_pixscale
+           # print('source PSF from array')
+        else:
+            raise Warning('source_psf is in an unknown format')
+        
+        if isinstance(target_psf, (fits.hdu.image.PrimaryHDU, fits.hdu.image.ImageHDU) ):
+            # get input PSF from file
+            self.target_psf = copy.deepcopy(target_psf.data)
+            self.target_pixscale = get_pixscale(target_psf)
+        elif isinstance(target_psf, np.ndarray):
+            self.target_psf = copy.deepcopy(target_psf)
+            self.target_pixscale = target_pixscale
+            #print('target PSF from array')
+        else:
+            raise Warning('target_psf is in an unknown format')
 
-        self.source_pixscale = get_pixscale(source_psf)
-        self.target_pixscale = get_pixscale(target_psf)
+        
 
         if not source_fwhm:
             print('source_fwhm not supplied. Fitting using 2D Gaussian')
@@ -561,14 +612,14 @@ class MakeConvolutionKernel:
         self.kernel = circularise(self.kernel)
         self.kernel /= np.nanmax(self.kernel)
 
-    def write_out_kernel(self):
+    def write_out_kernel(self, outdir=None):
         """
 
         Returns:
 
         """
 
-        file_name = '%s_to_%s.fits' % (self.source_name, self.target_name)
+        file_name = outdir+'%s_to_%s.fits' % (self.source_name, self.target_name)
 
         # Build the fits file. Use 32bit precision to cut down space
 
