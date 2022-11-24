@@ -4,6 +4,7 @@ import os
 import socket
 
 from jwst_reprocess import JWSTReprocess
+import sys
 
 host = socket.gethostname()
 
@@ -18,8 +19,8 @@ with open('config.toml','rb') as f:
 with open('local.toml','rb') as f:
     local = tomllib.load(f)
 
-script_dir = os.getcwd()
-
+script_dir = os.path.dirname(os.path.realpath(__file__))
+    
 raw_dir = local['local']['raw_dir']
 working_dir = local['local']['working_dir']
 updated_flats_dir = local['local']['updated_flats_dir']
@@ -68,6 +69,7 @@ for galaxy in galaxies:
     cur_field = config['pipeline']['lev3_fields']
     if cur_field == []:
         cur_field = None  
+    
     reproc = JWSTReprocess(galaxy=galaxy,
                            raw_dir=raw_dir,
                            reprocess_dir=reprocess_dir,
@@ -76,6 +78,10 @@ for galaxy in galaxies:
                            astrometric_alignment_table=alignment_table,
                            alignment_mapping=alignment_mapping,
                            bands=bands,
+                           do_all=True,
+                           do_lv1=config['pipeline']['lv1'],
+                           do_lv2=config['pipeline']['lv2'],
+                           do_lv3=config['pipeline']['lv3'],
                            procs=local['local']['processors'],
                            overwrite_all=config['overwrite']['all'],
                            overwrite_lv1=config['overwrite']['lv1'],

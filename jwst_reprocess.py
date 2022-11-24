@@ -1680,18 +1680,20 @@ class JWSTReprocess:
                     tweakreg.save_results = False
                     tweakreg.kernel_fwhm = fwhm_pix * 2
 
-                    for key in self.lv3_parameter_dict.keys():
-                        if key.split('.')[0] == 'tweakreg':
-
-                            tweakreg_key = '.'.join(key.split('.')[1:])
-
-                            value = parse_parameter_dict(self.lv3_parameter_dict,
-                                                         key,
-                                                         band)
-                            if value == 'VAL_NOT_FOUND':
-                                continue
-
-                            recursive_setattr(tweakreg, tweakreg_key, value)
+                    try:
+                        tweakreg_params = self.lv3_parameter_dict['tweakreg']
+                    except KeyError:
+                        pass
+                    
+                    for tweakreg_key in tweakreg_params:
+                        value = parse_parameter_dict(tweakreg_params,
+                                                     tweakreg_key,
+                                                     band)
+                                            
+                        if value == 'VAL_NOT_FOUND':
+                            continue
+                        
+                        recursive_setattr(tweakreg, tweakreg_key, value)
 
                     asn_file = tweakreg.run(asn_file)
 
