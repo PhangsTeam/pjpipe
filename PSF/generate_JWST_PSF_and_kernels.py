@@ -19,8 +19,8 @@ from make_kernels import MakeConvolutionKernel, profile
 from astropy.convolution import convolve
 
 # #output directory where you want the JWST PSFs to be saved
-# output_dir = '/Volumes/fbdata2/CODE/JWST/webbpsf-output/PSF/'
-# output_dir_kernels = '/Volumes/fbdata2/CODE/JWST/webbpsf-output/kernels/'
+output_dir = '/Volumes/fbdata2/CODE/JWST/jwst_scripts/PSF/PSF/'
+output_dir_kernels = '/Volumes/fbdata2/CODE/JWST/jwst_scripts/PSF/kernels/'
 
 # list of the PHANGS-JWST filters, others can be added if necessary
 nircam_psfs = [
@@ -311,8 +311,7 @@ def plot_kernel(kk, save_plot=False, save_dir ='' ):
 
 # %%
 
-output_dir = '/Volumes/fbdata2/CODE/JWST/jwst_scripts/PSF/PSF/'
-output_dir_kernels = '/Volumes/fbdata2/CODE/JWST/jwst_scripts/PSF/kernels/'
+
 
 # Example script
 # loop everything to F2100W

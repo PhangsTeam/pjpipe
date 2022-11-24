@@ -39,7 +39,7 @@ miri_psfs = [
 
 VERSION = 'DR1'
 galaxies =[ 'IC5332', 'NGC1365', 'NGC7496']
-target_name = 'Gauss_{:.3f}'.format(0.92)
+target_name = 'Gauss_{:.3f}'.format(0.89)
 
 
 # this is just a test
