@@ -6,21 +6,22 @@ projects = ['2107']
 
 [galaxies]
 targets = ['ngc1566']
-
+# targets = ['ngc1365']
 [pipeline]
 data_version = 'v0p6'
 flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
-nircam_bands = ['F200W','F300M','F335M','F360M']
-miri_bands = ['F770W','F1000W','F1130W','F2100W']
+nircam_bands = ['F300M','F335M','F360M']
+miri_bands = []
+#['F770W','F1000W','F1130W','F2100W']
 lev3_fields = [] # indicate numbers of particular field if you want
                  # to limit the level3
 		 # and further reduction by only selected
 		 # pointings (e.g. [1], or [1,2], or 1)
 lyot_adjust = 'mask'
-lv1 = true
-lv2 = true
+lv1 = false
+lv2 = false
 lv3 = true
 alignment = true
 destriping = true
@@ -28,7 +29,7 @@ destriping = true
 [overwrite]
 all = false
 lv1 = false
-lv2 = true
+lv2 = false
 lv3 = true
 lyot_adjust = false
 astrometric_alignment = true
@@ -42,6 +43,7 @@ ngc1365 = 'ngc1365_agb_cat.fits'
 ngc7320 = 'Gaia_DR3_NGC7320.fits'
 ngc7496 = 'ngc7496_agb_cat.fits'
 ngc1566 = 'ngc1566_agb_cat.fits'
+# ngc1566 = 'Gaia_DR3_NGC1566.fits'
 
 # Currently has an embedded override for IC5332.
 [alignment_mapping]
@@ -59,50 +61,68 @@ refpix.use_side_ref_pixels = true
 
 [lv2_parameters]
 save_results = true
-bkg_subtract.save_combined_background = true
-bkg_subtract.sigma = 1.5
+
+[lv2_parameters.bkg_subtract]
+save_combined_background = true
+sigma = 1.5
 
 [lv3_parameters]
 save_results = true
-tweakreg.align_to_gaia = false
-tweakreg.brightest = 500
-tweakreg.snr_threshold = 3
-tweakreg.expand_refcat = true
-tweakreg.fitgeometry = 'shift'
-tweakreg.minobj = 3
-tweakreg.peakmax.nircam = 20
-tweakreg.peakmax.miri = 10
-tweakreg.searchrad = '10pix'
-tweakreg.separation = '10pix'
-tweakreg.tolerance.nircam_short = '5pix'
-tweakreg.tolerance.nircam_long = '10pix'
-tweakreg.tolerance.miri='10pix'
-tweakreg.use2dhist = false
-tweakreg.roundlo = -0.5
-tweakreg.roundhi = 0.5
+
+[lv3_parameters.tweakreg]
+align_to_gaia = false
+brightest = 1000
+snr_threshold = 3
+expand_refcat = true
+fitgeometry = 'shift'
+minobj = 3
+peakmax.nircam = 20
+peakmax.miri = 10
+searchrad = '10pix'
+separation = '10pix'
+tolerance.nircam_short = '5pix'
+tolerance.nircam_long = '10pix'
+tolerance.miri='10pix'
+use2dhist = false
+roundlo = -0.5
+roundhi = 0.5
 # Tweak boxsize, so we detect objects in diffuse emission
-tweakreg.bkg_boxsize = 100
+bkg_boxsize = 100  
 
-skymatch.skip.miri = false
-skymatch.skymethod.nircam = 'global+match'
-skymatch.skymethod.miri= 'match'
-skymatch.subtract.nircam = true
-skymatch.subtract.miri = true
-skymatch.skystat = 'median'
-skymatch.match_down.miri = true
-skymatch.nclip.nircam = 20
-skymatch.nclip.miri = 10
-skymatch.lsigma.nircam =  3
-skymatch.lsigma.miri = 1.5
-skymatch.usigma.nircam = 3
-skymatch.usigma.miri = 1.5
+[lv3_parameters.skymatch]
+skip.miri = false
+skymethod.nircam = 'global+match'
+skymethod.miri= 'match'
+subtract.nircam = true
+subtract.miri = true
+skystat = 'median'
+match_down.miri = true
+nclip.nircam = 20
+nclip.miri = 10
+lsigma.nircam =  3
+lsigma.miri = 1.5
+usigma.nircam = 3
+usigma.miri = 1.5
 
-outlier_detection.in_memory = true
+[lv3_parameters.outlier_detection]
+in_memory = true
 
-resample.rotation = 0.0
-resample.in_memory = true
+[lv3_parameters.resample]
+rotation = 0.0
+in_memory = true
 
-source_catalog.snr_threshold = 3
-source_catalog.npixels = 5
-source_catalog.bkg_boxsize = 100
-source_catalog.deblend = true
+[lv3_parameters.source_catalog]
+snr_threshold = 3
+npixels = 5
+bkg_boxsize = 100
+deblend = true
+# kernel_fwhm = 5
+
+[tpmatch]
+searchrad = 20
+separation = 0.000001
+tolerance = 0.7
+use2dhist = false
+fitgeom = 'shift'
+nclip = 3
+sigma = 3

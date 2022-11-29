@@ -284,6 +284,25 @@ def recursive_getattr(f, attribute, *args):
     return functools.reduce(_getattr, [f] + attribute.split('.'))
 
 
+def attribute_setter(pipeobj, parameter_dict, band):
+    for key in parameter_dict.keys():
+        if type(parameter_dict[key]) is dict:
+            for subkey in parameter_dict[key]:                            
+                value = parse_parameter_dict(parameter_dict[key],
+                                             subkey, band)
+                if value == 'VAL_NOT_FOUND':
+                    continue
+                recursive_setattr(pipeobj, '.'.join([key, subkey]), value)
+        else:
+            value = parse_parameter_dict(parameter_dict,
+                                         key, band)
+            if value == 'VAL_NOT_FOUND':
+                continue
+
+            recursive_setattr(pipeobj, key, value)
+    return(pipeobj)
+
+
 class JWSTReprocess:
 
     def __init__(self,
@@ -1638,15 +1657,18 @@ class JWSTReprocess:
                 if not os.path.isdir(im2.output_dir):
                     os.makedirs(im2.output_dir)
 
-                for key in self.lv2_parameter_dict.keys():
 
-                    value = parse_parameter_dict(self.lv2_parameter_dict,
-                                                 key,
-                                                 band)
-                    if value == 'VAL_NOT_FOUND':
-                        continue
+                im2 = attribute_setter(im2, self.lv2_parameter_dict, band)
 
-                    recursive_setattr(im2, key, value)
+                # for key in self.lv2_parameter_dict.keys():
+
+                #     value = parse_parameter_dict(self.lv2_parameter_dict,
+                #                                  key,
+                #                                  band)
+                #     if value == 'VAL_NOT_FOUND':
+                #         continue
+
+                #     recursive_setattr(im2, key, value)
 
                 if self.updated_flats_dir is not None:
                     my_flat = [f for f in glob.glob(os.path.join(self.updated_flats_dir, "*.fits")) if band in f]
@@ -1694,7 +1716,6 @@ class JWSTReprocess:
                             continue
                         
                         recursive_setattr(tweakreg, tweakreg_key, value)
-
                     asn_file = tweakreg.run(asn_file)
 
                 # Now run through the rest of the pipeline
@@ -1706,16 +1727,8 @@ class JWSTReprocess:
                 im3.tweakreg.kernel_fwhm = fwhm_pix * 2
                 im3.source_catalog.kernel_fwhm = fwhm_pix * 2
 
-                for key in self.lv3_parameter_dict.keys():
-
-                    value = parse_parameter_dict(self.lv3_parameter_dict,
-                                                 key,
-                                                 band)
-                    if value == 'VAL_NOT_FOUND':
-                        continue
-
-                    recursive_setattr(im3, key, value)
-
+                im3 = attribute_setter(im3, self.lv3_parameter_dict, band)
+                
                 if self.degroup_short_nircam:
 
                     # Make sure we skip tweakreg since we've already done it
@@ -1730,7 +1743,6 @@ class JWSTReprocess:
                     if degroup:
                         for i, model in enumerate(asn_file._models):
                             model.meta.observation.exposure_number = str(i)
-
                 # Run the level 3 pipeline
                 im3.run(asn_file)
 
@@ -1841,10 +1853,11 @@ class JWSTReprocess:
 
                 source_cat_name = jwst_file.replace('i2d.fits', 'cat.ecsv')
                 sources = Table.read(source_cat_name, format='ascii.ecsv')
+                # convenience for CARTA viewing.
+                sources.write(source_cat_name.replace('.ecsv','.fits'), overwrite=True)
 
                 # Filter out extended
                 sources = sources[~sources['is_extended']]
-
                 # Filter based on roundness and sharpness
                 # sources = sources[np.logical_and(sources['sharpness'] >= 0.2,
                 #                                  sources['sharpness'] <= 1.0)]

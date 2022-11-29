@@ -7,20 +7,32 @@ from jwst_reprocess import JWSTReprocess
 import sys
 
 host = socket.gethostname()
+script_dir = os.path.dirname(os.path.realpath(__file__))
 
 try:
     import tomllib
 except ModuleNotFoundError:
     import tomli as tomllib
 
-with open('config.toml','rb') as f:
+if len(sys.argv) == 1:
+    config_file = script_dir + '/config/config.toml'
+    local_file = script_dir + '/config/local.toml'
+
+if len(sys.argv) == 2:
+    local_file = script_dir + '/config/local.toml'
+    config_file = sys.argv[1]
+    
+if len(sys.argv) == 3:
+    local_file = sys.argv[2]
+    config_file = sys.argv[1]
+
+with open(config_file,'rb') as f:
     config = tomllib.load(f)
 
-with open('local.toml','rb') as f:
+with open(local_file,'rb') as f:
     local = tomllib.load(f)
 
-script_dir = os.path.dirname(os.path.realpath(__file__))
-    
+
 raw_dir = local['local']['raw_dir']
 working_dir = local['local']['working_dir']
 updated_flats_dir = local['local']['updated_flats_dir']
@@ -95,6 +107,13 @@ for galaxy in galaxies:
                            lv3_parameter_dict=config['lv3_parameters'],
                            updated_flats_dir=updated_flats_dir,
                            do_lyot_adjust=config['pipeline']['lyot_adjust'],
+                           tpmatch_searchrad=config['tpmatch']['searchrad'],
+                           tpmatch_separation=config['tpmatch']['separation'],
+                           tpmatch_tolerance=config['tpmatch']['tolerance'],
+                           tpmatch_use2dhist=config['tpmatch']['use2dhist'],
+                           tpmatch_fitgeom=config['tpmatch']['fitgeom'],
+                           tpmatch_nclip=config['tpmatch']['nclip'],
+                           tpmatch_sigma=config['tpmatch']['sigma'],
                            # process_bgr_like_science=False,
                            use_field_in_lev3=cur_field
                            )

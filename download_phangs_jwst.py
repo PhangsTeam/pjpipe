@@ -1,7 +1,7 @@
 import os
 import socket
 import getpass
-
+import sys
 from archive_download import ArchiveDownload
 
 try:
@@ -9,14 +9,28 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
-with open('config.toml','rb') as f:
+host = socket.gethostname()
+script_dir = os.path.dirname(os.path.realpath(__file__))
+
+
+if len(sys.argv) == 1:
+    config_file = script_dir + '/config/config.toml'
+    local_file = script_dir + '/config/local.toml'
+
+if len(sys.argv) == 2:
+    local_file = script_dir + '/config/local.toml'
+    config_file = sys.argv[1]
+    
+if len(sys.argv) == 3:
+    local_file = sys.argv[2]
+    config_file = sys.argv[1]
+
+with open(config_file,'rb') as f:
     config = tomllib.load(f)
 
-with open('local.toml','rb') as f:
+with open(local_file,'rb') as f:
     local = tomllib.load(f)
 
-
-host = socket.gethostname()
 
 base_dir = local['local']['base_dir']
 api_key = local['local']['api_key']
