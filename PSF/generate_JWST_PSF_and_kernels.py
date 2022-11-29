@@ -104,7 +104,8 @@ def save_nircam_PSF(nircam_psfs, output_dir='', **kwargs):
         psf_array.writeto(output_dir+'NIRCam_PSF_filter_'+nircam.filter+'.fits', 
                           overwrite=True)
 
-nircam_pixel_scale = 0.0630
+nircam_pixel_scale_small = 0.0310
+nircam_pixel_scale_large = 0.0630
 miri_pixel_scale = 0.110
     
 
@@ -137,10 +138,7 @@ def save_jwst_cross_kernel(input_filter, target_filter, psf_dir='', outdir=''):
     https://webbpsf.readthedocs.io/en/latest/installation.html
     '''
   
-    if target_filter['camera']=='MIRI':
-        common_pixscale = miri_pixel_scale/4.
-    if target_filter['camera']=='NIRCam':
-        common_pixscale = nircam_pixel_scale/4.
+  
 
     source_psf_path = psf_dir+input_filter['camera']+'_PSF_filter_'+\
             input_filter['filter']+'.fits'
@@ -169,13 +167,13 @@ def save_jwst_cross_kernel(input_filter, target_filter, psf_dir='', outdir=''):
         if input_filter['camera']=='MIRI':
             save_miri_PSF([target_filter['filter']], output_dir=psf_dir)
             target_psf = fits.open(target_psf_path)[0]
-            source_pixscale = source_psf.header['PIXELSCL']
+            
         if input_filter['camera']=='NIRCam':
             save_nircam_PSF([target_filter['filter']], output_dir=psf_dir)
             target_psf = fits.open(target_psf_path)[0]
             
     target_pixscale = target_psf.header['PIXELSCL']
-            
+    common_pixscale = source_pixscale
         
     grid_size_arcsec = np.array([361 * common_pixscale,
                                  361 * common_pixscale])
@@ -222,11 +220,16 @@ def save_kernels_to_Gauss(input_filter, target_gaussian, psf_dir='', outdir=''):
     source_psf = fits.open(source_psf_path)[0]
     source_pixscale = source_psf.header['PIXELSCL']
     
+    common_pixscale=source_pixscale
+    target_pixscale= source_pixscale
+    
     yy, xx = np.meshgrid(np.arange(361)-180,np.arange(361)-180 )
-    target_pixscale = target_gaussian['pixscale']
+  
     target_psf = makeGaussian_2D((xx, yy), (0,0), (
          target_gaussian['fwhm']/2.355/target_pixscale, \
              target_gaussian['fwhm']/2.355/target_pixscale) )
+    
+    
         
     grid_size_arcsec = np.array([331 * target_pixscale,
                                  331 * target_pixscale])
@@ -237,7 +240,7 @@ def save_kernels_to_Gauss(input_filter, target_gaussian, psf_dir='', outdir=''):
                                target_psf=target_psf,
                                target_pixscale=target_pixscale,
                                target_name= 'Gauss_{:.3f}'.format(target_gaussian['fwhm']),
-                               common_pixscale = target_pixscale,
+                               common_pixscale = common_pixscale,
                                grid_size_arcsec =grid_size_arcsec
                                )
     kk.make_convolution_kernel()
@@ -362,7 +365,7 @@ for jj in copt_fwhm:
     for ii in range(len(all_PSFs)):
         print( all_cameras[ii], all_PSFs[ii], ' to Gauss ' + '{:.3f}'.format(jj))
         input_filter = {'camera':all_cameras[ii], 'filter':all_PSFs[ii]}
-        target_gaussian = {'fwhm':jj, 'pixscale':0.2/4.}
+        target_gaussian = {'fwhm':jj}
         
         kk = save_kernels_to_Gauss(input_filter, target_gaussian,
                                     psf_dir=output_dir, outdir=output_dir_kernels)
