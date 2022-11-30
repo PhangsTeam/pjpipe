@@ -58,8 +58,22 @@ calib_level = config['download']['calib_level']
 
 
 
+<<<<<<< HEAD
 prop_ids = config['download']['projects']
 targets = config['galaxies']['targets']
+=======
+for prop_id in prop_ids:
+
+    targets = {
+        '2107': [
+            # 'ic5332',
+            # 'ngc0628',
+            # 'ngc1365',
+            'ngc1566',
+            # 'ngc7496',
+        ],
+    }[prop_id]
+>>>>>>> 5cf898a041570dfcc8b5b20d533ea0de69b88203
 
 for prop_id in prop_ids:
     for target in targets:

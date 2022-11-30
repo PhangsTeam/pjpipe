@@ -64,17 +64,7 @@ for galaxy in galaxies:
     alignment_table_name = config['alignment'][galaxy]
     alignment_table = os.path.join(script_dir,
                                    'alignment',
-                                   alignment_table_name)
-
-    # We can't use NIRCAM bands for IC5332
-    if galaxy in ['ic5332']:
-        alignment_mapping = {
-            'F1000W': 'F770W',  # Step up MIRI wavelengths
-            'F1130W': 'F1000W',
-            'F2100W': 'F1130W',
-        }
-    else:
-        alignment_mapping = config['alignment_mapping']
+    alignment_mapping = config['alignment_mapping']
 
     bands = (config['pipeline']['nircam_bands'] + 
              config['pipeline']['miri_bands'])
@@ -82,6 +72,7 @@ for galaxy in galaxies:
     if cur_field == []:
         cur_field = None  
     
+
     reproc = JWSTReprocess(galaxy=galaxy,
                            raw_dir=raw_dir,
                            reprocess_dir=reprocess_dir,

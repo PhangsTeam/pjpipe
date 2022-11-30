@@ -25,9 +25,10 @@ PHANGS-JWST processing scripts
 
 ## Data homogenisation tools
 
-* `make_jwst_kernels` creates convolution kernels from JWST or Gaussian PSFs, using the Aniano method. For now at least,
-  these kernels are circularised
+* `make_kernels` creates convolution kernels from JWST or Gaussian PSFs, using the Aniano method. For now at least, these kernels are circularised
 * `loop_kernel_creation` provides an example wrapper around `make_jwst_kernels` 
+* `generate_JWST_PSF_and_kernels` provides an example wrapper around `make_jwst_kernels`  which generates the PSF and kernels inside the `PSF/` directory
+*  `convolve_data` uses the kernels from `generate_JWST_PSF_and_kernels` to make convolved version of the fully reduced NIRCam and MIRI frames
 * `jwst_pypherise` uses pypher to produce PSF kernels to convert from JWST to JWST or JWST to gaussian/moffat
 
 ## PCA tools
