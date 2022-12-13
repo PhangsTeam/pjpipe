@@ -39,7 +39,8 @@ alignment_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'align
 galaxies = [
     # 'ngc0628',
     # 'ngc1365',
-    'ngc1566',
+    'ngc1385',
+    # 'ngc1566',
     # 'ic5332',
     # 'ngc7320',
     # 'ngc7496',
@@ -51,6 +52,7 @@ for galaxy in galaxies:
         'ic5332': 'ic5332_agb_cat.fits',
         'ngc0628': 'ngc0628_agb_cat.fits',
         'ngc1365': 'ngc1365_agb_cat.fits',
+        'ngc1385': 'ngc1385_agb_cat.fits',
         'ngc1566': 'ngc1566_agb_cat.fits',
         'ngc7320': 'Gaia_DR3_NGC7320.fits',
         'ngc7496': 'ngc7496_agb_cat.fits',

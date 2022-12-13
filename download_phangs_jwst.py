@@ -44,7 +44,8 @@ for prop_id in prop_ids:
             # 'ic5332',
             # 'ngc0628',
             # 'ngc1365',
-            'ngc1566',
+            'ngc1385',
+            # 'ngc1566',
             # 'ngc7496',
         ],
     }[prop_id]
