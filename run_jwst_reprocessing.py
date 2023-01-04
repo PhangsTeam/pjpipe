@@ -58,57 +58,59 @@ reprocess_dir_ext = config['pipeline']['data_version']
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
-galaxies = config['galaxies']['targets']
+for prop_id in prop_ids:
+    targets = config['projects'][prop_id]['targets']
+    for galaxy in targets:
 
-for galaxy in galaxies:
-    alignment_table_name = config['alignment'][galaxy]
-    alignment_table = os.path.join(script_dir,
-                                   'alignment',
-    alignment_mapping = config['alignment_mapping']
+        alignment_table_name = config['alignment'][galaxy]
+        alignment_table = os.path.join(script_dir,
+                                       'alignment',
+                                       alignment_table_name)
+        alignment_mapping = config['alignment_mapping']
 
-    bands = (config['pipeline']['nircam_bands'] + 
-             config['pipeline']['miri_bands'])
-    cur_field = config['pipeline']['lev3_fields']
-    if cur_field == []:
-        cur_field = None  
-    
+        bands = (config['pipeline']['nircam_bands'] + 
+                 config['pipeline']['miri_bands'])
+        cur_field = config['pipeline']['lev3_fields']
+        if cur_field == []:
+            cur_field = None  
 
-    reproc = JWSTReprocess(galaxy=galaxy,
-                           raw_dir=raw_dir,
-                           reprocess_dir=reprocess_dir,
-                           crds_dir=crds_dir,
-                           astrometric_alignment_type='table',
-                           astrometric_alignment_table=alignment_table,
-                           alignment_mapping=alignment_mapping,
-                           bands=bands,
-                           do_all=True,
-                           do_lv1=config['pipeline']['lv1'],
-                           do_lv2=config['pipeline']['lv2'],
-                           do_lv3=config['pipeline']['lv3'],
-                           procs=local['local']['processors'],
-                           overwrite_all=config['overwrite']['all'],
-                           overwrite_lv1=config['overwrite']['lv1'],
-                           overwrite_lv2=config['overwrite']['lv2'],
-                           overwrite_lyot_adjust=config['overwrite']['lyot_adjust'],
-                           overwrite_lv3=config['overwrite']['lv3'],
-                           overwrite_astrometric_alignment=config['overwrite']['astrometric_alignment'],
-                           overwrite_astrometric_ref_cat=config['overwrite']['astrometric_ref_cat'],
-                           lv1_parameter_dict=config['lv1_parameters'],
-                           lv2_parameter_dict=config['lv2_parameters'],
-                           lv3_parameter_dict=config['lv3_parameters'],
-                           updated_flats_dir=updated_flats_dir,
-                           do_lyot_adjust=config['pipeline']['lyot_adjust'],
-                           tpmatch_searchrad=config['tpmatch']['searchrad'],
-                           tpmatch_separation=config['tpmatch']['separation'],
-                           tpmatch_tolerance=config['tpmatch']['tolerance'],
-                           tpmatch_use2dhist=config['tpmatch']['use2dhist'],
-                           tpmatch_fitgeom=config['tpmatch']['fitgeom'],
-                           tpmatch_nclip=config['tpmatch']['nclip'],
-                           tpmatch_sigma=config['tpmatch']['sigma'],
-                           # process_bgr_like_science=False,
-                           use_field_in_lev3=cur_field
-                           )
-    reproc.run_all()
+
+        reproc = JWSTReprocess(galaxy=galaxy,
+                               raw_dir=raw_dir,
+                               reprocess_dir=reprocess_dir,
+                               crds_dir=crds_dir,
+                               astrometric_alignment_type='table',
+                               astrometric_alignment_table=alignment_table,
+                               alignment_mapping=alignment_mapping,
+                               bands=bands,
+                               do_all=True,
+                               do_lv1=config['pipeline']['lv1'],
+                               do_lv2=config['pipeline']['lv2'],
+                               do_lv3=config['pipeline']['lv3'],
+                               procs=local['local']['processors'],
+                               overwrite_all=config['overwrite']['all'],
+                               overwrite_lv1=config['overwrite']['lv1'],
+                               overwrite_lv2=config['overwrite']['lv2'],
+                               overwrite_lyot_adjust=config['overwrite']['lyot_adjust'],
+                               overwrite_lv3=config['overwrite']['lv3'],
+                               overwrite_astrometric_alignment=config['overwrite']['astrometric_alignment'],
+                               overwrite_astrometric_ref_cat=config['overwrite']['astrometric_ref_cat'],
+                               lv1_parameter_dict=config['lv1_parameters'],
+                               lv2_parameter_dict=config['lv2_parameters'],
+                               lv3_parameter_dict=config['lv3_parameters'],
+                               updated_flats_dir=updated_flats_dir,
+                               do_lyot_adjust=config['pipeline']['lyot_adjust'],
+                               tpmatch_searchrad=config['tpmatch']['searchrad'],
+                               tpmatch_separation=config['tpmatch']['separation'],
+                               tpmatch_tolerance=config['tpmatch']['tolerance'],
+                               tpmatch_use2dhist=config['tpmatch']['use2dhist'],
+                               tpmatch_fitgeom=config['tpmatch']['fitgeom'],
+                               tpmatch_nclip=config['tpmatch']['nclip'],
+                               tpmatch_sigma=config['tpmatch']['sigma'],
+                               # process_bgr_like_science=False,
+                               use_field_in_lev3=cur_field
+                               )
+        reproc.run_all()
 
 
 

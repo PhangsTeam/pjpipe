@@ -627,6 +627,7 @@ class JWSTReprocess:
             self.updated_flats_dir = None
         self.process_bgr_like_science = process_bgr_like_science
         self.use_field_in_lev3 = use_field_in_lev3
+        logging.basicConfig(level=logging.INFO, format='%{name)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
 
@@ -1629,15 +1630,16 @@ class JWSTReprocess:
                     if not os.path.isdir(detector1.output_dir):
                         os.makedirs(detector1.output_dir)
 
-                    for key in self.lv1_parameter_dict.keys():
+                    detector1 = attribute_setter(detector1, self.lv1_parameter_dict, band)    
+                    # for key in self.lv1_parameter_dict.keys():
 
-                        value = parse_parameter_dict(self.lv1_parameter_dict,
-                                                     key,
-                                                     band)
-                        if value == 'VAL_NOT_FOUND':
-                            continue
+                    #     value = parse_parameter_dict(self.lv1_parameter_dict,
+                    #                                  key,
+                    #                                  band)
+                    #     if value == 'VAL_NOT_FOUND':
+                    #         continue
 
-                        recursive_setattr(detector1, key, value)
+                    #     recursive_setattr(detector1, key, value)
 
                     # Run the level 1 pipeline
                     detector1.run(uncal_file)

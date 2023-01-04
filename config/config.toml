@@ -2,34 +2,36 @@
 [download]
 products = ['SCIENCE','PREVIEW', 'INFO', 'AUXILIARY']
 calib_level = [1]#, 2, 3]
-projects = ['2107']
+
+
+[projects.2107]
+targets = ['ngc1385']
 
 [galaxies]
-targets = ['ngc1566']
-# targets = ['ngc1365']
+targets = ['ngc1385']
+
 [pipeline]
 data_version = 'v0p6'
 flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
-nircam_bands = ['F300M','F335M','F360M']
-miri_bands = []
-#['F770W','F1000W','F1130W','F2100W']
+nircam_bands = ['F200W','F300M','F335M','F360M']
+miri_bands = ['F770W','F1000W','F1130W','F2100W']
 lev3_fields = [] # indicate numbers of particular field if you want
-                 # to limit the level3
-		 # and further reduction by only selected
-		 # pointings (e.g. [1], or [1,2], or 1)
+                  # to limit the level3
+		  # and further reduction by only selected
+		  # pointings (e.g. [1], or [1,2], or 1)
 lyot_adjust = 'mask'
-lv1 = false
-lv2 = false
+lv1 = true
+lv2 = true
 lv3 = true
 alignment = true
 destriping = true
 
 [overwrite]
-all = false
-lv1 = false
-lv2 = false
+all = true
+lv1 = true
+lv2 = true
 lv3 = true
 lyot_adjust = false
 astrometric_alignment = true
@@ -43,6 +45,7 @@ ngc1365 = 'ngc1365_agb_cat.fits'
 ngc7320 = 'Gaia_DR3_NGC7320.fits'
 ngc7496 = 'ngc7496_agb_cat.fits'
 ngc1566 = 'ngc1566_agb_cat.fits'
+ngc1385 = 'ngc1385_agb_cat.fits'
 # ngc1566 = 'Gaia_DR3_NGC1566.fits'
 
 # Currently has an embedded override for IC5332.
@@ -71,7 +74,7 @@ save_results = true
 
 [lv3_parameters.tweakreg]
 align_to_gaia = false
-brightest = 1000
+brightest = 500
 snr_threshold = 3
 expand_refcat = true
 fitgeometry = 'shift'
@@ -88,6 +91,7 @@ roundlo = -0.5
 roundhi = 0.5
 # Tweak boxsize, so we detect objects in diffuse emission
 bkg_boxsize = 100  
+enforce_user_order = true
 
 [lv3_parameters.skymatch]
 skip.miri = false
@@ -119,10 +123,10 @@ deblend = true
 # kernel_fwhm = 5
 
 [tpmatch]
-searchrad = 20
+searchrad = 10
 separation = 0.000001
 tolerance = 0.7
-use2dhist = false
+use2dhist = true
 fitgeom = 'shift'
 nclip = 3
 sigma = 3
