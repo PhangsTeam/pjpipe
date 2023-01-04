@@ -1,14 +1,11 @@
 
 [download]
 products = ['SCIENCE','PREVIEW', 'INFO', 'AUXILIARY']
-calib_level = [1]#, 2, 3]
+calib_level = [1, 2, 3]
 
 
 [projects.2107]
-targets = ['ngc1385']
-
-[galaxies]
-targets = ['ngc1385']
+targets = ['ic5332', 'ngc0628', 'ngc7496', 'ngc1365', 'ngc1566', 'ngc1385']
 
 [pipeline]
 data_version = 'v0p6'
@@ -120,7 +117,6 @@ snr_threshold = 3
 npixels = 5
 bkg_boxsize = 100
 deblend = true
-# kernel_fwhm = 5
 
 [tpmatch]
 searchrad = 10

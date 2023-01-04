@@ -58,6 +58,7 @@ reprocess_dir_ext = config['pipeline']['data_version']
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
+prop_ids = config['projects']
 for prop_id in prop_ids:
     targets = config['projects'][prop_id]['targets']
     for galaxy in targets:
