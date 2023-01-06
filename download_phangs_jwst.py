@@ -1,7 +1,7 @@
 import os
 import socket
-import getpass
 import sys
+
 from archive_download import ArchiveDownload
 
 try:

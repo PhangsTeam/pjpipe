@@ -23,6 +23,7 @@ if not os.path.exists(release_dir):
 galaxies = [
     'ngc0628',
     'ngc1365',
+    'ngc1385'
     'ngc1566',
     # 'ngc7320',
     'ngc7496',
