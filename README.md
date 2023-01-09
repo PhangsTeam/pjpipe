@@ -38,3 +38,9 @@ PHANGS-JWST processing scripts
 
 ## Alignment files
 * the `alignment/` directory contains .fits tables to provide absolute astrometric corrections
+
+## Config files
+* We use TOML files to simplify the interface between the processing parameters and the pipeline itself. The parameters
+   we use for the PHANGS-JWST reduction are in the `config/` directory, but may need to be edited somewhat for other
+   programs. The pipeline stage-specific parameters are given on the JWST pipeline readthedocs
+   (https://jwst-pipeline.readthedocs.io/en/latest/jwst/pipeline/main.html#pipelines).
