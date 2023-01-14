@@ -1978,11 +1978,15 @@ class JWSTReprocess:
                                     '%s_%s_lv3_%s_i2d_align.fits' % (self.galaxy, ref_band_type, ref_band.lower()))
 
         if not os.path.exists(ref_hdu_name):
-            raise Warning('reference HDU to align not found!')
+            self.logger.warning('reference HDU to align not found. Will just rename files')
 
         for jwst_file in jwst_files:
 
             aligned_file = jwst_file.replace('.fits', '_align.fits')
+
+            if not os.path.exists(ref_hdu_name):
+                if not os.path.exists(aligned_file) or self.overwrite_astrometric_alignment:
+                    os.system('cp %s %s' % (jwst_file, aligned_file))
 
             if not os.path.exists(aligned_file) or self.overwrite_astrometric_alignment:
                 ref_hdu = fits.open(ref_hdu_name)

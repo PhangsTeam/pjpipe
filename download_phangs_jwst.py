@@ -1,7 +1,6 @@
 import os
-import socket
-import getpass
 import sys
+
 from archive_download import ArchiveDownload
 
 try:
@@ -9,28 +8,28 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
-host = socket.gethostname()
 script_dir = os.path.dirname(os.path.realpath(__file__))
-
 
 if len(sys.argv) == 1:
     config_file = script_dir + '/config/config.toml'
     local_file = script_dir + '/config/local.toml'
 
-if len(sys.argv) == 2:
+elif len(sys.argv) == 2:
     local_file = script_dir + '/config/local.toml'
     config_file = sys.argv[1]
     
-if len(sys.argv) == 3:
+elif len(sys.argv) == 3:
     local_file = sys.argv[2]
     config_file = sys.argv[1]
 
-with open(config_file,'rb') as f:
+else:
+    raise Warning('Cannot parse %d arguments!' % len(sys.argv))
+
+with open(config_file, 'rb') as f:
     config = tomllib.load(f)
 
-with open(local_file,'rb') as f:
+with open(local_file, 'rb') as f:
     local = tomllib.load(f)
-
 
 base_dir = local['local']['base_dir']
 api_key = local['local']['api_key']
@@ -55,7 +54,6 @@ overwrite = False
 product_type = config['download']['products']
 
 calib_level = config['download']['calib_level']
-
 
 prop_ids = config['projects']
 

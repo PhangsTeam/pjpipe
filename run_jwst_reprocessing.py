@@ -1,12 +1,8 @@
-import glob
-
 import os
-import socket
-
-from jwst_reprocess import JWSTReprocess
 import sys
 
-host = socket.gethostname()
+from jwst_reprocess import JWSTReprocess
+
 script_dir = os.path.dirname(os.path.realpath(__file__))
 
 try:
@@ -18,20 +14,22 @@ if len(sys.argv) == 1:
     config_file = script_dir + '/config/config.toml'
     local_file = script_dir + '/config/local.toml'
 
-if len(sys.argv) == 2:
+elif len(sys.argv) == 2:
     local_file = script_dir + '/config/local.toml'
     config_file = sys.argv[1]
-    
-if len(sys.argv) == 3:
+
+elif len(sys.argv) == 3:
     local_file = sys.argv[2]
     config_file = sys.argv[1]
 
-with open(config_file,'rb') as f:
+else:
+    raise Warning('Cannot parse %d arguments!' % len(sys.argv))
+
+with open(config_file, 'rb') as f:
     config = tomllib.load(f)
 
-with open(local_file,'rb') as f:
+with open(local_file, 'rb') as f:
     local = tomllib.load(f)
-
 
 raw_dir = local['local']['raw_dir']
 working_dir = local['local']['working_dir']
@@ -45,7 +43,6 @@ flush_crds = config['pipeline']['flush_crds']
 
 if 'pmap' in config['pipeline']['crds_context']:
     os.environ['CRDS_CONTEXT'] = config['pipeline']['crds_context']
-
 
 reprocess_dir = os.path.join(working_dir, 'jwst_lv3_reprocessed')
 crds_dir = os.path.join(working_dir, 'crds')
@@ -69,12 +66,11 @@ for prop_id in prop_ids:
                                        alignment_table_name)
         alignment_mapping = config['alignment_mapping']
 
-        bands = (config['pipeline']['nircam_bands'] + 
+        bands = (config['pipeline']['nircam_bands'] +
                  config['pipeline']['miri_bands'])
         cur_field = config['pipeline']['lev3_fields']
         if cur_field == []:
-            cur_field = None  
-
+            cur_field = None
 
         reproc = JWSTReprocess(galaxy=galaxy,
                                raw_dir=raw_dir,
@@ -112,7 +108,5 @@ for prop_id in prop_ids:
                                use_field_in_lev3=cur_field
                                )
         reproc.run_all()
-
-
 
 print('Complete!')

@@ -36,7 +36,7 @@ astrometric_ref_cat = true
 
 
 [alignment]
-ic5332 = 'Gaia_DR3_IC5332.fits'
+ic5332 = 'ic5332_agb_cat.fits'
 ngc0628 = 'ngc0628_agb_cat.fits'
 ngc1365 = 'ngc1365_agb_cat.fits'
 ngc7320 = 'Gaia_DR3_NGC7320.fits'
@@ -44,7 +44,6 @@ ngc7320 = 'Gaia_DR3_NGC7320.fits'
 ngc7496 = 'ngc7496_MIRIalign_test20221220.fits'
 ngc1566 = 'ngc1566_agb_cat.fits'
 ngc1385 = 'ngc1385_agb_cat.fits'
-# ngc1566 = 'Gaia_DR3_NGC1566.fits'
 
 # Currently has an embedded override for IC5332.
 [alignment_mapping]
