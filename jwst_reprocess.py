@@ -1884,7 +1884,7 @@ class JWSTReprocess:
                     use2dhist=self.tpmatch_use2dhist,
                 )
                 ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
-
+                import pdb; pdb.set_trace()
                 # Do alignment
                 wcs_aligned_fit = fit_wcs(ref_tab[ref_idx],
                                           jwst_tab[jwst_idx],

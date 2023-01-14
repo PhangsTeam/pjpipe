@@ -80,7 +80,7 @@ for prop_id in prop_ids:
                                raw_dir=raw_dir,
                                reprocess_dir=reprocess_dir,
                                crds_dir=crds_dir,
-                               astrometric_alignment_type='table',
+                               astrometric_alignment_type=config['lv3_parameters']['astrometric_alignment_type'],
                                astrometric_alignment_table=alignment_table,
                                alignment_mapping=alignment_mapping,
                                bands=bands,
