@@ -31,7 +31,7 @@ with open(config_file, 'rb') as f:
 with open(local_file, 'rb') as f:
     local = tomllib.load(f)
 
-base_dir = local['local']['base_dir']
+base_dir = local['local']['raw_dir']
 api_key = local['local']['api_key']
 
 login = False

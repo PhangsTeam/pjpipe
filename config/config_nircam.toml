@@ -13,7 +13,7 @@ flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
 nircam_bands = ['F200W','F300M','F335M','F360M']
-miri_bands = ['F770W','F1000W','F1130W','F2100W']
+miri_bands = []
 lev3_fields = [] # indicate numbers of particular field if you want
                   # to limit the level3
 		  # and further reduction by only selected
