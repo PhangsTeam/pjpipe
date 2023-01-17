@@ -1,19 +1,46 @@
 
 [download]
-products = ['SCIENCE','PREVIEW', 'INFO', 'AUXILIARY']
+products = [
+    'SCIENCE',
+    'PREVIEW',
+    'INFO',
+    'AUXILIARY',
+]
+
 calib_level = [1, 2, 3]
 
 
 [projects.2107]
-targets = ['ic5332', 'ngc0628', 'ngc7496', 'ngc1365', 'ngc1566', 'ngc1385', 'ngc3627']
+targets = [
+    'ic5332',
+    'ngc0628',
+    'ngc7496',
+    'ngc1365',
+    'ngc1566',
+    'ngc1385',
+    'ngc3627',
+]
 
 [pipeline]
 data_version = 'v0p6'
 flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
-nircam_bands = ['F200W','F300M','F335M','F360M']
-miri_bands = ['F770W','F1000W','F1130W','F2100W']
+
+nircam_bands = [
+    'F200W',
+    'F300M',
+    'F335M',
+    'F360M',
+]
+
+miri_bands = [
+    'F770W',
+    'F1000W',
+    'F1130W',
+    'F2100W',
+]
+
 lev3_fields = [] # indicate numbers of particular field if you want
                   # to limit the level3
 		  # and further reduction by only selected
@@ -38,10 +65,22 @@ astrometric_ref_cat = false
 [alignment]
 ic5332 = 'ic5332_agb_cat.fits'
 ngc0628 = 'ngc0628_agb_cat.fits'
+ngc1087 = 'ngc1087_agb_cat.fits'
+ngc1300 = 'ngc1300_agb_cat.fits'
 ngc1365 = 'ngc1365_agb_cat.fits'
 ngc1385 = 'ngc1385_agb_cat.fits'
+ngc1433 = 'ngc1433_agb_cat.fits'
+ngc1512 = 'ngc1512_agb_cat.fits'
 ngc1566 = 'ngc1566_agb_cat.fits'
+ngc1672 = 'ngc1672_agb_cat.fits'
+ngc2835 = 'ngc2835_agb_cat.fits'
+ngc3351 = 'ngc3351_agb_cat.fits'
 ngc3627 = 'ngc3627_agb_cat.fits'
+ngc4254 = 'ngc4254_agb_cat.fits'
+ngc4303 = 'ngc4303_agb_cat.fits'
+ngc4321 = 'ngc4321_agb_cat.fits'
+ngc4535 = 'ngc4535_agb_cat.fits'
+ngc5068 = 'ngc5068_agb_cat.fits'
 ngc7320 = 'Gaia_DR3_NGC7320.fits'
 ngc7496 = 'ngc7496_agb_cat.fits'
 
