@@ -14,11 +14,12 @@ calib_level = [1, 2, 3]
 targets = [
     'ic5332',
     'ngc0628',
-    'ngc7496',
     'ngc1365',
-    'ngc1566',
     'ngc1385',
+    'ngc1566',
     'ngc3627',
+    'ngc4321',
+    'ngc7496',
 ]
 
 [pipeline]
