@@ -1921,8 +1921,8 @@ class JWSTReprocess:
 
                 # Catch if there's only RA/Dec in the reference table
                 if 'xcentroid' in ref_tab.colnames:
-                    aligned_tab['xcentroid_ref'] = ref_tab[ref_idx]['xcentroid']
-                    aligned_tab['ycentroid_ref'] = ref_tab[ref_idx]['ycentroid']
+                    aligned_tab['xcentroid_ref'] = ref_tab[ref_idx]['xcentroid'][fit_mask]
+                    aligned_tab['ycentroid_ref'] = ref_tab[ref_idx]['ycentroid'][fit_mask]
                 aligned_tab['ra_ref'] = ref_tab[ref_idx]['RA'][fit_mask]
                 aligned_tab['dec_ref'] = ref_tab[ref_idx]['DEC'][fit_mask]
 
