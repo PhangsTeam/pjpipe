@@ -13,10 +13,12 @@ The pipeline is designed to be run inside a python environment that can run the 
 ```
 python /path/download_phangs_jwst.py /path/config/config.toml
 ```
-6. Run the pipeline.
+6a. Run the pipeline from the system command line:
 ```
 python /path/run_jwst_reprocessing.py /path/config/config.toml
 ```
+6b. If running inside an ipython shell, the script will load `/path/config/config.toml` automatically.
+
 
 The resulting images will be stored in the working directory stored in your `working` directory defined in the `local.toml` file.
 
