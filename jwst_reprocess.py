@@ -317,6 +317,7 @@ class JWSTReprocess:
                  destripe_parameter_dict='phangs',
                  degroup_short_nircam=True,
                  bgr_check_type='parallel_off',
+                 astrometric_alignment_dict=None,
                  astrometric_alignment_type='image',
                  astrometric_alignment_image=None,
                  astrometric_alignment_table=None,
@@ -580,11 +581,9 @@ class JWSTReprocess:
         self.do_wcs_adjust = do_wcs_adjust
         self.do_lv3 = do_lv3
         self.do_astrometric_alignment = do_astrometric_alignment
-
-        self.astrometric_alignment_type = astrometric_alignment_type
         self.astrometric_alignment_image = astrometric_alignment_image
         self.astrometric_alignment_table = astrometric_alignment_table
-
+        self.astrometric_alignment_dict = astrometric_alignment_dict
         self.tpmatch_searchrad = tpmatch_searchrad
         self.tpmatch_separation = tpmatch_separation
         self.tpmatch_tolerance = tpmatch_tolerance
@@ -1133,7 +1132,12 @@ class JWSTReprocess:
                                       pipeline_stage='lv3')
 
             if self.do_astrometric_alignment:
+
                 self.logger.info('-> Astrometric alignment')
+
+                self.astrometric_alignment_type = parse_parameter_dict(self.astrometric_alignment_dict,
+                                                                       'astrometric_alignment_type',
+                                                                       band)    
 
                 if self.use_field_in_lev3 is None:
 
@@ -1769,6 +1773,7 @@ class JWSTReprocess:
         if len(jwst_files) == 0:
             raise Warning('No files found to align!')
 
+
         if self.astrometric_alignment_type == 'image':
             if not self.astrometric_alignment_image:
                 raise Warning('astrometric_alignment_image should be set!')
@@ -1884,7 +1889,7 @@ class JWSTReprocess:
                     use2dhist=self.tpmatch_use2dhist,
                 )
                 ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
-                import pdb; pdb.set_trace()
+
                 # Do alignment
                 wcs_aligned_fit = fit_wcs(ref_tab[ref_idx],
                                           jwst_tab[jwst_idx],

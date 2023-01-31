@@ -71,12 +71,11 @@ for prop_id in prop_ids:
         cur_field = config['pipeline']['lev3_fields']
         if cur_field == []:
             cur_field = None
-
         reproc = JWSTReprocess(galaxy=galaxy,
                                raw_dir=raw_dir,
                                reprocess_dir=reprocess_dir,
                                crds_dir=crds_dir,
-                               astrometric_alignment_type=config['lv3_parameters']['astrometric_alignment_type'],
+                               astrometric_alignment_dict=config['alignment'],
                                astrometric_alignment_table=alignment_table,
                                alignment_mapping=alignment_mapping,
                                bands=bands,

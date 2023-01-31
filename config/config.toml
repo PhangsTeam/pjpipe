@@ -5,14 +5,14 @@ calib_level = [1, 2, 3]
 
 
 [projects.2107]
-targets = ['ngc3627']
+targets = ['ngc1385']
 
 [pipeline]
 data_version = 'v0p6'
 flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
-nircam_bands = ['F200W','F300M','F335M','F360M']
+nircam_bands = ['F200W', 'F300M','F335M','F360M']
 miri_bands = ['F770W','F1000W','F1130W','F2100W']
 lev3_fields = [] # indicate numbers of particular field if you want
                   # to limit the level3
@@ -26,7 +26,7 @@ alignment = true
 destriping = true
 
 [overwrite]
-all = true
+all = false
 lv1 = true
 lv2 = true
 lv3 = true
@@ -36,22 +36,17 @@ astrometric_ref_cat = true
 
 
 [alignment]
-ic5332 = 'ic5332_agb_cat.fits'
-ngc0628 = 'ngc0628_agb_cat.fits'
-ngc1365 = 'ngc1365_agb_cat.fits'
-ngc7320 = 'Gaia_DR3_NGC7320.fits'
-# ngc7496 = 'ngc7496_agb_cat.fits'
-ngc7496 = 'ngc7496_MIRIalign_test20221220.fits'
-ngc1566 = 'ngc1566_agb_cat.fits'
 ngc1385 = 'ngc1385_agb_cat.fits'
 
-# Currently has an embedded override for IC5332.
-[alignment_mapping]
-# F770W = 'F335M'
-# F1000W = 'F770W'
-# F1130W = 'F1000W'
-# F2100W = 'F1130W'
+astrometric_alignment_type.miri = 'image'
+astrometric_alignment_type.nircam_short = 'table'
+astrometric_alignment_type.nircam_long = 'table'
 
+[alignment_mapping]
+F770W = 'F335M'
+F1000W = 'F770W'
+F1130W = 'F1000W'
+F2100W = 'F1130W'
 
 [lv1_parameters]
 save_results = true
@@ -68,7 +63,6 @@ sigma = 1.5
 
 [lv3_parameters]
 save_results = true
-astrometric_alignment_type = 'table'
 
 [lv3_parameters.tweakreg]
 #astrometric_alignment_type = 'image' 
@@ -90,7 +84,9 @@ use2dhist = false
 roundlo = -0.5
 roundhi = 0.5
 # Tweak boxsize, so we detect objects in diffuse emission
-bkg_boxsize = 100  
+bkg_boxsize.nircam_short = 100
+bkg_boxsize.nircam_long = 100
+bkg_boxsize.miri = 25
 enforce_user_order = true
 
 [lv3_parameters.skymatch]
@@ -116,9 +112,9 @@ rotation = 0.0
 in_memory = true
 
 [lv3_parameters.source_catalog]
-snr_threshold = 3
+snr_threshold = 2
 npixels = 5
-bkg_boxsize = 100
+bkg_boxsize = 25
 deblend = true
 
 [tpmatch]
