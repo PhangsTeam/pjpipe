@@ -1,55 +1,64 @@
 import os
-import socket
-import getpass
+import sys
 
 from archive_download import ArchiveDownload
 
-host = socket.gethostname()
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
-if 'node' in host:
-    base_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw'
+script_dir = os.path.dirname(os.path.realpath(__file__))
+
+if len(sys.argv) == 1:
+    config_file = script_dir + '/config/config.toml'
+    local_file = script_dir + '/config/local.toml'
+
+elif len(sys.argv) == 2:
+    local_file = script_dir + '/config/local.toml'
+    config_file = sys.argv[1]
+    
+elif len(sys.argv) == 3:
+    local_file = sys.argv[2]
+    config_file = sys.argv[1]
+
 else:
-    base_dir = '/Users/williams/Documents/jwst_raw'
+    raise Warning('Cannot parse %d arguments!' % len(sys.argv))
 
+with open(config_file, 'rb') as f:
+    config = tomllib.load(f)
+
+with open(local_file, 'rb') as f:
+    local = tomllib.load(f)
+
+base_dir = local['local']['raw_dir']
+api_key = local['local']['api_key']
+
+login = False
+if api_key != '':
+    login = True
+else:
+    try:
+        api_key = os.environ['MAST_API_TOKEN']
+        login = True
+    except KeyError:
+        pass
+    
 if not os.path.exists(base_dir):
     os.makedirs(base_dir)
 
 os.chdir(base_dir)
 
-login = True
 overwrite = False
 
-product_type = [
-    'SCIENCE',
-    'PREVIEW',
-    'INFO',
-    'AUXILIARY',
-]
+product_type = config['download']['products']
 
-calib_level = [1, 2, 3]
+calib_level = config['download']['calib_level']
 
-if login:
-    api_key = getpass.getpass('Input API key: ')
-else:
-    api_key = None
-
-prop_ids = [
-    '2107',
-]
+prop_ids = config['projects']
 
 for prop_id in prop_ids:
-
-    targets = {
-        '2107': [
-            # 'ic5332',
-            # 'ngc0628',
-            # 'ngc1365',
-            'ngc1385',
-            # 'ngc1566',
-            # 'ngc7496',
-        ],
-    }[prop_id]
-
+    targets = config['projects'][prop_id]['targets']
     for target in targets:
         dl_dir = target.replace(' ', '_')
         if not os.path.exists(dl_dir):

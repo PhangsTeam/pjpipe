@@ -1,0 +1,168 @@
+
+[download]
+products = [
+    'SCIENCE',
+    'PREVIEW',
+    'INFO',
+    'AUXILIARY',
+]
+
+calib_level = [1, 2, 3]
+
+
+[projects.2107]
+targets = [
+    'ic5332',
+    'ngc0628',
+    'ngc1365',
+    'ngc1385',
+    'ngc1566',
+    'ngc3627',
+    'ngc4321',
+    'ngc7496',
+]
+
+[pipeline]
+data_version = 'v0p6'
+flush_crds = false  # Set to flush out calibration files and download new
+# crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
+crds_context = ''
+
+nircam_bands = [
+    'F200W',
+    'F300M',
+    'F335M',
+    'F360M',
+]
+
+miri_bands = [
+    'F770W',
+    'F1000W',
+    'F1130W',
+    'F2100W',
+]
+
+lev3_fields = [] # indicate numbers of particular field if you want
+                  # to limit the level3
+		  # and further reduction by only selected
+		  # pointings (e.g. [1], or [1,2], or 1)
+lyot_adjust = 'mask'
+lv1 = true
+lv2 = true
+lv3 = true
+alignment = true
+destriping = true
+
+[overwrite]
+all = false
+lv1 = false
+lv2 = false
+lv3 = false
+lyot_adjust = false
+astrometric_alignment = false
+astrometric_ref_cat = false
+
+
+[alignment]
+ic5332 = 'ic5332_agb_cat.fits'
+ngc0628 = 'ngc0628_agb_cat.fits'
+ngc1087 = 'ngc1087_agb_cat.fits'
+ngc1300 = 'ngc1300_agb_cat.fits'
+ngc1365 = 'ngc1365_agb_cat.fits'
+ngc1385 = 'ngc1385_agb_cat.fits'
+ngc1433 = 'ngc1433_agb_cat.fits'
+ngc1512 = 'ngc1512_agb_cat.fits'
+ngc1566 = 'ngc1566_agb_cat.fits'
+ngc1672 = 'ngc1672_agb_cat.fits'
+ngc2835 = 'ngc2835_agb_cat.fits'
+ngc3351 = 'ngc3351_agb_cat.fits'
+ngc3627 = 'ngc3627_agb_cat.fits'
+ngc4254 = 'ngc4254_agb_cat.fits'
+ngc4303 = 'ngc4303_agb_cat.fits'
+ngc4321 = 'ngc4321_agb_cat.fits'
+ngc4535 = 'ngc4535_agb_cat.fits'
+ngc5068 = 'ngc5068_agb_cat.fits'
+ngc7320 = 'Gaia_DR3_NGC7320.fits'
+ngc7496 = 'ngc7496_agb_cat.fits'
+
+# Currently has an embedded override for IC5332.
+[alignment_mapping]
+F770W = 'F335M'
+F1000W = 'F770W'
+F1130W = 'F1000W'
+F2100W = 'F1130W'
+
+
+[lv1_parameters]
+save_results = true
+ramp_fit.suppress_one_group = false
+refpix.use_side_ref_pixels = true
+
+
+[lv2_parameters]
+save_results = true
+
+[lv2_parameters.bkg_subtract]
+save_combined_background = true
+sigma = 1.5
+
+[lv3_parameters]
+save_results = true
+
+[lv3_parameters.tweakreg]
+align_to_gaia = false
+brightest = 500
+snr_threshold = 3
+expand_refcat = true
+fitgeometry = 'shift'
+minobj = 3
+peakmax.nircam = 20
+peakmax.miri = 10
+searchrad = '10pix'
+separation = '10pix'
+tolerance.nircam_short = '5pix'
+tolerance.nircam_long = '10pix'
+tolerance.miri='10pix'
+use2dhist = false
+roundlo = -0.5
+roundhi = 0.5
+# Tweak boxsize, so we detect objects in diffuse emission
+bkg_boxsize = 100  
+enforce_user_order = true
+
+[lv3_parameters.skymatch]
+skip.miri = false
+skymethod.nircam = 'global+match'
+skymethod.miri= 'match'
+subtract.nircam = true
+subtract.miri = true
+skystat = 'median'
+match_down.miri = true
+nclip.nircam = 20
+nclip.miri = 10
+lsigma.nircam =  3
+lsigma.miri = 1.5
+usigma.nircam = 3
+usigma.miri = 1.5
+
+[lv3_parameters.outlier_detection]
+in_memory = true
+
+[lv3_parameters.resample]
+rotation = 0.0
+in_memory = true
+
+[lv3_parameters.source_catalog]
+snr_threshold = 3
+npixels = 5
+bkg_boxsize = 100
+deblend = true
+
+[tpmatch]
+searchrad = 10
+separation = 0.000001
+tolerance = 0.7
+use2dhist = true
+fitgeom = 'shift'
+nclip = 3
+sigma = 3

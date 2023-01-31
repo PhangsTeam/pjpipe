@@ -1,0 +1,6 @@
+[local]
+api_key = ''
+raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw/'
+working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_phangs_reprocessed/'
+updated_flats_dir = ''
+processors = 20

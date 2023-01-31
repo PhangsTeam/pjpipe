@@ -1,27 +1,48 @@
-import glob
-
 import os
-import socket
+import sys
 
 from jwst_reprocess import JWSTReprocess
 
-host = socket.gethostname()
+script_dir = os.path.dirname(os.path.realpath(__file__))
 
-if 'node' in host:
-    raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw'
-    working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_phangs_reprocessed'
-    updated_flats_dir = None
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
+if len(sys.argv) == 1:
+    config_file = script_dir + '/config/config.toml'
+    local_file = script_dir + '/config/local.toml'
+
+elif len(sys.argv) == 2:
+    local_file = script_dir + '/config/local.toml'
+    config_file = sys.argv[1]
+
+elif len(sys.argv) == 3:
+    local_file = sys.argv[2]
+    config_file = sys.argv[1]
+
 else:
-    raw_dir = '/home/egorov/Science/PHANGS/JWST/Lev1/'  # '/Users/williams/Documents/phangs/jwst_data'
-    working_dir = '/home/egorov/Science/PHANGS/JWST/Reduction/'  # '/Users/williams/Documents/phangs/jwst_working'
-    updated_flats_dir = "/home/egorov/Science/PHANGS/JWST/config/flats/"
+    raise Warning('Cannot parse %d arguments!' % len(sys.argv))
+
+with open(config_file, 'rb') as f:
+    config = tomllib.load(f)
+
+with open(local_file, 'rb') as f:
+    local = tomllib.load(f)
+
+raw_dir = local['local']['raw_dir']
+working_dir = local['local']['working_dir']
+updated_flats_dir = local['local']['updated_flats_dir']
+if updated_flats_dir == '':
+    updated_flats_dir = None
 
 # We may want to occasionally flush out the CRDS directory to avoid weirdness between mappings. Probably do this at
 # the start of another version cycle
-flush_crds = False
+flush_crds = config['pipeline']['flush_crds']
 
-# Force in working context if required
-# os.environ['CRDS_CONTEXT'] = 'jwst_0956.pmap'
+if 'pmap' in config['pipeline']['crds_context']:
+    os.environ['CRDS_CONTEXT'] = config['pipeline']['crds_context']
 
 reprocess_dir = os.path.join(working_dir, 'jwst_lv3_reprocessed')
 crds_dir = os.path.join(working_dir, 'crds')
@@ -30,113 +51,62 @@ if flush_crds:
     os.system('rm -rf %s' % crds_dir)
     os.makedirs(crds_dir)
 
-reprocess_dir_ext = 'v0p5'
+reprocess_dir_ext = config['pipeline']['data_version']
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
-alignment_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'alignment')
+prop_ids = config['projects']
+for prop_id in prop_ids:
+    targets = config['projects'][prop_id]['targets']
+    for galaxy in targets:
 
-galaxies = [
-    # 'ngc0628',
-    # 'ngc1365',
-    'ngc1385',
-    # 'ngc1566',
-    # 'ic5332',
-    # 'ngc7320',
-    # 'ngc7496',
-]
+        alignment_table_name = config['alignment'][galaxy]
+        alignment_table = os.path.join(script_dir,
+                                       'alignment',
+                                       alignment_table_name)
+        alignment_mapping = config['alignment_mapping']
 
-for galaxy in galaxies:
+        bands = (config['pipeline']['nircam_bands'] +
+                 config['pipeline']['miri_bands'])
+        cur_field = config['pipeline']['lev3_fields']
+        if cur_field == []:
+            cur_field = None
 
-    alignment_table_name = {
-        'ic5332': 'ic5332_agb_cat.fits',
-        'ngc0628': 'ngc0628_agb_cat.fits',
-        'ngc1365': 'ngc1365_agb_cat.fits',
-        'ngc1385': 'ngc1385_agb_cat.fits',
-        'ngc1566': 'ngc1566_agb_cat.fits',
-        'ngc7320': 'Gaia_DR3_NGC7320.fits',
-        'ngc7496': 'ngc7496_agb_cat.fits',
-    }[galaxy]
-    alignment_table = os.path.join(alignment_dir,
-                                   alignment_table_name)
-
-    if galaxy == 'ngc7320':
-        alignment_mapping = {
-            'F770W': 'F356W',
-            'F1000W': 'F770W',
-            'F1500W': 'F1000W'
-        }
-
-        bands = [
-            # NIRCAM
-            'F090W',
-            'F150W',
-            'F200W',
-            'F277W',
-            'F356W',
-            'F444W',
-            # MIRI
-            # 'F770W',
-            # 'F1000W',
-            # 'F1500W',
-        ]
-    else:
-
-        # We can't use NIRCAM bands for IC5332
-        if galaxy in ['ic5332']:
-            alignment_mapping = {
-                'F1000W': 'F770W',  # Step up MIRI wavelengths
-                'F1130W': 'F1000W',
-                'F2100W': 'F1130W',
-            }
-        else:
-            alignment_mapping = {
-                'F770W': 'F335M',  # PAH->PAH
-                'F1000W': 'F770W',  # Step up MIRI wavelengths
-                'F1130W': 'F1000W',
-                'F2100W': 'F1130W',
-            }
-
-        bands = [
-            # NIRCAM
-            'F200W',
-            'F300M',
-            'F335M',
-            'F360M',
-            # MIRI
-            # 'F770W',
-            # 'F1000W',
-            # 'F1130W',
-            # 'F2100W'
-        ]
-    cur_field = None  # indicate numbers of particular field if you want to limit the level3 and further reduction
-                      # by only selected pointings (e.g. [1], or [1,2], or 1)
-    reproc = JWSTReprocess(galaxy=galaxy,
-                           raw_dir=raw_dir,
-                           reprocess_dir=reprocess_dir,
-                           crds_dir=crds_dir,
-                           astrometric_alignment_type='table',
-                           astrometric_alignment_table=alignment_table,
-                           alignment_mapping=alignment_mapping,
-                           bands=bands,
-                           procs=20,
-                           overwrite_all=False,
-                           overwrite_lv1=False,
-                           overwrite_lv2=False,
-                           overwrite_lyot_adjust=True,
-                           overwrite_lv3=True,
-                           overwrite_astrometric_alignment=True,
-                           overwrite_astrometric_ref_cat=False,
-                           lv1_parameter_dict='phangs',
-                           lv2_parameter_dict='phangs',
-                           lv3_parameter_dict='phangs',
-                           updated_flats_dir=updated_flats_dir,
-                           do_lyot_adjust='mask',
-                           # process_bgr_like_science=False,
-                           use_field_in_lev3=cur_field
-                           )
-    reproc.run_all()
-
-
+        reproc = JWSTReprocess(galaxy=galaxy,
+                               raw_dir=raw_dir,
+                               reprocess_dir=reprocess_dir,
+                               crds_dir=crds_dir,
+                               astrometric_alignment_type='table',
+                               astrometric_alignment_table=alignment_table,
+                               alignment_mapping=alignment_mapping,
+                               bands=bands,
+                               do_all=True,
+                               do_lv1=config['pipeline']['lv1'],
+                               do_lv2=config['pipeline']['lv2'],
+                               do_lv3=config['pipeline']['lv3'],
+                               procs=local['local']['processors'],
+                               overwrite_all=config['overwrite']['all'],
+                               overwrite_lv1=config['overwrite']['lv1'],
+                               overwrite_lv2=config['overwrite']['lv2'],
+                               overwrite_lyot_adjust=config['overwrite']['lyot_adjust'],
+                               overwrite_lv3=config['overwrite']['lv3'],
+                               overwrite_astrometric_alignment=config['overwrite']['astrometric_alignment'],
+                               overwrite_astrometric_ref_cat=config['overwrite']['astrometric_ref_cat'],
+                               lv1_parameter_dict=config['lv1_parameters'],
+                               lv2_parameter_dict=config['lv2_parameters'],
+                               lv3_parameter_dict=config['lv3_parameters'],
+                               updated_flats_dir=updated_flats_dir,
+                               do_lyot_adjust=config['pipeline']['lyot_adjust'],
+                               tpmatch_searchrad=config['tpmatch']['searchrad'],
+                               tpmatch_separation=config['tpmatch']['separation'],
+                               tpmatch_tolerance=config['tpmatch']['tolerance'],
+                               tpmatch_use2dhist=config['tpmatch']['use2dhist'],
+                               tpmatch_fitgeom=config['tpmatch']['fitgeom'],
+                               tpmatch_nclip=config['tpmatch']['nclip'],
+                               tpmatch_sigma=config['tpmatch']['sigma'],
+                               # process_bgr_like_science=False,
+                               use_field_in_lev3=cur_field
+                               )
+        reproc.run_all()
 
 print('Complete!')
