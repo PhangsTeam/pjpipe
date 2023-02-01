@@ -27,7 +27,7 @@ targets = [
 ]
 
 [pipeline]
-data_version = 'v0p6test'
+data_version = 'v0p6'
 flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
