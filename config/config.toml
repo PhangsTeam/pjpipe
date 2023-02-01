@@ -15,15 +15,34 @@ calib_level = [
 
 
 [projects.2107]
-targets = ['ngc1385']
+targets = [
+    'ic5332',
+    'ngc0628',
+    'ngc1365',
+    'ngc1385',
+    'ngc1566',
+    'ngc3627',
+    'ngc4321',
+    'ngc7496',
+]
 
 [pipeline]
-data_version = 'v0p6'
+data_version = 'v0p6test'
 flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
-nircam_bands = ['F200W', 'F300M','F335M','F360M']
-miri_bands = ['F770W','F1000W','F1130W','F2100W']
+nircam_bands = [
+    'F200W',
+    'F300M',
+    'F335M',
+    'F360M',
+]
+miri_bands = [
+    'F770W',
+    'F1000W',
+    'F1130W',
+    'F2100W',
+]
 
 lev3_fields = [] # indicate numbers of particular field if you want
                   # to limit the level3

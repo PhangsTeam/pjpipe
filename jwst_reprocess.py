@@ -1,6 +1,7 @@
 import copy
 import functools
 import glob
+import inspect
 import json
 import logging
 import multiprocessing as mp
@@ -317,6 +318,14 @@ def attribute_setter(pipeobj, parameter_dict, band):
 
             recursive_setattr(pipeobj, key, value)
     return pipeobj
+
+def get_default_args(func):
+    signature = inspect.signature(func)
+    return {
+        k: v.default
+        for k, v in signature.parameters.items()
+        if v.default is not inspect.Parameter.empty
+    }
 
 
 class JWSTReprocess:
@@ -1529,7 +1538,6 @@ class JWSTReprocess:
         if len(jwst_files) == 0:
             raise Warning('No files found to align!')
 
-
         if self.astrometric_alignment_type == 'image':
             if not self.astrometric_alignment_image:
                 raise Warning('astrometric_alignment_image should be set!')
@@ -1638,24 +1646,32 @@ class JWSTReprocess:
                 jwst_tab['dec'] = sources['sky_centroid'].dec.value
 
                 # Run a match
-                # match = XYXYMatch(
-                #     searchrad=self.tpmatch_searchrad,
-                #     separation=self.tpmatch_separation,
-                #     tolerance=self.tpmatch_tolerance,
-                #     use2dhist=self.tpmatch_use2dhist,
-                # )
                 match = XYXYMatch()
                 attribute_setter(match, self.astrometry_parameter_dict, band)
 
                 ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
 
+                fit_wcs_args = get_default_args(fit_wcs)
+
+                fit_wcs_kws = {}
+                for fit_wcs_arg in fit_wcs_args.keys():
+                    if fit_wcs_arg in self.astrometry_parameter_dict.keys():
+                        arg_val = self.astrometry_parameter_dict[fit_wcs_arg]
+                    else:
+                        arg_val = fit_wcs_args[fit_wcs_arg]
+
+                    # sigma here is fiddly, test if it's a tuple and fix to rmse if not
+                    if fit_wcs_arg == 'sigma':
+                        if type(arg_val) != tuple:
+                            arg_val = (arg_val, 'rmse')
+
+                    fit_wcs_kws[fit_wcs_arg] = arg_val
+
                 # Do alignment
                 wcs_aligned_fit = fit_wcs(ref_tab[ref_idx],
                                           jwst_tab[jwst_idx],
                                           wcs_jwst_corrector,
-                                          fitgeom=self.tpmatch_fitgeom,
-                                          nclip=self.tpmatch_nclip,
-                                          sigma=(self.tpmatch_sigma, 'rmse'),
+                                          **fit_wcs_kws,
                                           )
 
                 wcs_aligned = wcs_aligned_fit.wcs
