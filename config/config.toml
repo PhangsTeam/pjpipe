@@ -15,36 +15,15 @@ calib_level = [
 
 
 [projects.2107]
-targets = [
-    'ic5332',
-    'ngc0628',
-    'ngc1365',
-    'ngc1385',
-    'ngc1566',
-    'ngc3627',
-    'ngc4321',
-    'ngc7496',
-]
+targets = ['ngc1385']
 
 [pipeline]
 data_version = 'v0p6'
 flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
-
-nircam_bands = [
-    'F200W',
-    'F300M',
-    'F335M',
-    'F360M',
-]
-
-miri_bands = [
-    'F770W',
-    'F1000W',
-    'F1130W',
-    'F2100W',
-]
+nircam_bands = ['F200W', 'F300M','F335M','F360M']
+miri_bands = ['F770W','F1000W','F1130W','F2100W']
 
 lev3_fields = [] # indicate numbers of particular field if you want
                   # to limit the level3
@@ -85,13 +64,15 @@ ngc5068 = 'ngc5068_agb_cat.fits'
 ngc7320 = 'Gaia_DR3_NGC7320.fits'
 ngc7496 = 'ngc7496_agb_cat.fits'
 
-# Currently has an embedded override for IC5332.
+astrometric_alignment_type.miri = 'image'
+astrometric_alignment_type.nircam_short = 'table'
+astrometric_alignment_type.nircam_long = 'table'
+
 [alignment_mapping]
 F770W = 'F335M'
 F1000W = 'F770W'
 F1130W = 'F1000W'
 F2100W = 'F1130W'
-
 
 [lv1_parameters]
 save_results = true
@@ -127,7 +108,9 @@ use2dhist = false
 roundlo = -0.5
 roundhi = 0.5
 # Tweak boxsize, so we detect objects in diffuse emission
-bkg_boxsize = 100  
+bkg_boxsize.nircam_short = 100
+bkg_boxsize.nircam_long = 100
+bkg_boxsize.miri = 25
 enforce_user_order = true
 
 [lv3_parameters.skymatch]
@@ -153,13 +136,13 @@ rotation = 0.0
 in_memory = true
 
 [lv3_parameters.source_catalog]
-snr_threshold = 3
+snr_threshold = 2
 npixels = 5
-bkg_boxsize = 100
+bkg_boxsize = 25
 deblend = true
 
 [astrometry_parameters]
-searchrad = 10
+searchrad = 15
 separation = 0.000001
 tolerance = 0.7
 use2dhist = true

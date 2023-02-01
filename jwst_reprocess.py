@@ -337,6 +337,7 @@ class JWSTReprocess:
                  lyot_method='mask',
                  degroup_short_nircam=True,
                  bgr_check_type='parallel_off',
+                 astrometric_alignment_dict=None,
                  astrometric_alignment_type='image',
                  astrometric_alignment_image=None,
                  astrometric_alignment_table=None,
@@ -1527,6 +1528,7 @@ class JWSTReprocess:
 
         if len(jwst_files) == 0:
             raise Warning('No files found to align!')
+
 
         if self.astrometric_alignment_type == 'image':
             if not self.astrometric_alignment_image:
