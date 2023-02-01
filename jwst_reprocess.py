@@ -36,6 +36,22 @@ calwebb_image2 = None
 calwebb_image3 = None
 TweakRegStep = None
 
+# Pipeline steps
+ALLOWED_STEPS = [
+    'lv1',
+    'lv2',
+    'destripe',
+    'lyot_adjust',
+    'wcs_adjust',
+    'lv3',
+    'astrometric_align',
+]
+
+# Pipeline steps where we don't want to delete the whole directory
+STEP_NO_DEL_DIR = [
+    'astrometric_align',
+]
+
 # All NIRCAM bands
 NIRCAM_BANDS = [
     'F070W',
@@ -214,8 +230,8 @@ def parse_fits_to_table(file,
         f_type = 'sci'
     with fits.open(file) as hdu:
         return file, f_type, hdu[0].header['OBSERVTN'], hdu[0].header['filter'], \
-               hdu[0].header['DATE-BEG'], hdu[0].header['DURATION'], \
-               hdu[0].header['OBSLABEL'].lower().strip(), hdu[0].header['PROGRAM']
+            hdu[0].header['DATE-BEG'], hdu[0].header['DURATION'], \
+            hdu[0].header['OBSLABEL'].lower().strip(), hdu[0].header['PROGRAM']
 
 
 def parse_parameter_dict(parameter_dict,
@@ -287,7 +303,7 @@ def recursive_getattr(f, attribute, *args):
 def attribute_setter(pipeobj, parameter_dict, band):
     for key in parameter_dict.keys():
         if type(parameter_dict[key]) is dict:
-            for subkey in parameter_dict[key]:                            
+            for subkey in parameter_dict[key]:
                 value = parse_parameter_dict(parameter_dict[key],
                                              subkey, band)
                 if value == 'VAL_NOT_FOUND':
@@ -300,21 +316,25 @@ def attribute_setter(pipeobj, parameter_dict, band):
                 continue
 
             recursive_setattr(pipeobj, key, value)
-    return(pipeobj)
+    return pipeobj
 
 
 class JWSTReprocess:
 
     def __init__(self,
-                 galaxy,
+                 target,
                  raw_dir,
                  reprocess_dir,
                  crds_dir,
                  bands=None,
+                 steps=None,
+                 overwrites=None,
                  lv1_parameter_dict='phangs',
                  lv2_parameter_dict='phangs',
                  lv3_parameter_dict='phangs',
                  destripe_parameter_dict='phangs',
+                 astrometry_parameter_dict='phangs',
+                 lyot_method='mask',
                  degroup_short_nircam=True,
                  bgr_check_type='parallel_off',
                  astrometric_alignment_type='image',
@@ -322,30 +342,6 @@ class JWSTReprocess:
                  astrometric_alignment_table=None,
                  alignment_mapping=None,
                  wcs_adjust_dict=None,
-                 tpmatch_searchrad=10,
-                 tpmatch_separation=0.000001,
-                 tpmatch_tolerance=0.7,
-                 tpmatch_use2dhist=True,
-                 tpmatch_fitgeom='shift',
-                 tpmatch_nclip=3,
-                 tpmatch_sigma=3,
-                 do_all=True,
-                 do_lv1=False,
-                 do_lv2=False,
-                 do_destriping=False,
-                 do_lyot_adjust=None,
-                 do_wcs_adjust=False,
-                 do_lv3=False,
-                 do_astrometric_alignment=False,
-                 overwrite_all=False,
-                 overwrite_lv1=False,
-                 overwrite_lv2=False,
-                 overwrite_destriping=False,
-                 overwrite_lyot_adjust=False,
-                 overwrite_wcs_adjust=False,
-                 overwrite_lv3=False,
-                 overwrite_astrometric_alignment=False,
-                 overwrite_astrometric_ref_cat=False,
                  correct_lv1_wcs=False,
                  crds_url='https://jwst-crds.stsci.edu',
                  procs=None,
@@ -371,55 +367,35 @@ class JWSTReprocess:
         will parse according to the band you're processing.
 
         Args:
-            * galaxy (str): Galaxy to run reprocessing for
+            * target (str): Target to run reprocessing for
             * raw_dir (str): Path to raw data
             * reprocess_dir (str): Path to reprocess data into
             * crds_dir (str): Path to CRDS data
             * bands (list): JWST filters to loop over
+            * steps (list): Steps to perform in the order they should be performed. Should be drawn from ALLOWED_STEPS.
+                Defaults to None, which will run the standard STScI pipeline
+            * overwrites (list): Steps to overwrite. Should be drawn from ALLOWED_STEPS. Defaults to None, which will
+                not overwrite anything
             * lv1_parameter_dict (dict): Dictionary of parameters to feed to level 1 pipeline. See description above
                 for how this should be formatted. Defaults to 'phangs', which will use the parameters for the
                 PHANGS-JWST reduction. To keep pipeline default, use 'None'
             * lv2_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 2 pipeline
             * lv3_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 3 pipeline
             * destripe_parameter_dict (dict): As `lv1_parameter_dict`, but for the destriping procedure
+            * astrometry_parameter_dict (dict): As `lv1_parameter_dict`, but for astrometric alignment
+            * lyot_method (str): Method to account for mistmatch lyot coronagraph in MIRI imaging. Can either mask with
+                `mask`, or adjust to main chip with `adjust`. Defaults to `mask`
             * degroup_short_nircam (bool): Will degroup short wavelength NIRCAM observations for all steps beyond
                 relative alignment. This can alleviate steps between mosaic pointings
             * bgr_check_type (str): Method to check if MIRI obs is science or background. Options are 'parallel_off' and
                 off_in_name. Defaults to 'parallel_off'
+            * astrometric_alignment_type (str): Whether to align to image or table. Defaults to `image`
             * astrometric_alignment_image (str): Path to image to align astrometry to
             * astrometric_alignment_table (str): Path to table to align astrometry to
             * alignment_mapping (dict): Dictionary to map basing alignments off cross-correlation with other aligned
                 band. Should be of the form {'band': 'reference_band'}
             * wcs_adjust_dict (dict): dict to adjust image group WCS before tweakreg step. Should be of form
                 {filter: {'group': {'matrix': [[1, 0], [0, 1]], 'shift': [dx, dy]}}}. Defaults to None.
-            * tpmatch_searchrad (float): Distance to search for a match when astrometric aligning. Defaults to 10
-            * tpmatch_separation (float): Separation for objects to be considered separate in astrometric alignment.
-                Defaults to 0.000001
-            * tpmatch_tolerance (float): Max tolerance for astrometric alignment match. Defaults to 0.7
-            * tpmatch_use2dhist (bool): Whether to use 2D histogram to get initial astrometric alignment offsets.
-                Defaults to True.
-            * tpmatch_fitgeom (str): Type of fit to do in astrometric alignment. Defaults to 'shift'
-            * tpmatch_nclip (int): Number of iterations to clip in astrometric alignment matching. Defaults to 3
-            * tpmatch_sigma (float): Sigma-limit for clipping in astrometric alignment. Defaults to 3
-            * do_all (bool): Do all processing steps. Defaults to True
-            * do_lv1 (bool): Run lv1 pipeline. Defaults to False
-            * do_lv2 (bool): Run lv2 pipeline. Defaults to False
-            * do_destriping (bool): Run destriping algorithm on lv2 data. Defaults to False
-            * do_lyot_adjust (str): How to deal with the MIRI coronagraph. Options are 'mask', which masks it out, or
-                'adjust', which will adjust the background level to match the main array
-            * do_wcs_adjust (bool): Whether to run WCS adjustment before tweakreg
-            * do_lv3 (bool): Run lv3 pipeline. Defaults to False
-            * do_astrometric_alignment (bool): Run astrometric alignment on lv3 data. Defaults to False
-            * overwrite_all (bool): Whether to overwrite everything. Defaults to False
-            * overwrite_lv1 (bool): Whether to overwrite lv1 data. Defaults to False
-            * overwrite_lv2 (bool): Whether to overwrite lv2 data. Defaults to False
-            * overwrite_destriping (bool): Whether to overwrite destriped data. Defaults to False
-            * overwrite_lyot_adjust (bool): Whether to overwrite MIRI coronagraph edits. Defaults to False
-            * overwrite_wcs_adjust (bool): Whether to overwrite initial WCS adjustments. Defaults to False
-            * overwrite_lv3 (bool): Whether to overwrite lv3 data. Defaults to False
-            * overwrite_astrometric_alignment (bool): Whether to overwrite astrometric alignment. Defaults to False
-            * overwrite_astrometric_ref_cat (bool): Whether to overwrite the generated reference catalogue for
-                astrometric alignment. Defaults to False
             * correct_lv1_wcs (bool): Check WCS in uncal files, since there is a bug that some don't have this populated
                 when pulled from the archive. Defaults to False
             * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds.stsci.edu', which will be the
@@ -453,7 +429,7 @@ class JWSTReprocess:
         from jwst.pipeline import calwebb_detector1, calwebb_image2, calwebb_image3
         from jwst.tweakreg import TweakRegStep
 
-        self.galaxy = galaxy
+        self.target = target
 
         if bands is None:
             # Loop over all bands
@@ -564,55 +540,43 @@ class JWSTReprocess:
 
         self.destripe_parameter_dict = destripe_parameter_dict
 
+        if astrometry_parameter_dict is None:
+            astrometry_parameter_dict = {}
+        elif astrometry_parameter_dict == 'phangs':
+            astrometry_parameter_dict = {
+                'searchrad': 10,
+                'separation': 0.000001,
+                'tolerance': 0.7,
+                'use2dhist': True,
+                'fitgeom': 'shift',
+                'nclip': 3,
+                'sigma': 3,
+            }
+
+        self.astrometry_parameter_dict = astrometry_parameter_dict
+
+        self.lyot_method = lyot_method
+
         self.degroup_short_nircam = degroup_short_nircam
 
-        if do_all:
-            do_lv1 = True
-            do_lv2 = True
-            do_destriping = True
-            do_lv3 = True
-            do_astrometric_alignment = True
+        # Default to standard STScI pipeline
+        if steps is None:
+            steps = [
+                'lv1',
+                'lv2',
+                'lv3',
+            ]
+        if overwrites is None:
+            overwrites = []
 
-        self.do_lv1 = do_lv1
-        self.do_lv2 = do_lv2
-        self.do_destriping = do_destriping
-        self.do_lyot_adjust = do_lyot_adjust
-        self.do_wcs_adjust = do_wcs_adjust
-        self.do_lv3 = do_lv3
-        self.do_astrometric_alignment = do_astrometric_alignment
+        self.steps = steps
+        self.overwrites = overwrites
 
         self.astrometric_alignment_type = astrometric_alignment_type
         self.astrometric_alignment_image = astrometric_alignment_image
         self.astrometric_alignment_table = astrometric_alignment_table
 
-        self.tpmatch_searchrad = tpmatch_searchrad
-        self.tpmatch_separation = tpmatch_separation
-        self.tpmatch_tolerance = tpmatch_tolerance
-        self.tpmatch_use2dhist = tpmatch_use2dhist
-        self.tpmatch_fitgeom = tpmatch_fitgeom
-        self.tpmatch_nclip = tpmatch_nclip
-        self.tpmatch_sigma = tpmatch_sigma
-
         self.bgr_check_type = bgr_check_type
-
-        if overwrite_all:
-            overwrite_lv1 = True
-            overwrite_lv2 = True
-            overwrite_destriping = True
-            overwrite_lyot_adjust = True
-            overwrite_wcs_adjust = True
-            overwrite_lv3 = True
-            overwrite_astrometric_alignment = True
-
-        self.overwrite_all = overwrite_all
-        self.overwrite_lv1 = overwrite_lv1
-        self.overwrite_lv2 = overwrite_lv2
-        self.overwrite_destriping = overwrite_destriping
-        self.overwrite_lyot_adjust = overwrite_lyot_adjust
-        self.overwrite_wcs_adjust = overwrite_wcs_adjust
-        self.overwrite_lv3 = overwrite_lv3
-        self.overwrite_astrometric_alignment = overwrite_astrometric_alignment
-        self.overwrite_astrometric_ref_cat = overwrite_astrometric_ref_cat
 
         self.correct_lv1_wcs = correct_lv1_wcs
 
@@ -634,17 +598,50 @@ class JWSTReprocess:
     def run_all(self):
         """Run the whole pipeline reprocess"""
 
-        self.logger.info('Reprocessing %s' % self.galaxy)
+        self.logger.info('Reprocessing %s' % self.target)
+
+        in_band_dir_dict = {
+            'lv1': 'uncal',
+            'lv2': 'rate',
+            'destripe': 'cal',
+            'lyot_adjust': 'cal',
+            'wcs_adjust': 'cal',
+            'lv3': 'cal',
+            'astrometric_align': 'lv3',
+        }
+
+        out_band_dir_dict = {
+            'lv1': 'rate',
+            'lv2': 'cal',
+            'destripe': 'destripe',
+            'lyot_adjust': 'lyot_adjust',
+            'wcs_adjust': 'wcs_adjust',
+            'lv3': 'lv3',
+            'astrometric_align': 'lv3',
+        }
+
+        step_ext_dict = {
+            'lv1': 'uncal',
+            'lv2': 'rate',
+            'destripe': 'cal',
+            'lyot_adjust': 'cal',
+            'wcs_adjust': 'cal',
+            'lv3': 'i2d',
+            'astrometric_align': 'i2d_align',
+        }
 
         for band in self.bands:
+
+            base_band_dir = os.path.join(self.reprocess_dir,
+                                         self.target,
+                                         band)
+            raw_data_moved = False
 
             pupil = 'CLEAR'
             jwst_filter = copy.deepcopy(band)
 
             if band in NIRCAM_BANDS:
                 band_type = 'nircam'
-                do_destriping = self.do_destriping
-                do_lyot_adjust = None
 
                 # For some NIRCAM filters, we need to distinguish filter/pupil.
                 # TODO: These may not be unique, so may need editing
@@ -660,500 +657,252 @@ class JWSTReprocess:
 
             elif band in MIRI_BANDS:
                 band_type = 'miri'
-                do_destriping = False
-                do_lyot_adjust = self.do_lyot_adjust
             else:
                 raise Warning('Unknown band %s' % band)
 
             band_ext = BAND_EXTS[band_type]
 
-            self.logger.info('-> %s' % band)
+            self.logger.info('-> Processing band %s' % band)
 
-            if self.overwrite_all:
-                os.system('rm -rf %s' % os.path.join(self.reprocess_dir,
-                                                     self.galaxy,
-                                                     band))
+            if 'all' in self.overwrites:
+                shutil.rmtree(base_band_dir)
 
-            if self.do_lv1:
+            in_band_dir = None
 
-                self.logger.info('-> Level 1')
+            for step in self.steps:
 
-                uncal_dir = os.path.join(self.reprocess_dir,
-                                         self.galaxy,
-                                         band,
-                                         'uncal'
+                if step not in ALLOWED_STEPS:
+                    raise Warning('Step %s not recognised!' % step)
+
+                if in_band_dir is None:
+                    in_band_dir = os.path.join(base_band_dir, in_band_dir_dict[step])
+                out_band_dir = os.path.join(base_band_dir, out_band_dir_dict[step])
+                step_ext = step_ext_dict[step]
+
+                overwrite = step in self.overwrites
+
+                # Flush if we're overwriting
+                if overwrite and step not in STEP_NO_DEL_DIR:
+                    shutil.rmtree(out_band_dir)
+
+                if not os.path.exists(in_band_dir):
+                    os.makedirs(in_band_dir)
+
+                # Check number of start files
+                n_input_files = len(glob.glob(os.path.join(in_band_dir, '*.fits')))
+                if n_input_files == 0:
+
+                    # If we haven't moved raw data, then move it now
+                    if not raw_data_moved:
+
+                        raw_files = glob.glob(
+                            os.path.join(self.raw_dir,
+                                         self.target,
+                                         'mastDownload',
+                                         'JWST',
+                                         '*%s' % band_ext,
+                                         '*%s_%s.fits' % (band_ext, step_ext),
                                          )
-
-                if self.overwrite_lv1:
-                    os.system('rm -rf %s' % uncal_dir)
-
-                if not os.path.exists(uncal_dir):
-                    os.makedirs(uncal_dir)
-
-                if len(glob.glob(os.path.join(uncal_dir, '*.fits'))) == 0 or self.overwrite_lv1:
-
-                    uncal_files = glob.glob(os.path.join(self.raw_dir,
-                                                         self.galaxy,
-                                                         'mastDownload',
-                                                         'JWST',
-                                                         '*%s' % band_ext,
-                                                         '*%s_uncal.fits' % band_ext)
-                                            )
-
-                    if len(uncal_files) == 0:
-                        self.logger.info('-> No uncal files found. Skipping')
-                        os.system('rm -rf %s' % uncal_dir)
-                        shutil.rmtree(os.path.join(self.reprocess_dir,
-                                                   self.galaxy,
-                                                   band))
-                        continue
-
-                    uncal_files.sort()
-
-                    for uncal_file in tqdm(uncal_files, ascii=True):
-
-                        uncal_fits_name = uncal_file.split(os.path.sep)[-1]
-                        hdu_out_name = os.path.join(uncal_dir, uncal_fits_name)
-
-                        if not os.path.exists(hdu_out_name) or self.overwrite_lv1:
-
-                            try:
-                                hdu = fits.open(uncal_file)
-                            except OSError:
-                                raise Warning('Issue with %s!' % uncal_file)
-
-                            if band_type == 'nircam':
-                                if hdu[0].header['FILTER'].strip() == jwst_filter and \
-                                        hdu[0].header['PUPIL'].strip() == pupil:
-                                    hdu.writeto(hdu_out_name, overwrite=True)
-                            elif band_type == 'miri':
-                                if hdu[0].header['FILTER'].strip() == jwst_filter:
-                                    hdu.writeto(hdu_out_name, overwrite=True)
-
-                            hdu.close()
-
-                if len(glob.glob(os.path.join(uncal_dir, '*.fits'))) == 0:
-                    self.logger.info('-> No uncal files found. Skipping')
-                    os.system('rm -rf %s' % uncal_dir)
-                    shutil.rmtree(os.path.join(self.reprocess_dir,
-                                               self.galaxy,
-                                               band))
-                    continue
-
-                rate_dir = os.path.join(self.reprocess_dir,
-                                        self.galaxy,
-                                        band,
-                                        'rate')
-
-                if self.overwrite_lv1:
-                    os.system('rm -rf %s' % rate_dir)
-
-                # Run pipeline
-                self.run_pipeline(band=band,
-                                  input_dir=uncal_dir,
-                                  output_dir=rate_dir,
-                                  asn_file=None,
-                                  pipeline_stage='lv1')
-
-            if self.do_lv2:
-
-                self.logger.info('-> Level 2')
-
-                # Move lv2 rate files
-                rate_dir = os.path.join(self.reprocess_dir,
-                                        self.galaxy,
-                                        band,
-                                        'rate')
-
-                cal_dir = os.path.join(self.reprocess_dir,
-                                       self.galaxy,
-                                       band,
-                                       'cal')
-
-                if not os.path.exists(rate_dir):
-                    os.makedirs(rate_dir)
-
-                if not self.do_lv1:
-
-                    rate_files = glob.glob(os.path.join(self.raw_dir,
-                                                        self.galaxy,
-                                                        'mastDownload',
-                                                        'JWST',
-                                                        '*%s' % band_ext,
-                                                        '*%s_rate.fits' % band_ext)
-                                           )
-
-                    if len(rate_files) == 0:
-                        self.logger.info('-> No rate files found. Skipping')
-                        os.system('rm -rf %s' % rate_dir)
-                        shutil.rmtree(os.path.join(self.reprocess_dir,
-                                                   self.galaxy,
-                                                   band))
-                        continue
-
-                    for rate_file in tqdm(rate_files, ascii=True):
-
-                        fits_name = rate_file.split(os.path.sep)[-1]
-                        if not os.path.exists(os.path.join(rate_dir, fits_name)) or self.overwrite_lv2:
-
-                            hdu = fits.open(rate_file)
-                            if band_type == 'nircam':
-                                if hdu[0].header['FILTER'].strip() == jwst_filter and \
-                                        hdu[0].header['PUPIL'].strip() == pupil:
-                                    os.system('cp %s %s/' % (rate_file, rate_dir))
-                            elif band_type == 'miri':
-                                if hdu[0].header['FILTER'].strip() == jwst_filter:
-                                    os.system('cp %s %s/' % (rate_file, rate_dir))
-
-                            hdu.close()
-
-                # Run lv2 asn generation
-                asn_file = self.run_asn2(directory=rate_dir,
-                                         band=band, process_bgr_like_science=self.process_bgr_like_science)
-
-                # Run pipeline
-                self.run_pipeline(band=band,
-                                  input_dir=rate_dir,
-                                  output_dir=cal_dir,
-                                  asn_file=asn_file,
-                                  pipeline_stage='lv2')
-
-            # For now, we only destripe the NIRCAM data
-            if do_destriping:
-
-                self.logger.info('-> Destriping')
-
-                destripe_dir = os.path.join(self.reprocess_dir,
-                                            self.galaxy,
-                                            band,
-                                            'destripe')
-
-                if self.overwrite_destriping:
-                    os.system('rm -rf %s' % destripe_dir)
-
-                if not os.path.exists(destripe_dir):
-                    os.makedirs(destripe_dir)
-
-                if self.do_lv2:
-                    cal_files = glob.glob(os.path.join(self.reprocess_dir,
-                                                       self.galaxy,
-                                                       band,
-                                                       'cal',
-                                                       '*%s_cal.fits' % band_ext)
-                                          )
-
-                    if len(cal_files) == 0:
-                        self.logger.info('-> No cal files found. Skipping')
-                        shutil.rmtree(os.path.join(self.reprocess_dir,
-                                                   self.galaxy,
-                                                   band))
-                        continue
-
-                else:
-                    initial_cal_files = glob.glob(os.path.join(self.raw_dir,
-                                                               self.galaxy,
-                                                               'mastDownload',
-                                                               'JWST',
-                                                               '*%s' % band_ext,
-                                                               '*%s_cal.fits' % band_ext)
-                                                  )
-
-                    if len(initial_cal_files) == 0:
-                        self.logger.info('-> No cal files found. Skipping')
-                        shutil.rmtree(os.path.join(self.reprocess_dir,
-                                                   self.galaxy,
-                                                   band))
-                        continue
-
-                    cal_files = []
-
-                    for cal_file in initial_cal_files:
-
-                        hdu = fits.open(cal_file)
-                        if band_type == 'nircam':
-                            if hdu[0].header['FILTER'].strip() == jwst_filter and \
-                                    hdu[0].header['PUPIL'].strip() == pupil:
-                                cal_files.append(cal_file)
-                        elif band_type == 'miri':
-                            if hdu[0].header['FILTER'].strip() == jwst_filter:
-                                cal_files.append(cal_file)
-                        hdu.close()
-
-                cal_files.sort()
-                self.run_destripe(files=cal_files,
-                                  out_dir=destripe_dir,
-                                  band=band,
-                                  )
-
-            # The Lyot coronagraph is only in the MIRI bands
-            if do_lyot_adjust is not None:
-
-                self.logger.info('-> Adjusting lyot with method %s' % do_lyot_adjust)
-
-                lyot_adjust_dir = os.path.join(self.reprocess_dir,
-                                               self.galaxy,
-                                               band,
-                                               'lyot_adjust')
-
-                if self.overwrite_lyot_adjust:
-                    os.system('rm -rf %s' % lyot_adjust_dir)
-
-                if not os.path.exists(lyot_adjust_dir):
-                    os.makedirs(lyot_adjust_dir)
-
-                if self.do_lv2:
-                    cal_files = glob.glob(os.path.join(self.reprocess_dir,
-                                                       self.galaxy,
-                                                       band,
-                                                       'cal',
-                                                       '*%s_cal.fits' % band_ext)
-                                          )
-
-                    if len(cal_files) == 0:
-                        self.logger.info('-> No cal files found. Skipping')
-                        shutil.rmtree(os.path.join(self.reprocess_dir,
-                                                   self.galaxy,
-                                                   band))
-                        continue
-
-                else:
-                    initial_cal_files = glob.glob(os.path.join(self.raw_dir,
-                                                               self.galaxy,
-                                                               'mastDownload',
-                                                               'JWST',
-                                                               '*%s' % band_ext,
-                                                               '*%s_cal.fits' % band_ext)
-                                                  )
-
-                    if len(initial_cal_files) == 0:
-                        self.logger.info('-> No cal files found. Skipping')
-                        shutil.rmtree(os.path.join(self.reprocess_dir,
-                                                   self.galaxy,
-                                                   band))
-                        continue
-
-                    cal_files = []
-
-                    for cal_file in initial_cal_files:
-
-                        hdu = fits.open(cal_file)
-                        if band_type == 'nircam':
-                            if hdu[0].header['FILTER'].strip() == jwst_filter and \
-                                    hdu[0].header['PUPIL'].strip() == pupil:
-                                cal_files.append(cal_file)
-                        elif band_type == 'miri':
-                            if hdu[0].header['FILTER'].strip() == jwst_filter:
-                                cal_files.append(cal_file)
-                        hdu.close()
-
-                cal_files.sort()
-
-                if do_lyot_adjust == 'adjust':
-                    self.adjust_lyot(in_files=cal_files,
-                                     out_dir=lyot_adjust_dir)
-                elif do_lyot_adjust == 'mask':
-                    self.mask_lyot(in_files=cal_files,
-                                   out_dir=lyot_adjust_dir)
-
-            if self.do_wcs_adjust and band in self.wcs_adjust_dict.keys():
-
-                self.logger.info('-> Adjusting WCS')
-
-                if self.do_lv2 and not (do_destriping or do_lyot_adjust is not None):
-                    input_dir = os.path.join(self.reprocess_dir,
-                                             self.galaxy,
-                                             band,
-                                             'cal')
-                elif do_lyot_adjust is not None:
-                    input_dir = os.path.join(self.reprocess_dir,
-                                             self.galaxy,
-                                             band,
-                                             'lyot_adjust')
-                elif do_destriping:
-                    input_dir = os.path.join(self.reprocess_dir,
-                                             self.galaxy,
-                                             band,
-                                             'destripe')
-                else:
-                    # At this point, we pull the cal files from the raw directories
-                    input_dir = os.path.join(self.reprocess_dir,
-                                             self.galaxy,
-                                             band,
-                                             'lv2')
-
-                    if not os.path.exists(input_dir):
-                        os.makedirs(input_dir)
-
-                    cal_files = [f for f in glob.glob(os.path.join(self.raw_dir,
-                                                                   self.galaxy,
-                                                                   'mastDownload',
-                                                                   'JWST',
-                                                                   '*%s' % band_ext,
-                                                                   '*%s_cal.fits' % band_ext)) if ('offset' not in f)]
-
-                    if len(cal_files) == 0:
-                        self.logger.info('-> No cal files found. Skipping')
-                        os.system('rm -rf %s' % input_dir)
-                        shutil.rmtree(os.path.join(self.reprocess_dir,
-                                                   self.galaxy,
-                                                   band))
-                        continue
-
-                    for cal_file in tqdm(cal_files, ascii=True):
-
-                        fits_name = cal_file.split(os.path.sep)[-1]
-                        if os.path.exists(os.path.join(input_dir, fits_name)) or self.overwrite_lv3:
+                        )
+
+                        if len(raw_files) == 0:
+                            self.logger.warning('-> No raw files found. Skipping')
+                            shutil.rmtree(base_band_dir)
                             continue
 
-                        hdu = fits.open(cal_file)
-                        if band_type == 'nircam':
-                            if hdu[0].header['FILTER'].strip() == jwst_filter and \
-                                    hdu[0].header['PUPIL'].strip() == pupil:
-                                os.system('cp %s %s/' % (cal_file, input_dir))
-                        elif band_type == 'miri':
-                            if hdu[0].header['FILTER'].strip() == jwst_filter:
-                                os.system('cp %s %s/' % (cal_file, input_dir))
-                        hdu.close()
+                        raw_files.sort()
 
-                output_dir = os.path.join(self.reprocess_dir,
-                                          self.galaxy,
-                                          band,
-                                          'wcs_adjust')
+                        for raw_file in tqdm(raw_files, ascii=True, desc='Moving raw files'):
 
-                if self.overwrite_wcs_adjust:
-                    os.system('rm -rf %s' % output_dir)
+                            raw_fits_name = raw_file.split(os.path.sep)[-1]
+                            hdu_out_name = os.path.join(in_band_dir, raw_fits_name)
 
-                if not os.path.exists(output_dir):
-                    os.makedirs(output_dir)
+                            if not os.path.exists(hdu_out_name) or overwrite:
 
-                self.wcs_adjust(input_dir=input_dir,
-                                output_dir=output_dir,
-                                band=band)
+                                try:
+                                    hdu = fits.open(raw_file)
+                                except OSError:
+                                    raise Warning('Issue with %s!' % raw_file)
 
-            if self.do_lv3:
+                                hdu_filter = hdu[0].header['FILTER'].strip()
 
-                self.logger.info('-> Level 3')
+                                if band_type == 'nircam':
 
-                if self.use_field_in_lev3 is None:
+                                    hdu_pupil = hdu[0].header['PUPIL'].strip()
+                                    if hdu_filter == jwst_filter and hdu_pupil == pupil:
+                                        hdu.writeto(hdu_out_name, overwrite=True)
 
-                    output_dir = os.path.join(self.reprocess_dir,
-                                              self.galaxy,
-                                              band,
-                                              'lv3')
+                                elif band_type == 'miri':
+                                    if hdu_filter == jwst_filter:
+                                        hdu.writeto(hdu_out_name, overwrite=True)
 
-                else:
-                    output_dir = os.path.join(self.reprocess_dir,
-                                              self.galaxy, band,
-                                              'lv3_field_' + '_'.join(np.atleast_1d(
-                                                  self.use_field_in_lev3).astype(str)))
+                                hdu.close()
 
-                if self.overwrite_lv3:
-                    os.system('rm -rf %s' % output_dir)
+                        raw_data_moved = True
 
-                if self.wcs_adjust_dict and band in self.wcs_adjust_dict.keys():
-                    input_dir = os.path.join(self.reprocess_dir,
-                                             self.galaxy,
-                                             band,
-                                             'wcs_adjust')
-                elif self.do_lv2 and not (do_destriping or do_lyot_adjust is not None):
-                    input_dir = os.path.join(self.reprocess_dir,
-                                             self.galaxy,
-                                             band,
-                                             'cal')
-                elif do_lyot_adjust is not None:
-                    input_dir = os.path.join(self.reprocess_dir,
-                                             self.galaxy,
-                                             band,
-                                             'lyot_adjust')
-                elif do_destriping:
-                    input_dir = os.path.join(self.reprocess_dir,
-                                             self.galaxy,
-                                             band,
-                                             'destripe')
-                else:
-                    # At this point, we pull the cal files from the raw directories
-                    input_dir = os.path.join(self.reprocess_dir,
-                                             self.galaxy,
-                                             band,
-                                             'lv2')
-
-                    if not os.path.exists(input_dir):
-                        os.makedirs(input_dir)
-
-                    cal_files = [f for f in glob.glob(os.path.join(self.raw_dir,
-                                                                   self.galaxy,
-                                                                   'mastDownload',
-                                                                   'JWST',
-                                                                   '*%s' % band_ext,
-                                                                   '*%s_cal.fits' % band_ext)) if ('offset' not in f)]
-
-                    if len(cal_files) == 0:
-                        self.logger.info('-> No cal files found. Skipping')
-                        os.system('rm -rf %s' % input_dir)
-                        shutil.rmtree(os.path.join(self.reprocess_dir,
-                                                   self.galaxy,
-                                                   band))
+                    else:
+                        self.logger.warning('-> No files found. Skipping')
+                        shutil.rmtree(base_band_dir)
                         continue
 
-                    for cal_file in tqdm(cal_files, ascii=True):
+                self.logger.info('-> Doing step %s' % step)
 
-                        fits_name = cal_file.split(os.path.sep)[-1]
-                        if os.path.exists(os.path.join(input_dir, fits_name)) or self.overwrite_lv3:
-                            continue
+                if step == 'lv1':
 
-                        hdu = fits.open(cal_file)
-                        if band_type == 'nircam':
-                            if hdu[0].header['FILTER'].strip() == jwst_filter and \
-                                    hdu[0].header['PUPIL'].strip() == pupil:
-                                os.system('cp %s %s/' % (cal_file, input_dir))
-                        elif band_type == 'miri':
-                            if hdu[0].header['FILTER'].strip() == jwst_filter:
-                                os.system('cp %s %s/' % (cal_file, input_dir))
-                        hdu.close()
-
-                # Run lv3 asn generation
-                asn_file = self.run_asn3(directory=input_dir,
-                                         band=band)
-
-                # Run pipeline
-                self.run_pipeline(band=band,
-                                  input_dir=input_dir,
-                                  output_dir=output_dir,
-                                  asn_file=asn_file,
-                                  pipeline_stage='lv3')
-
-                if self.process_bgr_like_science:
-                    asn_file_bgr = self.run_asn3(directory=input_dir,
-                                                 band=band, process_bgr_like_science=True)
-                    output_dir_bgr = os.path.join(self.reprocess_dir, self.galaxy, band, 'bgr')
+                    # Run level 1 pipeline
                     self.run_pipeline(band=band,
-                                      input_dir=input_dir,
-                                      output_dir=output_dir_bgr,
-                                      asn_file=asn_file_bgr,
-                                      pipeline_stage='lv3')
+                                      input_dir=in_band_dir,
+                                      output_dir=out_band_dir,
+                                      asn_file='',
+                                      pipeline_stage='lv1',
+                                      overwrite=overwrite,
+                                      )
 
-            if self.do_astrometric_alignment:
-                self.logger.info('-> Astrometric alignment')
+                elif step == 'lv2':
 
-                if self.use_field_in_lev3 is None:
+                    # Run lv2 asn generation
+                    asn_file = self.run_asn2(directory=in_band_dir,
+                                             band=band,
+                                             process_bgr_like_science=self.process_bgr_like_science,
+                                             overwrite=overwrite,
+                                             )
 
-                    input_dir = os.path.join(self.reprocess_dir,
-                                             self.galaxy,
-                                             band,
-                                             'lv3')
+                    # Run pipeline
+                    self.run_pipeline(band=band,
+                                      input_dir=in_band_dir,
+                                      output_dir=out_band_dir,
+                                      asn_file=asn_file,
+                                      pipeline_stage='lv2',
+                                      overwrite=overwrite,
+                                      )
 
-                else:
-                    input_dir = os.path.join(self.reprocess_dir,
-                                             self.galaxy, band,
-                                             'lv3_field_' + '_'.join(np.atleast_1d(
-                                                 self.use_field_in_lev3).astype(str)))
+                elif step == 'destripe':
 
-                if band in self.alignment_mapping.keys():
-                    self.align_wcs_to_jwst(input_dir,
-                                           band)
-                else:
-                    self.align_wcs_to_ref(input_dir,
+                    if band_type == 'nircam':
+
+                        cal_files = glob.glob(os.path.join(in_band_dir,
+                                                           '*_%s.fits' % step_ext)
+                                              )
+                        cal_files.sort()
+
+                        if len(cal_files) == 0:
+                            self.logger.warning('-> No files found. Skipping')
+                            shutil.rmtree(base_band_dir)
+                            continue
+
+                        cal_files.sort()
+
+                        self.run_destripe(files=cal_files,
+                                          out_dir=out_band_dir,
+                                          band=band,
                                           )
+
+                    else:
+
+                        # Don't update the current folder
+                        continue
+
+                elif step == 'lyot_adjust':
+
+                    if band_type == 'miri':
+
+                        cal_files = glob.glob(os.path.join(in_band_dir,
+                                                           '*_%s.fits' % step_ext)
+                                              )
+
+                        if len(cal_files) == 0:
+                            self.logger.warning('-> No files found. Skipping')
+                            shutil.rmtree(base_band_dir)
+                            continue
+
+                        cal_files.sort()
+
+                        if self.lyot_method == 'adjust':
+                            self.adjust_lyot(in_files=cal_files,
+                                             out_dir=out_band_dir)
+                        elif self.lyot_method == 'mask':
+                            self.mask_lyot(in_files=cal_files,
+                                           out_dir=out_band_dir)
+
+                    else:
+
+                        # Don't update the current folder
+                        continue
+
+                elif step == 'wcs_adjust' and band in self.wcs_adjust_dict.keys():
+
+                    cal_files = glob.glob(os.path.join(in_band_dir,
+                                                       '*_%s.fits' % step_ext)
+                                          )
+
+                    cal_files.sort()
+
+                    if len(cal_files) == 0:
+                        self.logger.warning('-> No files found. Skipping')
+                        shutil.rmtree(base_band_dir)
+                        continue
+
+                    self.wcs_adjust(input_dir=in_band_dir,
+                                    output_dir=out_band_dir,
+                                    band=band)
+
+                elif step == 'lv3':
+
+                    if self.use_field_in_lev3 is not None:
+                        out_band_dir += '_field_' + \
+                                        '_'.join(np.atleast_1d(self.use_field_in_lev3).astype(str))
+
+                    # Run lv3 asn generation
+                    asn_file = self.run_asn3(directory=in_band_dir,
+                                             band=band,
+                                             overwrite=overwrite)
+
+                    # Run pipeline
+                    self.run_pipeline(band=band,
+                                      input_dir=in_band_dir,
+                                      output_dir=out_band_dir,
+                                      asn_file=asn_file,
+                                      pipeline_stage='lv3',
+                                      overwrite=overwrite)
+
+                    # Also process backgrounds, if requested
+                    if self.process_bgr_like_science:
+                        asn_file_bgr = self.run_asn3(directory=in_band_dir,
+                                                     band=band,
+                                                     process_bgr_like_science=True,
+                                                     overwrite=overwrite,
+                                                     )
+                        output_dir_bgr = os.path.join(base_band_dir, 'bgr')
+                        self.run_pipeline(band=band,
+                                          input_dir=in_band_dir,
+                                          output_dir=output_dir_bgr,
+                                          asn_file=asn_file_bgr,
+                                          pipeline_stage='lv3',
+                                          overwrite=overwrite,
+                                          )
+
+                elif step == 'astrometric_align':
+
+                    if self.use_field_in_lev3 is not None:
+                        in_band_dir += '_field_' + \
+                                       '_'.join(np.atleast_1d(self.use_field_in_lev3).astype(str))
+
+                    if band in self.alignment_mapping.keys():
+                        self.align_wcs_to_jwst(in_band_dir,
+                                               band,
+                                               overwrite=overwrite,
+                                               )
+                    else:
+                        self.align_wcs_to_ref(in_band_dir,
+                                              band,
+                                              overwrite=overwrite,
+                                              )
+
+                else:
+
+                    raise Warning('Step %s not recognised!' % step)
+
+                in_band_dir = copy.deepcopy(out_band_dir)
 
     def run_destripe(self,
                      files,
@@ -1354,7 +1103,8 @@ class JWSTReprocess:
     def run_asn2(self,
                  directory=None,
                  band=None,
-                 process_bgr_like_science=False
+                 process_bgr_like_science=False,
+                 overwrite=False,
                  ):
         """Setup asn lv2 files
 
@@ -1363,6 +1113,7 @@ class JWSTReprocess:
             * band (str): JWST filter
             * process_bgr_like_science (bool): if True, than additionally process the offset images
                 in the same way as the science (for testing purposes only)
+            * overwrite (bool): Whether to overwrite or not. Defaults to False.
         """
 
         if directory is None:
@@ -1391,7 +1142,7 @@ class JWSTReprocess:
 
         asn_lv2_filename = 'asn_lv2_%s.json' % band
 
-        if not os.path.exists(asn_lv2_filename) or self.overwrite_lv2:
+        if not os.path.exists(asn_lv2_filename) or overwrite:
 
             tab = Table(names=['File', 'Type', 'Obs_ID', 'Filter', 'Start', 'Exptime', 'Objname', "Program"],
                         dtype=[str, str, str, str, str, float, str, str])
@@ -1462,13 +1213,16 @@ class JWSTReprocess:
     def run_asn3(self,
                  directory=None,
                  band=None,
-                 process_bgr_like_science=False):
+                 process_bgr_like_science=False,
+                 overwrite=False,
+                 ):
         """Setup asn lv3 files
 
         Args:
             * directory (str): Directory for files and asn file
             * band (str): JWST filter
             * process_bgr_like_science (bool): Additionally process the offset images in the same way as the science
+            * overwrite (bool, optional): Whether to overwrite asn file. Defaults to False.
         """
 
         if band is None:
@@ -1499,7 +1253,7 @@ class JWSTReprocess:
             ending += '_offset'
         asn_lv3_filename = 'asn_lv3_%s%s.json' % (band, ending)
 
-        if not os.path.exists(asn_lv3_filename) or self.overwrite_lv3:
+        if not os.path.exists(asn_lv3_filename) or overwrite:
 
             if not process_bgr_like_science:
                 lv2_files = [f for f in glob.glob('*%s_cal.fits' % band_ext) if 'offset' not in f]
@@ -1531,7 +1285,7 @@ class JWSTReprocess:
                             "constraints": "No constraints",
                             "asn_id": 'o' + tab['Obs_ID'][0],
                             "asn_pool": "none",
-                            "products": [{'name': '%s_%s_lv3_%s' % (self.galaxy.lower(), band_type, band.lower()),
+                            "products": [{'name': '%s_%s_lv3_%s' % (self.target.lower(), band_type, band.lower()),
                                           'members': []}]
                             }
 
@@ -1561,6 +1315,7 @@ class JWSTReprocess:
                      output_dir,
                      asn_file,
                      pipeline_stage,
+                     overwrite=False,
                      ):
         """Run JWST pipeline.
 
@@ -1568,8 +1323,9 @@ class JWSTReprocess:
             * band (str): JWST filter
             * input_dir (str): Files associated to asn_file
             * output_dir (str): Where to save the pipeline outputs
-            * asn_file (str): Path to asn file. For lv1, set this to None
+            * asn_file (str): Path to asn file. For lv1, this isn't used
             * pipeline_stage (str): Pipeline processing stage. Should be 'lv1', 'lv2', or 'lv3'
+            * overwrite (bool): Whether to overwrite or not. Defaults to 'False'
         """
 
         if band in NIRCAM_BANDS:
@@ -1585,10 +1341,10 @@ class JWSTReprocess:
 
         if pipeline_stage == 'lv1':
 
-            if self.overwrite_lv1:
+            if overwrite:
                 os.system('rm -rf %s' % output_dir)
 
-            if len(glob.glob(os.path.join(output_dir, '*.fits'))) == 0 or self.overwrite_lv1:
+            if len(glob.glob(os.path.join(output_dir, '*.fits'))) == 0 or overwrite:
 
                 uncal_files = glob.glob('*_uncal.fits'
                                         )
@@ -1630,7 +1386,7 @@ class JWSTReprocess:
                     if not os.path.isdir(detector1.output_dir):
                         os.makedirs(detector1.output_dir)
 
-                    detector1 = attribute_setter(detector1, self.lv1_parameter_dict, band)    
+                    detector1 = attribute_setter(detector1, self.lv1_parameter_dict, band)
                     # for key in self.lv1_parameter_dict.keys():
 
                     #     value = parse_parameter_dict(self.lv1_parameter_dict,
@@ -1646,10 +1402,10 @@ class JWSTReprocess:
 
         elif pipeline_stage == 'lv2':
 
-            if self.overwrite_lv2:
+            if overwrite:
                 os.system('rm -rf %s' % output_dir)
 
-            if len(glob.glob(os.path.join(output_dir, '*.fits'))) == 0 or self.overwrite_lv2:
+            if len(glob.glob(os.path.join(output_dir, '*.fits'))) == 0 or overwrite:
 
                 os.system('rm -rf %s' % output_dir)
 
@@ -1658,7 +1414,6 @@ class JWSTReprocess:
                 im2.output_dir = output_dir
                 if not os.path.isdir(im2.output_dir):
                     os.makedirs(im2.output_dir)
-
 
                 im2 = attribute_setter(im2, self.lv2_parameter_dict, band)
 
@@ -1681,13 +1436,13 @@ class JWSTReprocess:
 
         elif pipeline_stage == 'lv3':
 
-            if self.overwrite_lv3:
+            if overwrite:
                 os.system('rm -rf %s' % output_dir)
 
-            output_fits = '%s_%s_lv3_%s_i2d.fits' % (self.galaxy.lower(), band_type, band.lower())
+            output_fits = '%s_%s_lv3_%s_i2d.fits' % (self.target.lower(), band_type, band.lower())
             output_file = os.path.join(output_dir, output_fits)
 
-            if not os.path.exists(output_file) or self.overwrite_lv3:
+            if not os.path.exists(output_file) or overwrite:
 
                 os.system('rm -rf %s' % output_dir)
 
@@ -1708,15 +1463,15 @@ class JWSTReprocess:
                         tweakreg_params = self.lv3_parameter_dict['tweakreg']
                     except KeyError:
                         pass
-                    
+
                     for tweakreg_key in tweakreg_params:
                         value = parse_parameter_dict(tweakreg_params,
                                                      tweakreg_key,
                                                      band)
-                                            
+
                         if value == 'VAL_NOT_FOUND':
                             continue
-                        
+
                         recursive_setattr(tweakreg, tweakreg_key, value)
                     asn_file = tweakreg.run(asn_file)
 
@@ -1730,7 +1485,7 @@ class JWSTReprocess:
                 im3.source_catalog.kernel_fwhm = fwhm_pix * 2
 
                 im3 = attribute_setter(im3, self.lv3_parameter_dict, band)
-                
+
                 if self.degroup_short_nircam:
 
                     # Make sure we skip tweakreg since we've already done it
@@ -1756,11 +1511,15 @@ class JWSTReprocess:
 
     def align_wcs_to_ref(self,
                          input_dir,
+                         band,
+                         overwrite=False,
                          ):
         """Align JWST image to external references. Either a table or an image
 
         Args:
             * input_dir (str): Directory to find files to align
+            * band (str): JWST band to align
+            * overwrite (bool): Whether to overwrite or not. Defaults to False
         """
 
         jwst_files = glob.glob(os.path.join(input_dir,
@@ -1785,7 +1544,7 @@ class JWSTReprocess:
 
             source_cat_name = self.astrometric_alignment_image.replace('.fits', '_src_cat.fits')
 
-            if not os.path.exists(source_cat_name) or self.overwrite_astrometric_ref_cat:
+            if not os.path.exists(source_cat_name) or overwrite:
 
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore')
@@ -1845,7 +1604,7 @@ class JWSTReprocess:
             aligned_file = jwst_file.replace('.fits', '_align.fits')
             aligned_table = aligned_file.replace('.fits', '_table.fits')
 
-            if not os.path.exists(aligned_file) or self.overwrite_astrometric_alignment:
+            if not os.path.exists(aligned_file) or overwrite:
                 jwst_hdu = fits.open(jwst_file)
 
                 jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
@@ -1856,7 +1615,7 @@ class JWSTReprocess:
                 source_cat_name = jwst_file.replace('i2d.fits', 'cat.ecsv')
                 sources = Table.read(source_cat_name, format='ascii.ecsv')
                 # convenience for CARTA viewing.
-                sources.write(source_cat_name.replace('.ecsv','.fits'), overwrite=True)
+                sources.write(source_cat_name.replace('.ecsv', '.fits'), overwrite=True)
 
                 # Filter out extended
                 sources = sources[~sources['is_extended']]
@@ -1877,12 +1636,15 @@ class JWSTReprocess:
                 jwst_tab['dec'] = sources['sky_centroid'].dec.value
 
                 # Run a match
-                match = XYXYMatch(
-                    searchrad=self.tpmatch_searchrad,
-                    separation=self.tpmatch_separation,
-                    tolerance=self.tpmatch_tolerance,
-                    use2dhist=self.tpmatch_use2dhist,
-                )
+                # match = XYXYMatch(
+                #     searchrad=self.tpmatch_searchrad,
+                #     separation=self.tpmatch_separation,
+                #     tolerance=self.tpmatch_tolerance,
+                #     use2dhist=self.tpmatch_use2dhist,
+                # )
+                match = XYXYMatch()
+                attribute_setter(match, self.astrometry_parameter_dict, band)
+
                 ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
 
                 # Do alignment
@@ -1938,12 +1700,15 @@ class JWSTReprocess:
 
     def align_wcs_to_jwst(self,
                           input_dir,
-                          band):
+                          band,
+                          overwrite=False,
+                          ):
         """Internally align image to already aligned JWST one via cross-correlation
 
         Args:
             * input_dir (str): Directory to find files to align
             * band (str): JWST band to align
+            * overwrite (bool): Whether to overwrite or not. Defaults to False
         """
 
         jwst_files = glob.glob(os.path.join(input_dir,
@@ -1972,10 +1737,10 @@ class JWSTReprocess:
             ref_dir = 'lv3'
 
         ref_hdu_name = os.path.join(self.reprocess_dir,
-                                    self.galaxy,
+                                    self.target,
                                     ref_band,
                                     ref_dir,
-                                    '%s_%s_lv3_%s_i2d_align.fits' % (self.galaxy, ref_band_type, ref_band.lower()))
+                                    '%s_%s_lv3_%s_i2d_align.fits' % (self.target, ref_band_type, ref_band.lower()))
 
         if not os.path.exists(ref_hdu_name):
             self.logger.warning('reference HDU to align not found. Will just rename files')
@@ -1985,10 +1750,10 @@ class JWSTReprocess:
             aligned_file = jwst_file.replace('.fits', '_align.fits')
 
             if not os.path.exists(ref_hdu_name):
-                if not os.path.exists(aligned_file) or self.overwrite_astrometric_alignment:
+                if not os.path.exists(aligned_file) or overwrite:
                     os.system('cp %s %s' % (jwst_file, aligned_file))
 
-            if not os.path.exists(aligned_file) or self.overwrite_astrometric_alignment:
+            if not os.path.exists(aligned_file) or overwrite:
                 ref_hdu = fits.open(ref_hdu_name)
                 jwst_hdu = fits.open(jwst_file)
 

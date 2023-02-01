@@ -7,7 +7,11 @@ products = [
     'AUXILIARY',
 ]
 
-calib_level = [1, 2, 3]
+calib_level = [
+    1,
+    2,
+    3,
+]
 
 
 [projects.2107]
@@ -46,21 +50,17 @@ lev3_fields = [] # indicate numbers of particular field if you want
                   # to limit the level3
 		  # and further reduction by only selected
 		  # pointings (e.g. [1], or [1,2], or 1)
-lyot_adjust = 'mask'
-lv1 = true
-lv2 = true
-lv3 = true
-alignment = true
-destriping = true
+lyot_method = 'mask'
 
-[overwrite]
-all = false
-lv1 = false
-lv2 = false
-lv3 = false
-lyot_adjust = false
-astrometric_alignment = false
-astrometric_ref_cat = false
+steps = [
+    'lv1',
+    'lv2',
+    'destripe',
+    'lyot_adjust',
+    'lv3',
+    'astrometric_align',
+]
+overwrites = []
 
 
 [alignment]
@@ -158,7 +158,7 @@ npixels = 5
 bkg_boxsize = 100
 deblend = true
 
-[tpmatch]
+[astrometry_parameters]
 searchrad = 10
 separation = 0.000001
 tolerance = 0.7
