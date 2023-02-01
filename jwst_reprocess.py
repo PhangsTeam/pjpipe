@@ -829,10 +829,12 @@ class JWSTReprocess:
 
                         if self.lyot_method == 'adjust':
                             self.adjust_lyot(in_files=cal_files,
-                                             out_dir=out_band_dir)
+                                             out_dir=out_band_dir,
+                                             )
                         elif self.lyot_method == 'mask':
                             self.mask_lyot(in_files=cal_files,
-                                           out_dir=out_band_dir)
+                                           out_dir=out_band_dir,
+                                           )
 
                     else:
 
@@ -961,6 +963,9 @@ class JWSTReprocess:
 
         """
 
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+
         for hdu_name in in_files:
             hdu = fits.open(hdu_name)
 
@@ -1018,6 +1023,9 @@ class JWSTReprocess:
             * out_dir (str): Where to save files to
 
         """
+
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
 
         for hdu_name in in_files:
             hdu = fits.open(hdu_name)
