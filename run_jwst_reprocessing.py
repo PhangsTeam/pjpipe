@@ -42,6 +42,8 @@ if updated_flats_dir == '':
 flush_crds = config['pipeline']['flush_crds']
 
 processors = local['local']['processors']
+if processors == '':
+    processors = None
 
 if 'pmap' in config['pipeline']['crds_context']:
     os.environ['CRDS_CONTEXT'] = config['pipeline']['crds_context']
