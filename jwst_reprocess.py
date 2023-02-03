@@ -319,6 +319,7 @@ def attribute_setter(pipeobj, parameter_dict, band):
             recursive_setattr(pipeobj, key, value)
     return pipeobj
 
+
 def get_default_args(func):
     signature = inspect.signature(func)
     return {
