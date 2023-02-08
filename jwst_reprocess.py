@@ -23,7 +23,7 @@ from reproject import reproject_interp
 from stwcs.wcsutil import HSTWCS
 from threadpoolctl import threadpool_limits
 from tqdm import tqdm
-from tweakwcs import fit_wcs, XYXYMatch
+from tweakwcs import fit_wcs, XYXYMatch, FITSWCS
 from tweakwcs.correctors import FITSWCSCorrector, JWSTWCSCorrector
 
 from nircam_destriping import NircamDestriper
@@ -284,6 +284,25 @@ def recursive_getattr(f, attribute, *args):
     return functools.reduce(_getattr, [f] + attribute.split('.'))
 
 
+def attribute_setter(pipeobj, parameter_dict, band):
+    for key in parameter_dict.keys():
+        if type(parameter_dict[key]) is dict:
+            for subkey in parameter_dict[key]:                            
+                value = parse_parameter_dict(parameter_dict[key],
+                                             subkey, band)
+                if value == 'VAL_NOT_FOUND':
+                    continue
+                recursive_setattr(pipeobj, '.'.join([key, subkey]), value)
+        else:
+            value = parse_parameter_dict(parameter_dict,
+                                         key, band)
+            if value == 'VAL_NOT_FOUND':
+                continue
+
+            recursive_setattr(pipeobj, key, value)
+    return(pipeobj)
+
+
 class JWSTReprocess:
 
     def __init__(self,
@@ -298,6 +317,7 @@ class JWSTReprocess:
                  destripe_parameter_dict='phangs',
                  degroup_short_nircam=True,
                  bgr_check_type='parallel_off',
+                 astrometric_alignment_dict=None,
                  astrometric_alignment_type='image',
                  astrometric_alignment_image=None,
                  astrometric_alignment_table=None,
@@ -561,11 +581,9 @@ class JWSTReprocess:
         self.do_wcs_adjust = do_wcs_adjust
         self.do_lv3 = do_lv3
         self.do_astrometric_alignment = do_astrometric_alignment
-
-        self.astrometric_alignment_type = astrometric_alignment_type
         self.astrometric_alignment_image = astrometric_alignment_image
         self.astrometric_alignment_table = astrometric_alignment_table
-
+        self.astrometric_alignment_dict = astrometric_alignment_dict
         self.tpmatch_searchrad = tpmatch_searchrad
         self.tpmatch_separation = tpmatch_separation
         self.tpmatch_tolerance = tpmatch_tolerance
@@ -608,6 +626,7 @@ class JWSTReprocess:
             self.updated_flats_dir = None
         self.process_bgr_like_science = process_bgr_like_science
         self.use_field_in_lev3 = use_field_in_lev3
+        logging.basicConfig(level=logging.INFO, format='%{name)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
 
@@ -1113,7 +1132,12 @@ class JWSTReprocess:
                                       pipeline_stage='lv3')
 
             if self.do_astrometric_alignment:
+
                 self.logger.info('-> Astrometric alignment')
+
+                self.astrometric_alignment_type = parse_parameter_dict(self.astrometric_alignment_dict,
+                                                                       'astrometric_alignment_type',
+                                                                       band)    
 
                 if self.use_field_in_lev3 is None:
 
@@ -1610,15 +1634,16 @@ class JWSTReprocess:
                     if not os.path.isdir(detector1.output_dir):
                         os.makedirs(detector1.output_dir)
 
-                    for key in self.lv1_parameter_dict.keys():
+                    detector1 = attribute_setter(detector1, self.lv1_parameter_dict, band)    
+                    # for key in self.lv1_parameter_dict.keys():
 
-                        value = parse_parameter_dict(self.lv1_parameter_dict,
-                                                     key,
-                                                     band)
-                        if value == 'VAL_NOT_FOUND':
-                            continue
+                    #     value = parse_parameter_dict(self.lv1_parameter_dict,
+                    #                                  key,
+                    #                                  band)
+                    #     if value == 'VAL_NOT_FOUND':
+                    #         continue
 
-                        recursive_setattr(detector1, key, value)
+                    #     recursive_setattr(detector1, key, value)
 
                     # Run the level 1 pipeline
                     detector1.run(uncal_file)
@@ -1638,15 +1663,18 @@ class JWSTReprocess:
                 if not os.path.isdir(im2.output_dir):
                     os.makedirs(im2.output_dir)
 
-                for key in self.lv2_parameter_dict.keys():
 
-                    value = parse_parameter_dict(self.lv2_parameter_dict,
-                                                 key,
-                                                 band)
-                    if value == 'VAL_NOT_FOUND':
-                        continue
+                im2 = attribute_setter(im2, self.lv2_parameter_dict, band)
 
-                    recursive_setattr(im2, key, value)
+                # for key in self.lv2_parameter_dict.keys():
+
+                #     value = parse_parameter_dict(self.lv2_parameter_dict,
+                #                                  key,
+                #                                  band)
+                #     if value == 'VAL_NOT_FOUND':
+                #         continue
+
+                #     recursive_setattr(im2, key, value)
 
                 if self.updated_flats_dir is not None:
                     my_flat = [f for f in glob.glob(os.path.join(self.updated_flats_dir, "*.fits")) if band in f]
@@ -1680,19 +1708,20 @@ class JWSTReprocess:
                     tweakreg.save_results = False
                     tweakreg.kernel_fwhm = fwhm_pix * 2
 
-                    for key in self.lv3_parameter_dict.keys():
-                        if key.split('.')[0] == 'tweakreg':
-
-                            tweakreg_key = '.'.join(key.split('.')[1:])
-
-                            value = parse_parameter_dict(self.lv3_parameter_dict,
-                                                         key,
-                                                         band)
-                            if value == 'VAL_NOT_FOUND':
-                                continue
-
-                            recursive_setattr(tweakreg, tweakreg_key, value)
-
+                    try:
+                        tweakreg_params = self.lv3_parameter_dict['tweakreg']
+                    except KeyError:
+                        pass
+                    
+                    for tweakreg_key in tweakreg_params:
+                        value = parse_parameter_dict(tweakreg_params,
+                                                     tweakreg_key,
+                                                     band)
+                                            
+                        if value == 'VAL_NOT_FOUND':
+                            continue
+                        
+                        recursive_setattr(tweakreg, tweakreg_key, value)
                     asn_file = tweakreg.run(asn_file)
 
                 # Now run through the rest of the pipeline
@@ -1704,16 +1733,8 @@ class JWSTReprocess:
                 im3.tweakreg.kernel_fwhm = fwhm_pix * 2
                 im3.source_catalog.kernel_fwhm = fwhm_pix * 2
 
-                for key in self.lv3_parameter_dict.keys():
-
-                    value = parse_parameter_dict(self.lv3_parameter_dict,
-                                                 key,
-                                                 band)
-                    if value == 'VAL_NOT_FOUND':
-                        continue
-
-                    recursive_setattr(im3, key, value)
-
+                im3 = attribute_setter(im3, self.lv3_parameter_dict, band)
+                
                 if self.degroup_short_nircam:
 
                     # Make sure we skip tweakreg since we've already done it
@@ -1728,7 +1749,6 @@ class JWSTReprocess:
                     if degroup:
                         for i, model in enumerate(asn_file._models):
                             model.meta.observation.exposure_number = str(i)
-
                 # Run the level 3 pipeline
                 im3.run(asn_file)
 
@@ -1752,6 +1772,7 @@ class JWSTReprocess:
 
         if len(jwst_files) == 0:
             raise Warning('No files found to align!')
+
 
         if self.astrometric_alignment_type == 'image':
             if not self.astrometric_alignment_image:
@@ -1839,10 +1860,11 @@ class JWSTReprocess:
 
                 source_cat_name = jwst_file.replace('i2d.fits', 'cat.ecsv')
                 sources = Table.read(source_cat_name, format='ascii.ecsv')
+                # convenience for CARTA viewing.
+                sources.write(source_cat_name.replace('.ecsv','.fits'), overwrite=True)
 
                 # Filter out extended
                 sources = sources[~sources['is_extended']]
-
                 # Filter based on roundness and sharpness
                 # sources = sources[np.logical_and(sources['sharpness'] >= 0.2,
                 #                                  sources['sharpness'] <= 1.0)]
@@ -1899,8 +1921,8 @@ class JWSTReprocess:
 
                 # Catch if there's only RA/Dec in the reference table
                 if 'xcentroid' in ref_tab.colnames:
-                    aligned_tab['xcentroid_ref'] = ref_tab[ref_idx]['xcentroid']
-                    aligned_tab['ycentroid_ref'] = ref_tab[ref_idx]['ycentroid']
+                    aligned_tab['xcentroid_ref'] = ref_tab[ref_idx]['xcentroid'][fit_mask]
+                    aligned_tab['ycentroid_ref'] = ref_tab[ref_idx]['ycentroid'][fit_mask]
                 aligned_tab['ra_ref'] = ref_tab[ref_idx]['RA'][fit_mask]
                 aligned_tab['dec_ref'] = ref_tab[ref_idx]['DEC'][fit_mask]
 
@@ -1961,11 +1983,15 @@ class JWSTReprocess:
                                     '%s_%s_lv3_%s_i2d_align.fits' % (self.galaxy, ref_band_type, ref_band.lower()))
 
         if not os.path.exists(ref_hdu_name):
-            raise Warning('reference HDU to align not found!')
+            self.logger.warning('reference HDU to align not found. Will just rename files')
 
         for jwst_file in jwst_files:
 
             aligned_file = jwst_file.replace('.fits', '_align.fits')
+
+            if not os.path.exists(ref_hdu_name):
+                if not os.path.exists(aligned_file) or self.overwrite_astrometric_alignment:
+                    os.system('cp %s %s' % (jwst_file, aligned_file))
 
             if not os.path.exists(aligned_file) or self.overwrite_astrometric_alignment:
                 ref_hdu = fits.open(ref_hdu_name)

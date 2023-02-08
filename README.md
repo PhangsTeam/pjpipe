@@ -1,6 +1,27 @@
 # jwst_scripts
 PHANGS-JWST processing scripts
 
+## Quickstart
+
+The pipeline is designed to be run inside a python environment that can run the [JWST pipeline](https://jwst-pipeline.readthedocs.io/en/latest/).  This Quickstart assumes a conda environment.
+
+1. [Install and activate](https://jwst-pipeline.readthedocs.io/en/latest/getting_started/install.html) a `jwst-pipeline` conda environment.
+2. Clone the `jwst_scripts` directory in to a `/path/`
+3. Edit the `/path/config/local.toml` script to indicate where you want JWST processing to occur on your system.
+4. Edit the `/path/config/config.toml` to reflect the galaxies you want to update.  The default will process NGC 1385.
+5. Download the data from STScI.
+```
+python /path/download_phangs_jwst.py /path/config/config.toml
+```
+6a. Run the pipeline from the system command line:
+```
+python /path/run_jwst_reprocessing.py /path/config/config.toml
+```
+6b. If running inside an ipython shell, the script will load `/path/config/config.toml` automatically.
+
+
+The resulting images will be stored in the working directory stored in your `working` directory defined in the `local.toml` file.
+
 ## Query/Download tools
 
 * `archive_download` is a generic wrapper around Astroquery MAST query/download
@@ -38,3 +59,9 @@ PHANGS-JWST processing scripts
 
 ## Alignment files
 * the `alignment/` directory contains .fits tables to provide absolute astrometric corrections
+
+## Config files
+* We use TOML files to simplify the interface between the processing parameters and the pipeline itself. The parameters
+   we use for the PHANGS-JWST reduction are in the `config/` directory, but may need to be edited somewhat for other
+   programs. The pipeline stage-specific parameters are given on the JWST pipeline readthedocs
+   (https://jwst-pipeline.readthedocs.io/en/latest/jwst/pipeline/main.html#pipelines).
