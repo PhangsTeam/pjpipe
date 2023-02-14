@@ -29,6 +29,8 @@ from tweakwcs.correctors import FITSWCSCorrector, JWSTWCSCorrector
 
 from nircam_destriping import NircamDestriper
 
+import pyregion
+
 jwst = None
 datamodels = None
 update_fits_wcsinfo = None
@@ -352,6 +354,7 @@ class JWSTReprocess:
                  astrometric_alignment_image=None,
                  astrometric_alignment_table=None,
                  alignment_mapping=None,
+                 alignment_masking=None,
                  wcs_adjust_dict=None,
                  correct_lv1_wcs=False,
                  crds_url='https://jwst-crds.stsci.edu',
@@ -405,6 +408,9 @@ class JWSTReprocess:
             * astrometric_alignment_table (str): Path to table to align astrometry to
             * alignment_mapping (dict): Dictionary to map basing alignments off cross-correlation with other aligned
                 band. Should be of the form {'band': 'reference_band'}
+            * alignment_masking (dict): Dictionary to defining the masking of the pixels before cross-corellation
+                at the alignment stage,
+                e.g. {'use_ds9_masks': True, 'masks_dir': 'masks', 'vmin': 0, 'vmax: 100, 'min_sn': 25}
             * wcs_adjust_dict (dict): dict to adjust image group WCS before tweakreg step. Should be of form
                 {filter: {'group': {'matrix': [[1, 0], [0, 1]], 'shift': [dx, dy]}}}. Defaults to None.
             * correct_lv1_wcs (bool): Check WCS in uncal files, since there is a bug that some don't have this populated
@@ -454,6 +460,10 @@ class JWSTReprocess:
         if alignment_mapping is None:
             alignment_mapping = {}
         self.alignment_mapping = alignment_mapping
+
+        if alignment_masking is None:
+            alignment_masking = {}
+        self.alignment_masking = alignment_masking
 
         if wcs_adjust_dict is None:
             wcs_adjust_dict = {}
@@ -1813,19 +1823,31 @@ class JWSTReprocess:
                 nan_idx = np.logical_or(np.isnan(ref_data),
                                         np.isnan(jwst_data))
 
+                if self.alignment_masking.get('use_ds9_masks'):
+                    self.logger.info("Masking some pixels before the alignment to another JWST band")
+                    if 'masks_dir' in self.alignment_masking:
+                        file_mask = os.path.join(self.reprocess_dir, self.alignment_masking['masks_dir'],
+                                                 self.target + '.reg')
+                        if os.path.isfile(file_mask):
+                            ds9mask = pyregion.open(file_mask)
+                            mask = ds9mask.get_mask(jwst_hdu['SCI'])
+                            nan_idx = np.logical_or(nan_idx, mask)
+
+                if self.alignment_masking.get('min_sn') and np.isfinite(self.alignment_masking.get('min_sn')):
+                    nan_idx = np.logical_or(nan_idx,
+                                            (np.abs(jwst_data / jwst_err) < self.alignment_masking['min_sn']) |
+                                            (np.abs(ref_data / ref_err) < self.alignment_masking['min_sn']))
+
+                if self.alignment_masking.get('vmin') and np.isfinite(self.alignment_masking.get('vmin')):
+                    nan_idx = np.logical_or(nan_idx, jwst_data < self.alignment_masking['vmin'])
+                    nan_idx = np.logical_or(nan_idx, ref_data < self.alignment_masking['vmin'])
+
+                if self.alignment_masking.get('vmax') and np.isfinite(self.alignment_masking.get('vmax')):
+                    nan_idx = np.logical_or(nan_idx, jwst_data > self.alignment_masking['vmax'])
+                    nan_idx = np.logical_or(nan_idx, ref_data > self.alignment_masking['vmax'])
+
                 ref_data[nan_idx] = np.nan
                 jwst_data[nan_idx] = np.nan
-
-                # ref_data[:,520:920] = np.nan
-                # jwst_data[:, 520:920] = np.nan
-                # ref_err[:, 520:920] = np.nan
-                # jwst_err[:, 520:920] = np.nan
-                #
-                # ref_err[(ref_data > 100) | (ref_data<-0.1)] = np.nan
-                # jwst_err[(jwst_data > 100) | (jwst_data<-0.1)] = np.nan
-                # jwst_data[(jwst_data>100) | (jwst_data<-0.1)] = np.nan
-                # ref_data[(ref_data > 100) | (ref_data<-0.1)] = np.nan
-
                 ref_err[nan_idx] = np.nan
                 jwst_err[nan_idx] = np.nan
 

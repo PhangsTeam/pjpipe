@@ -91,6 +91,7 @@ for prop_id in prop_ids:
                                astrometric_alignment_type='table',
                                astrometric_alignment_table=alignment_table,
                                alignment_mapping=alignment_mapping,
+                               alignment_masking=config['alignment_masking'],
                                procs=processors,
                                updated_flats_dir=updated_flats_dir,
                                # process_bgr_like_science=False,

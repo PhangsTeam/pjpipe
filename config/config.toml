@@ -93,6 +93,13 @@ F1000W = 'F770W'
 F1130W = 'F1000W'
 F2100W = 'F1130W'
 
+[alignment_masking]
+use_ds9_masks = true  # if true, then the areas defined by ds9 region file will be masked before the alignment
+masks_dir = 'masks'  # name of the directory where .reg files are stored, relative to working directory (galname.reg)
+vmin = nan  # minimal brightness of the pixels be considered for cross-correlation
+vmax = nan  # maximal brightness of the pixels be considered for cross-correlation
+min_sn = 25  # minimal signal-to-noise of the pixels be considered for cross-correlation
+
 [lv1_parameters]
 save_results = true
 ramp_fit.suppress_one_group = false
