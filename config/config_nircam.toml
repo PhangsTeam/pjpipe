@@ -153,7 +153,7 @@ npixels = 5
 bkg_boxsize = 100
 deblend = true
 
-[tpmatch]
+[astrometry_parameters]
 searchrad = 10
 separation = 0.000001
 tolerance = 0.7

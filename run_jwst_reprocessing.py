@@ -41,6 +41,10 @@ if updated_flats_dir == '':
 # the start of another version cycle
 flush_crds = config['pipeline']['flush_crds']
 
+processors = local['local']['processors']
+if processors == '':
+    processors = None
+
 if 'pmap' in config['pipeline']['crds_context']:
     os.environ['CRDS_CONTEXT'] = config['pipeline']['crds_context']
 
@@ -58,9 +62,9 @@ reprocess_dir += '_%s' % reprocess_dir_ext
 prop_ids = config['projects']
 for prop_id in prop_ids:
     targets = config['projects'][prop_id]['targets']
-    for galaxy in targets:
+    for target in targets:
 
-        alignment_table_name = config['alignment'][galaxy]
+        alignment_table_name = config['alignment'][target]
         alignment_table = os.path.join(script_dir,
                                        'alignment',
                                        alignment_table_name)
@@ -71,40 +75,26 @@ for prop_id in prop_ids:
         cur_field = config['pipeline']['lev3_fields']
         if cur_field == []:
             cur_field = None
-        reproc = JWSTReprocess(galaxy=galaxy,
+
+        reproc = JWSTReprocess(target=target,
                                raw_dir=raw_dir,
                                reprocess_dir=reprocess_dir,
                                crds_dir=crds_dir,
-                               astrometric_alignment_dict=config['alignment'],
-                               astrometric_alignment_table=alignment_table,
-                               alignment_mapping=alignment_mapping,
                                bands=bands,
-                               do_all=True,
-                               do_lv1=config['pipeline']['lv1'],
-                               do_lv2=config['pipeline']['lv2'],
-                               do_lv3=config['pipeline']['lv3'],
-                               procs=local['local']['processors'],
-                               overwrite_all=config['overwrite']['all'],
-                               overwrite_lv1=config['overwrite']['lv1'],
-                               overwrite_lv2=config['overwrite']['lv2'],
-                               overwrite_lyot_adjust=config['overwrite']['lyot_adjust'],
-                               overwrite_lv3=config['overwrite']['lv3'],
-                               overwrite_astrometric_alignment=config['overwrite']['astrometric_alignment'],
-                               overwrite_astrometric_ref_cat=config['overwrite']['astrometric_ref_cat'],
+                               steps=config['pipeline']['steps'],
+                               overwrites=config['pipeline']['overwrites'],
                                lv1_parameter_dict=config['lv1_parameters'],
                                lv2_parameter_dict=config['lv2_parameters'],
                                lv3_parameter_dict=config['lv3_parameters'],
+                               astrometry_parameter_dict=config['astrometry_parameters'],
+                               lyot_method=config['pipeline']['lyot_method'],
+                               astrometric_alignment_type='table',
+                               astrometric_alignment_table=alignment_table,
+                               alignment_mapping=alignment_mapping,
+                               procs=processors,
                                updated_flats_dir=updated_flats_dir,
-                               do_lyot_adjust=config['pipeline']['lyot_adjust'],
-                               tpmatch_searchrad=config['tpmatch']['searchrad'],
-                               tpmatch_separation=config['tpmatch']['separation'],
-                               tpmatch_tolerance=config['tpmatch']['tolerance'],
-                               tpmatch_use2dhist=config['tpmatch']['use2dhist'],
-                               tpmatch_fitgeom=config['tpmatch']['fitgeom'],
-                               tpmatch_nclip=config['tpmatch']['nclip'],
-                               tpmatch_sigma=config['tpmatch']['sigma'],
                                # process_bgr_like_science=False,
-                               use_field_in_lev3=cur_field
+                               use_field_in_lev3=cur_field,
                                )
         reproc.run_all()
 
