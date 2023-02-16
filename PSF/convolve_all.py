@@ -56,11 +56,11 @@ def _make_fake(image, size=1000):
     small =image[ceny-size:ceny+size, cenx-size:cenx+size]
     return(small)
 
-nircam_pixel_scale = 0.0630
-miri_pixel_scale = 0.110
+# nircam_pixel_scale = 0.0630
+# miri_pixel_scale = 0.110
 # %%
 
-# these get_miri and get_nircam utility functions are macine dependant
+# these get_miri and get_nircam utility functions are machine dependant
 #, I did not have time to figure out 
 # where the files are saved on astronodes or the folder structure generated
 # by the pipeline
@@ -79,7 +79,7 @@ def get_miri(gal_name, band):
     miri = get_miri_hdu(gal_name, band)
     image=miri[0].data
     header = miri[0].header
-    
+    # the errors are saved in a separate file for the DR1 (letter-version) reductions
     error = fits.open('/Volumes/fbdata2/DATA/PHANGS/JWST/MIRI_'+VERSION+'/'+gal_name+'/'+
                       gal_name.lower()+'_miri_'+band+'_noisemap.fits')[0].data
     return(image, error, header)
@@ -135,7 +135,7 @@ all_PSFs = nircam_psfs+ miri_psfs_n
 all_cameras = ['NIRCam']*len(nircam_psfs) + ['MIRI']*len(miri_psfs_n)      
 
 
-
+# %%
 
 for ii in range(len(all_PSFs)):
         print( all_cameras[ii], all_PSFs[ii], ' to F2100W')
@@ -167,11 +167,13 @@ for ii in range(len(all_PSFs)):
                                                         target_filter['filter'])
             kernel = fits.open(kernel_name)
             kernel = resample(kernel[0].data, get_pixscale(kernel[0]), input_pixscale)
+            # need to normalise the kernel to get the correct maths when convolving the errors with ker**2
+            kernel = kernel/np.sum(kernel)
             print(kernel.shape,input_pixscale)
             print('convolving data')
-            target_conv = convolve(_make_fake(image), kernel, preserve_nan=True, fill_value=np.nan)
+            target_conv = convolve(image, kernel, preserve_nan=True, fill_value=np.nan)
             print('convolving  error')
-            target_err_conv = np.sqrt(convolve(_make_fake(error)**2, kernel**2, 
+            target_err_conv = np.sqrt(convolve(error**2, kernel**2, 
                         preserve_nan=True, boundary=None, normalize_kernel=False))
             #target_err_conv = target_conv+np.nan
             
@@ -193,9 +195,14 @@ for ii in range(len(all_PSFs)):
 
 all_PSFs = nircam_psfs+ miri_psfs
 all_cameras = ['NIRCam']*len(nircam_psfs) + ['MIRI']*len(miri_psfs)
-
 galaxies_nircam =['NGC0628', 'NGC1365', 'NGC7496']
 galaxies_miri =['NGC0628', 'NGC1365', 'NGC7496', 'IC5332']
+
+# debugging
+# all_PSFs = [all_PSFs[0]]
+# all_cameras = [all_cameras[0]]
+# galaxies_nircam = galaxies_nircam[1:3]
+
 
 for ii in range(len(all_PSFs)):
         print( all_cameras[ii], all_PSFs[ii], ' to copt')
@@ -214,8 +221,8 @@ for ii in range(len(all_PSFs)):
             target_gaussian = {'fwhm':copt_psf}
          
             band = input_filter['filter']
-            print(gal_name, band)
-            
+            print(gal_name, band, copt_psf)
+
             # get the images
             if input_filter['camera']=='NIRCam': 
                 image, error, header = get_nircam(gal_name, band)
@@ -223,14 +230,18 @@ for ii in range(len(all_PSFs)):
                 image, error, header = get_miri(gal_name, band)
             
             input_pixscale = get_pixscale(header)
-        
-            
+            print(input_pixscale)
+
             print('kernel reading')
             kernel_name = kernel_dir+'%s_to_%s.fits' % (input_filter['filter'], 
                                                         'Gauss_{:.3f}'.format(target_gaussian['fwhm']))
             kernel = fits.open(kernel_name)
+            print(get_pixscale(kernel[0]))
             kernel = resample(kernel[0].data, get_pixscale(kernel[0]), input_pixscale)
+            # need to normalise the kernel to get the correct maths when convolving the errors with ker**2
+            kernel = kernel/np.sum(kernel)
             print(kernel.shape,input_pixscale)
+
             print('convolving data')
             target_conv = convolve(image, kernel, preserve_nan=True, fill_value=np.nan)
             print('convolving  error')
@@ -299,4 +310,64 @@ for ii in range(len(all_PSFs)):
         
         
 #         file_name = data_dir+gal_name.lower()+'_'+band.upper()+'_'+VERSION+target_name+'TEST.fits'
-#         hdul.writeto(file_name, overwrite=True)
+        # hdul.writeto(file_name, overwrite=True)
+        
+# %%
+
+# all_PSFs = nircam_psfs+ miri_psfs
+# all_cameras = ['NIRCam']*len(nircam_psfs) + ['MIRI']*len(miri_psfs)
+# galaxies_nircam =['NGC0628', 'NGC1365', 'NGC7496']
+# galaxies_miri =['NGC0628', 'NGC1365', 'NGC7496', 'IC5332']
+
+# # debugging
+# # all_PSFs = [all_PSFs[0]]
+# # all_cameras = [all_cameras[0]]
+# # galaxies_nircam = galaxies_nircam[1:3]
+
+
+# for ii in range(len(all_PSFs)):
+#         print( all_cameras[ii], all_PSFs[ii], ' to copt')
+        
+#         input_filter = {'camera':all_cameras[ii], 'filter':all_PSFs[ii]}
+        
+#         if input_filter['camera']=='NIRCam': 
+#             galaxies_iterate =galaxies_nircam
+#         elif input_filter['camera']=='MIRI': 
+#             galaxies_iterate =galaxies_miri
+            
+#         #loop over galaxies
+#         for gal_name in galaxies_iterate:
+            
+#             copt_psf =  get_copt_fwhm(gal_name)
+#             target_gaussian = {'fwhm':copt_psf}
+         
+#             band = input_filter['filter']
+     
+
+#             # get the images
+#             if input_filter['camera']=='NIRCam': 
+#                 image, error, header = get_nircam(gal_name, band)
+#             elif input_filter['camera']=='MIRI': 
+#                 image, error, header = get_miri(gal_name, band)
+            
+#             input_pixscale = get_pixscale(header)
+ 
+
+  
+#             kernel_name = kernel_dir+'%s_to_%s.fits' % (input_filter['filter'], 
+#                                                         'Gauss_{:.3f}'.format(target_gaussian['fwhm']))
+#             kernel = fits.open(kernel_name)
+
+#             kernel = resample(kernel[0].data, get_pixscale(kernel[0]), input_pixscale)
+#             print(np.sum(kernel))
+#             # kernel=kernel/np.sum(kernel)
+            
+#             file_name = data_dir+gal_name.lower()+'_'+band.upper()+\
+#                 '_convolvedto_'+'Gauss_{:.3f}'.format(target_gaussian['fwhm'])+'.fits'
+                
+#             hdu = fits.open(file_name)
+#             hdu['ERR'].data = hdu['ERR'].data/np.sum(kernel)
+            
+#             # file_name2 = data_dir+gal_name.lower()+'_'+band.upper()+\
+#             #     '_convolvedto_'+'Gauss_{:.3f}'.format(target_gaussian['fwhm'])+'_errcorr.fits'
+#             hdu.writeto(file_name, overwrite=True)
