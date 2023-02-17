@@ -22,6 +22,8 @@ my_input_root = '../working_data/matched_res/'
 plot_dir = '../plots/background_plots/'
 external_comp_dir = '../orig_data/background_comps/'
 
+results_dict = []
+
 for this_gal in gal_names:
 
     print("Background comparisons for: ", this_gal)
@@ -59,6 +61,9 @@ for this_gal in gal_names:
             make_plot=True, plot_fname=this_plot_fname,
             label_str=this_gal+'\n'+comp_filt+' vs. '+ref_filt)
 
+        results_dict.append({'galaxy':this_gal,'ref_filt':ref_filt,'comp_filt':comp_filt,
+                             'slope':slope,'intercept':intercept})
+        
     # ------------------------------------------------------------
     # MIRI vs External
     # ------------------------------------------------------------
@@ -97,6 +102,9 @@ for this_gal in gal_names:
             make_plot=True, plot_fname=this_plot_fname,
             label_str=this_gal+'\n'+comp_filt+' vs. '+ref_filt)
 
+        results_dict.append({'galaxy':this_gal,'ref_filt':ref_filt,'comp_filt':comp_filt,
+                             'slope':slope,'intercept':intercept})
+
     ref_filt = 'F770W'
     ref_file_name = my_input_root + this_gal + '_'+ref_filt+'_atGauss15.fits'
     
@@ -130,6 +138,9 @@ for this_gal in gal_names:
             make_plot=True, plot_fname=this_plot_fname,
             label_str=this_gal+'\n'+comp_filt+' vs. '+ref_filt)
 
+        results_dict.append({'galaxy':this_gal,'ref_filt':ref_filt,'comp_filt':comp_filt,
+                             'slope':slope,'intercept':intercept})
+        
     # ------------------------------------------------------------        
     # NIRCAM vs NIRCAM
     # ------------------------------------------------------------    
@@ -163,6 +174,9 @@ for this_gal in gal_names:
             make_plot=True, plot_fname=this_plot_fname,
             label_str=this_gal+'\n'+comp_filt+' vs. '+ref_filt)
 
+        results_dict.append({'galaxy':this_gal,'ref_filt':ref_filt,'comp_filt':comp_filt,
+                             'slope':slope,'intercept':intercept})
+        
     # ------------------------------------------------------------        
     # NIRCAM vs External
     # ------------------------------------------------------------    
@@ -200,4 +214,9 @@ for this_gal in gal_names:
             xmin=0.25, xmax=2.0, binsize=0.1,
             make_plot=True, plot_fname=this_plot_fname,
             label_str=this_gal+'\n'+comp_filt+' vs. '+ref_filt)
-    
+
+        results_dict.append({'galaxy':this_gal,'ref_filt':ref_filt,'comp_filt':comp_filt,
+                             'slope':slope,'intercept':intercept})
+
+comp_table = Table(results_dict)
+comp_table.write('band_comps.ecsv', overwrite=True)
