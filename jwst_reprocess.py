@@ -42,6 +42,7 @@ ALLOWED_STEPS = [
     'lv1',
     'lv2',
     'destripe',
+    'bg_sub',
     'lyot_adjust',
     'wcs_adjust',
     'lv3',
@@ -193,6 +194,27 @@ def parallel_destripe(hdu_name,
             nc_destripe.run_destriping()
 
     return True
+
+
+def sigma_clip(data, sigma=3, n_pixels=5, max_iterations=20):
+    """Get sigma-clipped statistics for data"""
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        mask = make_source_mask(data, nsigma=sigma, npixels=n_pixels)
+        mean, median, std_dev = sigma_clipped_stats(data, mask=mask, sigma=sigma, maxiters=max_iterations)
+
+    return mean, median, std_dev
+
+
+def background_subtract(hdu_filename):
+    """Sigma-clipped background subtraction for fits HDU"""
+
+    hdu = fits.open(hdu_filename)
+    mean, median, std = sigma_clip(hdu['SCI'].data)
+    hdu['SCI'].data -= median
+
+    return hdu
 
 
 def parse_fits_to_table(file,
@@ -615,6 +637,7 @@ class JWSTReprocess:
             'lv1': 'uncal',
             'lv2': 'rate',
             'destripe': 'cal',
+            'bg_sub': 'cal',
             'lyot_adjust': 'cal',
             'wcs_adjust': 'cal',
             'lv3': 'cal',
@@ -625,6 +648,7 @@ class JWSTReprocess:
             'lv1': 'rate',
             'lv2': 'cal',
             'destripe': 'destripe',
+            'bg_sub': 'bg_sub',
             'lyot_adjust': 'lyot_adjust',
             'wcs_adjust': 'wcs_adjust',
             'lv3': 'lv3',
@@ -635,6 +659,7 @@ class JWSTReprocess:
             'lv1': 'uncal',
             'lv2': 'rate',
             'destripe': 'cal',
+            'bg_sub': 'cal',
             'lyot_adjust': 'cal',
             'wcs_adjust': 'cal',
             'lv3': 'i2d',
@@ -858,6 +883,31 @@ class JWSTReprocess:
                     self.wcs_adjust(input_dir=in_band_dir,
                                     output_dir=out_band_dir,
                                     band=band)
+
+                elif step == 'bg_sub':
+
+                    cal_files = glob.glob(os.path.join(in_band_dir,
+                                                       '*_%s.fits' % step_ext)
+                                          )
+
+                    cal_files.sort()
+
+                    if not os.path.exists(out_band_dir):
+                        os.makedirs(out_band_dir)
+
+                    if len(cal_files) == 0:
+                        self.logger.warning('-> No files found. Skipping')
+                        shutil.rmtree(base_band_dir)
+                        continue
+
+                    for hdu_in_name in cal_files:
+
+                        hdu = background_subtract(hdu_in_name)
+
+                        hdu_out_name = os.path.join(out_band_dir, hdu_in_name.split(os.path.sep)[-1])
+                        hdu.writeto(hdu_out_name, overwrite=True)
+
+                        hdu.close()
 
                 elif step == 'lv3':
 

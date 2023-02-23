@@ -34,6 +34,7 @@ class NircamDestriper:
                  hdu_out_name=None,
                  quadrants=True,
                  destriping_method='row_median',
+                 use_sigma_clip=False,
                  sigma=3,
                  npixels=3,
                  dilate_size=11,
@@ -108,6 +109,7 @@ class NircamDestriper:
             median_filter_scales = [3, 7, 15, 31, 63, 127]
         self.median_filter_scales = median_filter_scales
 
+        self.use_sigma_clip = use_sigma_clip
         self.sigma = sigma
         self.npixels = npixels
         self.max_iters = max_iters
@@ -167,8 +169,9 @@ class NircamDestriper:
 
         self.hdu['SCI'].data[zero_idx] = np.nan
 
-        if not self.is_subarray:
-            self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data)
+        self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data,
+                                               use_sigma_clip=self.use_sigma_clip,
+                                               )
 
         mask = make_source_mask(self.hdu['SCI'].data,
                                 nsigma=self.sigma,
@@ -491,15 +494,17 @@ class NircamDestriper:
         zero_idx = np.where(self.hdu['SCI'].data == 0)
         self.hdu['SCI'].data[zero_idx] = np.nan
 
-        if not self.is_subarray:
-            self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data)
+        self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data,
+                                               use_sigma_clip=self.use_sigma_clip)
 
         mask = make_source_mask(self.hdu['SCI'].data,
                                 nsigma=self.sigma,
                                 npixels=self.npixels,
                                 dilate_size=self.dilate_size,
                                 )
-        mask = mask | ~np.isfinite(self.hdu['SCI'].data)
+
+        dq_mask = ~np.isfinite(self.hdu['SCI'].data) | (self.hdu['SCI'].data == 0) | (self.hdu['DQ'].data != 0)
+        mask = mask | dq_mask
 
         full_noise_model = np.zeros_like(self.hdu['SCI'].data)
 
@@ -548,8 +553,8 @@ class NircamDestriper:
         zero_idx = np.where(self.hdu['SCI'].data == 0)
         self.hdu['SCI'].data[zero_idx] = np.nan
 
-        if not self.is_subarray:
-            self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data)
+        self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data,
+                                               use_sigma_clip=self.use_sigma_clip)
 
         full_noise_model = np.zeros_like(self.hdu['SCI'].data)
 
@@ -560,7 +565,8 @@ class NircamDestriper:
                                     npixels=self.npixels,
                                     dilate_size=self.dilate_size,
                                     )
-            mask = mask | ~np.isfinite(self.hdu['SCI'].data)
+            dq_mask = ~np.isfinite(self.hdu['SCI'].data) | (self.hdu['SCI'].data == 0) | (self.hdu['DQ'].data != 0)
+            mask = mask | dq_mask
 
         if self.quadrants:
 
@@ -636,7 +642,7 @@ class NircamDestriper:
 
     def level_data(self,
                    data,
-                   use_sigma_clipping=False,
+                   use_sigma_clip=False,
                    ):
         """Level overlaps in NIRCAM amplifiers"""
 
@@ -651,18 +657,20 @@ class NircamDestriper:
 
         for i in range(3):
 
-            if use_sigma_clipping:
-                med_1 = sigma_clipped_stats(data[:, i * quadrant_size: (i + 1) * quadrant_size],
-                                            mask=mask[:, i * quadrant_size: (i + 1) * quadrant_size],
-                                            sigma=self.sigma,
-                                            maxiters=self.max_iters,
-                                            )[1]
+            if use_sigma_clip:
+                med_1 = sigma_clipped_stats(
+                    data[:, i * quadrant_size: (i + 1) * quadrant_size][:, quadrant_size - 20:],
+                    mask=mask[:, i * quadrant_size: (i + 1) * quadrant_size][:, quadrant_size - 20:],
+                    sigma=self.sigma,
+                    maxiters=self.max_iters,
+                )[1]
 
-                med_2 = sigma_clipped_stats(data[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size],
-                                            mask=mask[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size],
-                                            sigma=self.sigma,
-                                            maxiters=self.max_iters,
-                                            )[1]
+                med_2 = sigma_clipped_stats(
+                    data[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size][:, 0:20],
+                    mask=mask[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size][:, 0:20],
+                    sigma=self.sigma,
+                    maxiters=self.max_iters,
+                )[1]
 
                 data[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size] += med_1 - med_2
 
