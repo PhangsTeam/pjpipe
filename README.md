@@ -3,7 +3,11 @@ PHANGS-JWST processing scripts
 
 ## Quickstart
 
-The pipeline is designed to be run inside a python environment that can run the [JWST pipeline](https://jwst-pipeline.readthedocs.io/en/latest/).  This Quickstart assumes a conda environment.
+The pipeline is designed to be run inside a python environment that can run the [JWST pipeline](https://jwst-pipeline.readthedocs.io/en/latest/).  
+This Quickstart assumes a conda environment.
+
+N.B. The pipeline is built to run with the latest GitHub version of the JWST pipeline. It may run in older versions,
+but is likely to throw up error messages.
 
 1. [Install and activate](https://jwst-pipeline.readthedocs.io/en/latest/getting_started/install.html) a `jwst-pipeline` conda environment.
 2. Clone the `jwst_scripts` directory in to a `/path/`

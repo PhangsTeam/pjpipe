@@ -13,6 +13,7 @@ from functools import partial
 from multiprocessing import cpu_count
 
 import numpy as np
+import tweakwcs
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from astropy.table import Table, QTable
@@ -24,7 +25,7 @@ from reproject import reproject_interp
 from stwcs.wcsutil import HSTWCS
 from threadpoolctl import threadpool_limits
 from tqdm import tqdm
-from tweakwcs import fit_wcs, XYXYMatch, FITSWCS
+from tweakwcs import fit_wcs, XYXYMatch
 from tweakwcs.correctors import FITSWCSCorrector, JWSTWCSCorrector
 
 from nircam_destriping import NircamDestriper
@@ -1159,7 +1160,8 @@ class JWSTReprocess:
             try:
                 update_fits_wcsinfo(
                     input_im,
-                    max_pix_error=0.05
+                    max_pix_error=0.01,
+                    npoints=16,
                 )
             except (ValueError, RuntimeError) as e:
                 self.logger.warning(
@@ -1699,16 +1701,29 @@ class JWSTReprocess:
                 wcs_jwst_corrector = FITSWCSCorrector(wcs_jwst)
 
                 jwst_tab = Table()
+
+                # Factors of 3600 to get into arcsec
+                jwst_tab['TPx'] = sources['sky_centroid'].ra.value * 3600
+                jwst_tab['TPy'] = sources['sky_centroid'].dec.value * 3600
+
+                # RA/Dec should be TPx/TPy
+                if 'TPx' not in ref_tab.colnames:
+                    ref_tab['TPx'] = ref_tab['RA'] * 3600
+                if 'TPy' not in ref_tab.colnames:
+                    ref_tab['TPy'] = ref_tab['DEC'] * 3600
+
+                # We'll also need x and y for later
                 jwst_tab['x'] = sources['xcentroid']
                 jwst_tab['y'] = sources['ycentroid']
+
                 jwst_tab['ra'] = sources['sky_centroid'].ra.value
                 jwst_tab['dec'] = sources['sky_centroid'].dec.value
 
                 # Run a match
                 match = XYXYMatch()
-                attribute_setter(match, self.astrometry_parameter_dict, band)
+                match = attribute_setter(match, self.astrometry_parameter_dict, band)
 
-                ref_idx, jwst_idx = match(ref_tab, jwst_tab, wcs_jwst_corrector)
+                ref_idx, jwst_idx = match(ref_tab, jwst_tab, tp_units='arcsec')
 
                 fit_wcs_args = get_default_args(fit_wcs)
 
@@ -1727,9 +1742,9 @@ class JWSTReprocess:
                     fit_wcs_kws[fit_wcs_arg] = arg_val
 
                 # Do alignment
-                wcs_aligned_fit = fit_wcs(ref_tab[ref_idx],
-                                          jwst_tab[jwst_idx],
-                                          wcs_jwst_corrector,
+                wcs_aligned_fit = fit_wcs(refcat=ref_tab[ref_idx],
+                                          imcat=jwst_tab[jwst_idx],
+                                          corrector=wcs_jwst_corrector,
                                           **fit_wcs_kws,
                                           )
 
@@ -1745,6 +1760,57 @@ class JWSTReprocess:
                                      wcs_aligned,
                                      wcsname='TWEAK',
                                      reusename=True)
+
+                # Also apply this to each individual crf file
+
+                matrix = wcs_aligned_fit.meta['fit_info']['matrix']
+                shift = wcs_aligned_fit.meta['fit_info']['shift']
+                crf_files = glob.glob(os.path.join(input_dir,
+                                                   '*_crf.fits')
+                                      )
+
+                crf_files.sort()
+
+                for crf_file in tqdm(crf_files, ascii=True, desc='tweakback'):
+                    crf_input_im = datamodels.open(crf_file)
+                    model_name = os.path.splitext(crf_input_im.meta.filename)[0].strip('_- ')
+                    refang = crf_input_im.meta.wcsinfo.instance
+
+                    crf_im = JWSTWCSCorrector(
+                        wcs=crf_input_im.meta.wcs,
+                        wcsinfo={
+                            'roll_ref': refang['roll_ref'],
+                            'v2_ref': refang['v2_ref'],
+                            'v3_ref': refang['v3_ref']
+                        },
+                        meta={
+                            'image_model': crf_input_im,
+                            'name': model_name
+                        }
+                    )
+
+                    crf_im.set_correction(matrix=matrix,
+                                          shift=shift,
+                                          ref_tpwcs=wcs_jwst_corrector,
+                                          )
+
+                    crf_input_im = crf_im.meta['image_model']
+                    crf_input_im.meta.wcs = crf_im.wcs
+
+                    try:
+                        update_fits_wcsinfo(
+                            crf_input_im,
+                            max_pix_error=0.01,
+                            npoints=16,
+                        )
+                    except (ValueError, RuntimeError) as e:
+                        self.logger.warning(
+                            "Failed to update 'meta.wcsinfo' with FITS SIP "
+                            f'approximation. Reported error is:\n"{e.args[0]}"'
+                        )
+
+                    crf_out_file = crf_file.replace('.fits', '_tweakback.fits')
+                    crf_input_im.save(crf_out_file)
 
                 fit_info = wcs_aligned_fit.meta['fit_info']
                 fit_mask = fit_info['fitmask']
@@ -1835,7 +1901,7 @@ class JWSTReprocess:
                 jwst_hdu = fits.open(jwst_file)
 
                 wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
-                wcs_jwst_corrector = FITSWCS(wcs_jwst)
+                wcs_jwst_corrector = FITSWCSCorrector(wcs_jwst)
 
                 ref_data = copy.deepcopy(ref_hdu['SCI'].data)
                 jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
@@ -1904,6 +1970,54 @@ class JWSTReprocess:
                                      wcs_aligned,
                                      wcsname='TWEAK',
                                      reusename=True)
+
+                # Also apply this to each individual crf file
+
+                crf_files = glob.glob(os.path.join(input_dir,
+                                                   '*_crf.fits')
+                                      )
+
+                crf_files.sort()
+
+                for crf_file in crf_files:
+                    crf_input_im = datamodels.open(crf_file)
+                    model_name = os.path.splitext(crf_input_im.meta.filename)[0].strip('_- ')
+                    refang = crf_input_im.meta.wcsinfo.instance
+
+                    crf_im = JWSTWCSCorrector(
+                        wcs=crf_input_im.meta.wcs,
+                        wcsinfo={
+                            'roll_ref': refang['roll_ref'],
+                            'v2_ref': refang['v2_ref'],
+                            'v3_ref': refang['v3_ref']
+                        },
+                        meta={
+                            'image_model': crf_input_im,
+                            'name': model_name
+                        }
+                    )
+
+                    crf_im.set_correction(shift=[-x_off, -y_off],
+                                          ref_tpwcs=wcs_jwst_corrector,
+                                          )
+
+                    crf_input_im = crf_im.meta['image_model']
+                    crf_input_im.meta.wcs = crf_im.wcs
+
+                    try:
+                        update_fits_wcsinfo(
+                            crf_input_im,
+                            max_pix_error=0.01,
+                            npoints=16,
+                        )
+                    except (ValueError, RuntimeError) as e:
+                        self.logger.warning(
+                            "Failed to update 'meta.wcsinfo' with FITS SIP "
+                            f'approximation. Reported error is:\n"{e.args[0]}"'
+                        )
+
+                    crf_out_file = crf_file.replace('.fits', '_tweakback.fits')
+                    crf_input_im.save(crf_out_file)
 
                 jwst_hdu.writeto(aligned_file, overwrite=True)
 

@@ -58,7 +58,9 @@ steps = [
     'lv3',
     'astrometric_align',
 ]
-overwrites = []
+overwrites = [
+#    'astrometric_align',
+]
 
 
 [alignment]
