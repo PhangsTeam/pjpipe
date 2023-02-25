@@ -13,13 +13,12 @@ from functools import partial
 from multiprocessing import cpu_count
 
 import numpy as np
-import tweakwcs
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from astropy.table import Table, QTable
 from drizzlepac import updatehdr
 from image_registration import cross_correlation_shifts
-from photutils import make_source_mask
+from photutils.segmentation import make_source_mask
 from photutils.detection import DAOStarFinder
 from reproject import reproject_interp
 from stwcs.wcsutil import HSTWCS
@@ -720,7 +719,10 @@ class JWSTReprocess:
 
                 # Flush if we're overwriting
                 if overwrite and step not in STEP_NO_DEL_DIR:
-                    shutil.rmtree(out_band_dir)
+                    try:
+                        shutil.rmtree(out_band_dir)
+                    except FileNotFoundError:
+                        pass
 
                 if not os.path.exists(in_band_dir):
                     os.makedirs(in_band_dir)
@@ -984,9 +986,13 @@ class JWSTReprocess:
         plot_dir = os.path.join(out_dir, 'plots')
         pca_dir = os.path.join(out_dir, 'pca')
 
-        for directory in [plot_dir, pca_dir]:
-            if not os.path.exists(directory):
-                os.makedirs(directory)
+        if not os.path.exists(plot_dir):
+            os.makedirs(plot_dir)
+
+        if 'destriping_method' in self.destripe_parameter_dict.keys():
+            if self.destripe_parameter_dict['destriping_method'] == 'pca':
+                if not os.path.exists(pca_dir):
+                    os.makedirs(pca_dir)
 
         with mp.get_context('fork').Pool(self.procs) as pool:
 

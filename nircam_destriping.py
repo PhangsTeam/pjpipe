@@ -9,7 +9,7 @@ import numpy as np
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from photutils import make_source_mask
+from photutils.segmentation import make_source_mask
 from scipy.ndimage import binary_dilation
 from scipy.ndimage import median_filter
 from scipy.stats import median_abs_deviation
@@ -135,10 +135,12 @@ class NircamDestriper:
             raise NotImplementedError('Destriping method %s not yet implemented!' % self.destriping_method)
 
         zero_idx = np.where(self.hdu['SCI'].data == 0)
+        nan_idx = np.where(np.isnan(self.hdu['SCI'].data))
 
         self.hdu['SCI'].data -= self.full_noise_model
 
         self.hdu['SCI'].data[zero_idx] = 0
+        self.hdu['SCI'].data[nan_idx] = np.nan
 
         if self.plot_dir is not None:
             self.make_destripe_plot()
@@ -164,6 +166,7 @@ class NircamDestriper:
         """
 
         zero_idx = np.where(self.hdu['SCI'].data == 0)
+        nan_idx = np.where(np.isnan(self.hdu['SCI'].data))
 
         quadrant_size = self.hdu['SCI'].data.shape[1] // 4
 
@@ -180,7 +183,10 @@ class NircamDestriper:
                                 sigclip_iters=self.max_iters,
                                 )
 
-        dq_mask = ~np.isfinite(self.hdu['SCI'].data) | (self.hdu['SCI'].data == 0) | (self.hdu['DQ'].data != 0)
+        dq_mask = ~np.isfinite(self.hdu['SCI'].data) | \
+            ~np.isfinite(self.hdu['ERR'].data) | \
+            (self.hdu['SCI'].data == 0) | \
+            (self.hdu['DQ'].data != 0)
         mask = mask | dq_mask
 
         data = copy.deepcopy(self.hdu['SCI'].data)
@@ -298,7 +304,7 @@ class NircamDestriper:
                     idx_slice = slice(i * quadrant_size - 4, (i + 1) * quadrant_size - 4)
 
                 data_quadrant = copy.deepcopy(data_train[:, idx_slice])
-                mask_quadrant = copy.deepcopy(mask_train[:, idx_slice])
+                train_mask_quadrant = copy.deepcopy(mask_train[:, idx_slice])
                 err_quadrant = copy.deepcopy(err[:, idx_slice])
 
                 norm_factor = np.abs(np.diff(np.nanpercentile(data_quadrant, [16, 84]))[0])
@@ -307,13 +313,18 @@ class NircamDestriper:
                 data_quadrant = (data_quadrant - norm_median) / norm_factor + 1
                 err_quadrant /= norm_factor
 
+                # Get NaNs out of the error map
+                quadrant_nan_idx = np.where(np.isnan(err_quadrant))
+                data_quadrant[quadrant_nan_idx] = np.nan
+                err_quadrant[quadrant_nan_idx] = 0
+
                 # Replace NaNd data with column median
                 for col in range(data_quadrant.shape[0]):
                     idx = np.where(np.isnan(data_quadrant[col, :]))
                     data_quadrant[col, idx[0]] = (data_med[col] - norm_median) / norm_factor + 1
 
-                # data_quadrant[mask_quadrant] = 0
-                err_quadrant[mask_quadrant] = 0
+                # data_quadrant[train_mask_quadrant] = 0
+                err_quadrant[train_mask_quadrant] = 0
 
                 if self.pca_file is not None:
                     pca_file = self.pca_file.replace('.pkl', '_amp_%d.pkl' % i)
@@ -326,7 +337,7 @@ class NircamDestriper:
                 else:
                     eigen_system_dict = self.fit_robust_pca(data_quadrant,
                                                             err_quadrant,
-                                                            mask_quadrant,
+                                                            train_mask_quadrant,
                                                             )
                     if pca_file is not None:
                         with open(pca_file, 'wb') as f:
@@ -335,7 +346,7 @@ class NircamDestriper:
                 noise_model = self.reconstruct_pca(eigen_system_dict,
                                                    data_quadrant,
                                                    err_quadrant,
-                                                   mask_quadrant)
+                                                   train_mask_quadrant)
 
                 noise_model = (noise_model.T - 1) * norm_factor + norm_median
                 noise_model_arr[:, idx_slice] = copy.deepcopy(noise_model)
@@ -348,12 +359,25 @@ class NircamDestriper:
             data_train[mask_train] = np.nan
             err_train = copy.deepcopy(err)
 
-            norm_mad = median_abs_deviation(data_train, axis=None, nan_policy='omit')
+            # Remove NaNs
+            train_nan_idx = np.where(np.isnan(err_train))
+            data_train[train_nan_idx] = np.nan
+            err_train[train_nan_idx] = 0
 
-            data_train = data_train / norm_mad + 1
-            err_train /= norm_mad
+            data_med = np.nanmedian(data_train, axis=1)
 
-            data_train[mask_train] = 0
+            norm_median = np.nanmedian(data_train)
+            norm_factor = median_abs_deviation(data_train, axis=None, nan_policy='omit')
+
+            data_train = (data_train - norm_median) / norm_factor + 1
+            err_train /= norm_factor
+
+            # Replace NaNd data with column median
+            for col in range(data_train.shape[0]):
+                idx = np.where(np.isnan(data_train[col, :]))
+                data_train[col, idx[0]] = (data_med[col] - norm_median) / norm_factor + 1
+
+            # data_train[mask_train] = 0
             err_train[mask_train] = 0
 
             if self.pca_file is not None and os.path.exists(self.pca_file):
@@ -373,7 +397,7 @@ class NircamDestriper:
                                                err_train,
                                                mask_train)
 
-            noise_model = (noise_model.T - 1) * norm_mad
+            noise_model = (noise_model.T - 1) * norm_factor
 
             full_noise_model = np.full_like(self.hdu['SCI'].data, np.nan)
 
@@ -418,6 +442,7 @@ class NircamDestriper:
             full_noise_model += med[:, np.newaxis]
 
         self.hdu['SCI'].data[zero_idx] = 0
+        self.hdu['SCI'].data[nan_idx] = np.nan
 
         return full_noise_model
 
@@ -492,6 +517,7 @@ class NircamDestriper:
         """Calculate sigma-clipped median for each row. From Tom Williams."""
 
         zero_idx = np.where(self.hdu['SCI'].data == 0)
+        nan_idx = np.where(np.isnan(self.hdu['SCI'].data))
         self.hdu['SCI'].data[zero_idx] = np.nan
 
         self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data,
@@ -542,6 +568,7 @@ class NircamDestriper:
             full_noise_model -= np.nanmedian(median_arr)
 
         self.hdu['SCI'].data[zero_idx] = 0
+        self.hdu['SCI'].data[nan_idx] = np.nan
 
         return full_noise_model
 
@@ -551,6 +578,7 @@ class NircamDestriper:
         """Run a series of filters over the row medians. From Mederic Boquien."""
 
         zero_idx = np.where(self.hdu['SCI'].data == 0)
+        nan_idx = np.where(np.isnan(self.hdu['SCI'].data))
         self.hdu['SCI'].data[zero_idx] = np.nan
 
         self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data,
@@ -637,6 +665,7 @@ class NircamDestriper:
                 full_noise_model += noise[:, np.newaxis]
 
         self.hdu['SCI'].data[zero_idx] = 0
+        self.hdu['SCI'].data[nan_idx] = np.nan
 
         return full_noise_model
 
@@ -687,9 +716,11 @@ class NircamDestriper:
         """Create diagnostic plot for the destriping
         """
 
+        nan_idx = np.where(np.isnan(self.hdu['SCI'].data))
         zero_idx = np.where(self.hdu['SCI'].data == 0)
         original_data = self.hdu['SCI'].data + self.full_noise_model
         original_data[zero_idx] = 0
+        original_data[nan_idx] = np.nan
 
         plot_name = os.path.join(self.plot_dir,
                                  self.hdu_out_name.split(os.path.sep)[-1].replace('.fits', '_noise_model'),
@@ -702,7 +733,10 @@ class NircamDestriper:
 
         ax = plt.subplot(1, 3, 1)
         im = plt.imshow(original_data,
-                        origin='lower', vmin=vmin_data, vmax=vmax_data)
+                        origin='lower',
+                        vmin=vmin_data, vmax=vmax_data,
+                        interpolation='none',
+                        )
         plt.axis('off')
 
         plt.title('Original Data')
@@ -713,7 +747,11 @@ class NircamDestriper:
         plt.colorbar(im, cax=cax, label='MJy/sr', orientation='horizontal')
 
         ax = plt.subplot(1, 3, 2)
-        im = plt.imshow(self.full_noise_model, origin='lower', vmin=vmin, vmax=vmax)
+        im = plt.imshow(self.full_noise_model,
+                        origin='lower',
+                        vmin=vmin, vmax=vmax,
+                        interpolation='none',
+                        )
         plt.axis('off')
 
         plt.title('Noise Model')
@@ -724,7 +762,11 @@ class NircamDestriper:
         plt.colorbar(im, cax=cax, label='MJy/sr', orientation='horizontal')
 
         ax = plt.subplot(1, 3, 3)
-        im = plt.imshow(self.hdu['SCI'].data, origin='lower', vmin=vmin_data, vmax=vmax_data)
+        im = plt.imshow(self.hdu['SCI'].data,
+                        origin='lower',
+                        vmin=vmin_data, vmax=vmax_data,
+                        interpolation='none',
+                        )
         plt.axis('off')
 
         plt.title('Destriped Data')
