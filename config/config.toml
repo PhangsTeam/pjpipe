@@ -58,7 +58,9 @@ steps = [
     'lv3',
     'astrometric_align',
 ]
-overwrites = []
+overwrites = [
+#    'astrometric_align',
+]
 
 
 [alignment]
@@ -162,9 +164,12 @@ deblend = true
 
 [astrometry_parameters]
 searchrad = 15
-separation = 0.000001
-tolerance = 0.7
+separation.nircam = 0.000001
+separation.miri = 0.000001
+tolerance.nircam = 0.7
+tolerance.miri = 0.7
 use2dhist = true
 fitgeom = 'shift'
-nclip = 3
-sigma = 3
+nclip = 5
+sigma.nircam = 3
+sigma.miri = 3
