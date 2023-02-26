@@ -196,6 +196,62 @@ def parallel_destripe(hdu_name,
     return True
 
 
+def parallel_tweakback(crf_file,
+                       matrix=None,
+                       shift=None,
+                       ref_tpwcs=None,
+                       ):
+    """Wrapper function to parallelise tweakback routine"""
+
+    if matrix is None:
+        matrix = [[1, 0], [0, 1]]
+    if shift is None:
+        shift = [0, 0]
+
+    crf_input_im = datamodels.open(crf_file)
+    model_name = os.path.splitext(crf_input_im.meta.filename)[0].strip('_- ')
+    refang = crf_input_im.meta.wcsinfo.instance
+
+    crf_im = JWSTWCSCorrector(
+        wcs=crf_input_im.meta.wcs,
+        wcsinfo={
+            'roll_ref': refang['roll_ref'],
+            'v2_ref': refang['v2_ref'],
+            'v3_ref': refang['v3_ref']
+        },
+        meta={
+            'image_model': crf_input_im,
+            'name': model_name
+        }
+    )
+
+    crf_im.set_correction(matrix=matrix,
+                          shift=shift,
+                          ref_tpwcs=ref_tpwcs,
+                          )
+
+    crf_input_im = crf_im.meta['image_model']
+    crf_input_im.meta.wcs = crf_im.wcs
+
+    try:
+        update_fits_wcsinfo(
+            crf_input_im,
+            max_pix_error=0.01,
+            npoints=16,
+        )
+    except (ValueError, RuntimeError) as e:
+        logging.warning(
+            "Failed to update 'meta.wcsinfo' with FITS SIP "
+            f'approximation. Reported error is:\n"{e.args[0]}"'
+        )
+        return False
+
+    crf_out_file = crf_file.replace('.fits', '_tweakback.fits')
+    crf_input_im.save(crf_out_file)
+
+    return True
+
+
 def sigma_clip(data, sigma=3, n_pixels=5, max_iterations=20):
     """Get sigma-clipped statistics for data"""
 
@@ -259,7 +315,8 @@ def parse_fits_to_table(file,
 
 def parse_parameter_dict(parameter_dict,
                          key,
-                         band):
+                         band,
+                         ):
     """Pull values out of a parameter dictionary
 
     Args:
@@ -287,7 +344,7 @@ def parse_parameter_dict(parameter_dict,
             short_long = 'nircam_long'
             pixel_scale = 0.063
     else:
-        raise Warning('Band type %s not known!')
+        raise Warning('Band type %s not known!' % band)
 
     if isinstance(value, dict):
 
@@ -311,34 +368,65 @@ def parse_parameter_dict(parameter_dict,
     return value
 
 
-def recursive_setattr(f, attribute, value):
+def recursive_setattr(f,
+                      attribute,
+                      value,
+                      protected=False,
+                      ):
     pre, _, post = attribute.rpartition('.')
-    return setattr(recursive_getattr(f, pre) if pre else f, post, value)
+
+    if pre:
+        pre_exists = True
+    else:
+        pre_exists = False
+
+    if protected:
+        post = '_' + post
+    return setattr(recursive_getattr(f, pre) if pre_exists else f, post, value)
 
 
-def recursive_getattr(f, attribute, *args):
+def recursive_getattr(f,
+                      attribute,
+                      *args,
+                      ):
     def _getattr(f, attribute):
         return getattr(f, attribute, *args)
 
     return functools.reduce(_getattr, [f] + attribute.split('.'))
 
 
-def attribute_setter(pipeobj, parameter_dict, band):
+def attribute_setter(pipeobj,
+                     parameter_dict,
+                     band,
+                     ):
     for key in parameter_dict.keys():
         if type(parameter_dict[key]) is dict:
             for subkey in parameter_dict[key]:
                 value = parse_parameter_dict(parameter_dict[key],
-                                             subkey, band)
+                                             subkey,
+                                             band,
+                                             )
                 if value == 'VAL_NOT_FOUND':
                     continue
-                recursive_setattr(pipeobj, '.'.join([key, subkey]), value)
+
+                recursive_setattr(pipeobj,
+                                  '.'.join([key, subkey]),
+                                  value,
+                                  )
+
         else:
+
             value = parse_parameter_dict(parameter_dict,
-                                         key, band)
+                                         key,
+                                         band,
+                                         )
             if value == 'VAL_NOT_FOUND':
                 continue
 
-            recursive_setattr(pipeobj, key, value)
+            recursive_setattr(pipeobj,
+                              key,
+                              value,
+                              )
     return pipeobj
 
 
@@ -904,7 +992,6 @@ class JWSTReprocess:
                         continue
 
                     for hdu_in_name in cal_files:
-
                         hdu = background_subtract(hdu_in_name)
 
                         hdu_out_name = os.path.join(out_band_dir, hdu_in_name.split(os.path.sep)[-1])
@@ -1727,7 +1814,15 @@ class JWSTReprocess:
 
                 # Run a match
                 match = XYXYMatch()
-                match = attribute_setter(match, self.astrometry_parameter_dict, band)
+                for key in self.astrometry_parameter_dict.keys():
+
+                    value = parse_parameter_dict(self.astrometry_parameter_dict,
+                                                 key,
+                                                 band)
+                    if value == 'VAL_NOT_FOUND':
+                        continue
+
+                    recursive_setattr(match, key, value, protected=True)
 
                 ref_idx, jwst_idx = match(ref_tab, jwst_tab, tp_units='arcsec')
 
@@ -1735,8 +1830,14 @@ class JWSTReprocess:
 
                 fit_wcs_kws = {}
                 for fit_wcs_arg in fit_wcs_args.keys():
+
                     if fit_wcs_arg in self.astrometry_parameter_dict.keys():
-                        arg_val = self.astrometry_parameter_dict[fit_wcs_arg]
+                        arg_val = parse_parameter_dict(self.astrometry_parameter_dict,
+                                                       fit_wcs_arg,
+                                                       band,
+                                                       )
+                        if arg_val == 'VAL_NOT_FOUND':
+                            arg_val = fit_wcs_args[fit_wcs_arg]
                     else:
                         arg_val = fit_wcs_args[fit_wcs_arg]
 
@@ -1777,46 +1878,24 @@ class JWSTReprocess:
 
                 crf_files.sort()
 
-                for crf_file in tqdm(crf_files, ascii=True, desc='tweakback'):
-                    crf_input_im = datamodels.open(crf_file)
-                    model_name = os.path.splitext(crf_input_im.meta.filename)[0].strip('_- ')
-                    refang = crf_input_im.meta.wcsinfo.instance
+                with mp.get_context('fork').Pool(self.procs) as pool:
 
-                    crf_im = JWSTWCSCorrector(
-                        wcs=crf_input_im.meta.wcs,
-                        wcsinfo={
-                            'roll_ref': refang['roll_ref'],
-                            'v2_ref': refang['v2_ref'],
-                            'v3_ref': refang['v3_ref']
-                        },
-                        meta={
-                            'image_model': crf_input_im,
-                            'name': model_name
-                        }
-                    )
+                    results = []
 
-                    crf_im.set_correction(matrix=matrix,
-                                          shift=shift,
-                                          ref_tpwcs=wcs_jwst_corrector,
-                                          )
+                    for result in tqdm(pool.imap(partial(parallel_tweakback,
+                                                         matrix=matrix,
+                                                         shift=shift,
+                                                         ref_tpwcs=wcs_jwst_corrector,
+                                                         ),
+                                                 crf_files),
+                                       total=len(crf_files),
+                                       ascii=True,
+                                       desc='tweakback',
+                                       ):
+                        results.append(result)
 
-                    crf_input_im = crf_im.meta['image_model']
-                    crf_input_im.meta.wcs = crf_im.wcs
-
-                    try:
-                        update_fits_wcsinfo(
-                            crf_input_im,
-                            max_pix_error=0.01,
-                            npoints=16,
-                        )
-                    except (ValueError, RuntimeError) as e:
-                        self.logger.warning(
-                            "Failed to update 'meta.wcsinfo' with FITS SIP "
-                            f'approximation. Reported error is:\n"{e.args[0]}"'
-                        )
-
-                    crf_out_file = crf_file.replace('.fits', '_tweakback.fits')
-                    crf_input_im.save(crf_out_file)
+                if not all(results):
+                    self.logger.warning('Not all crf files tweakbacked. May cause issues!')
 
                 fit_info = wcs_aligned_fit.meta['fit_info']
                 fit_mask = fit_info['fitmask']
@@ -1985,45 +2064,25 @@ class JWSTReprocess:
 
                 crf_files.sort()
 
-                for crf_file in crf_files:
-                    crf_input_im = datamodels.open(crf_file)
-                    model_name = os.path.splitext(crf_input_im.meta.filename)[0].strip('_- ')
-                    refang = crf_input_im.meta.wcsinfo.instance
+                shift = [-x_off, -y_off]
 
-                    crf_im = JWSTWCSCorrector(
-                        wcs=crf_input_im.meta.wcs,
-                        wcsinfo={
-                            'roll_ref': refang['roll_ref'],
-                            'v2_ref': refang['v2_ref'],
-                            'v3_ref': refang['v3_ref']
-                        },
-                        meta={
-                            'image_model': crf_input_im,
-                            'name': model_name
-                        }
-                    )
+                with mp.get_context('fork').Pool(self.procs) as pool:
 
-                    crf_im.set_correction(shift=[-x_off, -y_off],
-                                          ref_tpwcs=wcs_jwst_corrector,
-                                          )
+                    results = []
 
-                    crf_input_im = crf_im.meta['image_model']
-                    crf_input_im.meta.wcs = crf_im.wcs
+                    for result in tqdm(pool.imap(partial(parallel_tweakback,
+                                                         shift=shift,
+                                                         ref_tpwcs=wcs_jwst_corrector,
+                                                         ),
+                                                 crf_files),
+                                       total=len(crf_files),
+                                       ascii=True,
+                                       desc='tweakback',
+                                       ):
+                        results.append(result)
 
-                    try:
-                        update_fits_wcsinfo(
-                            crf_input_im,
-                            max_pix_error=0.01,
-                            npoints=16,
-                        )
-                    except (ValueError, RuntimeError) as e:
-                        self.logger.warning(
-                            "Failed to update 'meta.wcsinfo' with FITS SIP "
-                            f'approximation. Reported error is:\n"{e.args[0]}"'
-                        )
-
-                    crf_out_file = crf_file.replace('.fits', '_tweakback.fits')
-                    crf_input_im.save(crf_out_file)
+                if not all(results):
+                    self.logger.warning('Not all crf files tweakbacked. May cause issues!')
 
                 jwst_hdu.writeto(aligned_file, overwrite=True)
 
