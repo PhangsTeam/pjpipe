@@ -756,7 +756,7 @@ class JWSTReprocess:
                 'destriping_method': 'pca',
                 'dilate_size': 7,
                 'pca_reconstruct_components': 5,
-                'pca_final_med_row_subtraction': False,
+                'final_large_scale_subtraction': False,
             }
 
             # Old version, using median filter
@@ -1137,7 +1137,7 @@ class JWSTReprocess:
                     dithers = np.unique(['_'.join(os.path.split(cal_file)[-1].split('_')[:2])
                                          for cal_file in cal_files])
 
-                    for dither in tqdm(dithers, ascii=False):
+                    for dither in tqdm(dithers, ascii=True):
                         dither_files = glob.glob(os.path.join(in_band_dir,
                                                               '%s*_%s.fits' % (dither, step_ext))
                                                  )

@@ -85,7 +85,7 @@ class NircamDestriper:
                  median_filter_scales='',
                  pca_components=50,
                  pca_reconstruct_components=10,
-                 pca_final_med_row_subtraction=False,
+                 final_large_scale_subtraction=False,
                  pca_file=None,
                  just_sci_hdu=False,
                  plot_dir=None,
@@ -105,6 +105,9 @@ class NircamDestriper:
                 False
             * filter_diffuse (bool): Whether to perform high-pass filter on data, to remove diffuse, extended emission.
                 Defaults to False, but should be set True for observations where emission fills the FOV
+            * final_large_scale_subtraction (bool): Whether to perform a final large-scale subtraction for median filter
+                or PCA. This is because large-scale ripples may be left over after the diffuse emission filtering.
+                Defaults to False
             * sigma (float): Sigma for sigma-clipping. Defaults to 3
             * npixels (int): Pixels to grow for masking. Defaults to 5
             * dilate_size (int): make_source_mask dilation size. Defaults to 11
@@ -112,9 +115,6 @@ class NircamDestriper:
             * median_filter_scales (list): Scales for median filtering
             * pca_components (int): Number of PCA components to model. Defaults to 50
             * pca_reconstruct_components (int): Number of PCA components to use in reconstruction. Defaults to 10
-            * pca_final_med_row_subtraction (bool): Whether to perform a final row-by-row median subtraction from the
-                data after PCA. Generally this isn't needed, but may be required for the shortest filters. Defaults to
-                False.
             * pca_file (str): Path to save PCA model to (should be a .pkl file). If using quadrants, it will append
                 the quadrant number accordingly automatically. Defaults to None, which means will not save out files
             * just_sci_hdu (bool): Write full fits HDU, or just SCI? Useful for testing, defaults to False
@@ -155,6 +155,7 @@ class NircamDestriper:
 
         self.use_sigma_clip = use_sigma_clip
         self.filter_diffuse = filter_diffuse
+        self.final_large_scale_subtraction = final_large_scale_subtraction
         self.sigma = sigma
         self.npixels = npixels
         if max_iters == '':
@@ -164,7 +165,6 @@ class NircamDestriper:
 
         self.pca_components = pca_components
         self.pca_reconstruct_components = pca_reconstruct_components
-        self.pca_final_med_row_subtraction = pca_final_med_row_subtraction
         self.pca_file = pca_file
 
         self.plot_dir = plot_dir
@@ -419,7 +419,7 @@ class NircamDestriper:
                                         )[1]
         full_noise_model -= noise_med
 
-        if self.pca_final_med_row_subtraction:
+        if self.final_large_scale_subtraction:
 
             # Do a final, row-by-row clipped median subtraction
 
@@ -697,6 +697,34 @@ class NircamDestriper:
 
                 full_noise_model += noise[:, np.newaxis]
 
+        # Do a final large-scale subtraction for any remaining large ripples. Use the last couple of scales
+        n_scales = 2
+        if self.final_large_scale_subtraction:
+
+            sub_data = self.hdu['SCI'].data - full_noise_model
+
+            if use_mask:
+                sub_data = np.ma.array(
+                    copy.deepcopy(sub_data),
+                    mask=copy.deepcopy(mask)
+                )
+
+            for scale in self.median_filter_scales[-n_scales:]:
+
+                if use_mask:
+                    med = np.ma.median(sub_data, axis=1)
+                    mask_idx = np.where(med.mask)
+                    med = med.data
+                    med[mask_idx] = np.nan
+                else:
+                    med = np.nanmedian(sub_data, axis=1)
+                med[~np.isfinite(med)] = 0
+                noise = med - median_filter(med, scale)
+
+                sub_data -= noise[:, np.newaxis]
+
+                full_noise_model += noise[:, np.newaxis]
+
         if self.plot_dir is not None and mask is not None:
             self.make_mask_plot(data=data,
                                 mask=mask,
@@ -762,7 +790,7 @@ class NircamDestriper:
         vmin, vmax = np.nanpercentile(data, [1, 99])
         plt.figure(figsize=(8, 4))
         plt.subplot(1, 2, 1)
-        plt.imshow(data, origin='lower', vmin=vmin, vmax=vmax)
+        plt.imshow(data, origin='lower', vmin=vmin, vmax=vmax, interpolation='none')
 
         plt.axis('off')
 
