@@ -69,3 +69,17 @@ The resulting images will be stored in the working directory stored in your `wor
    we use for the PHANGS-JWST reduction are in the `config/` directory, but may need to be edited somewhat for other
    programs. The pipeline stage-specific parameters are given on the JWST pipeline readthedocs
    (https://jwst-pipeline.readthedocs.io/en/latest/jwst/pipeline/main.html#pipelines).
+
+## Requirements
+
+Beyond the requirements required by the official STScI pipeline, this pipeline also requires some packages not
+installed by default:
+
+* astroquery
+* drizzlepac
+* image-registration (install the GitHub version: pip install git+https://github.com/keflavich/image_registration.git)
+* pytest
+* reproject
+* tomli (not required for python>=3.11)
+* tqdm
+

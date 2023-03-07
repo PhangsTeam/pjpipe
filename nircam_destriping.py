@@ -39,7 +39,7 @@ class NircamDestriper:
                  npixels=3,
                  dilate_size=11,
                  max_iters=20,
-                 median_filter_scales=None,
+                 median_filter_scales='',
                  pca_components=50,
                  pca_reconstruct_components=10,
                  pca_diffuse=False,
@@ -105,13 +105,15 @@ class NircamDestriper:
 
         self.destriping_method = destriping_method
 
-        if median_filter_scales is None:
+        if median_filter_scales == '':
             median_filter_scales = [3, 7, 15, 31, 63, 127]
         self.median_filter_scales = median_filter_scales
 
         self.use_sigma_clip = use_sigma_clip
         self.sigma = sigma
         self.npixels = npixels
+        if max_iters == '':
+            max_iters = None
         self.max_iters = max_iters
         self.dilate_size = dilate_size
 
@@ -254,31 +256,9 @@ class NircamDestriper:
             mask_train = mask_train | high_sn_mask
 
             if self.plot_dir is not None:
-                plot_name = os.path.join(self.plot_dir,
-                                         self.hdu_out_name.split(os.path.sep)[-1].replace('.fits', '_filter+mask')
-                                         )
-
-                vmin, vmax = np.nanpercentile(data_train, [1, 99])
-                plt.figure(figsize=(8, 4))
-                plt.subplot(1, 2, 1)
-                plt.imshow(data_train, origin='lower', vmin=vmin, vmax=vmax)
-
-                plt.axis('off')
-
-                plt.title('Filtered Data')
-
-                plt.subplot(1, 2, 2)
-                plt.imshow(mask_train, origin='lower', interpolation='none')
-
-                plt.axis('off')
-
-                plt.title('Mask')
-
-                plt.savefig(plot_name + '.png', bbox_inches='tight')
-                plt.savefig(plot_name + '.pdf', bbox_inches='tight')
-
-                # plt.show()
-                plt.close()
+                self.make_mask_plot(data=data_train,
+                                    mask=mask,
+                                    )
 
         else:
 
@@ -430,9 +410,9 @@ class NircamDestriper:
             # We expect there to be 8 NaNs here for FULL mode, 0 for subarray, if there's more it's an issue
 
             if self.is_subarray:
-                allowed_nans = 8
-            else:
                 allowed_nans = 0
+            else:
+                allowed_nans = 8
             if len(nan_idx[0]) > allowed_nans:
                 logging.warning('Median failing -- likely too much masked data')
 
@@ -567,6 +547,11 @@ class NircamDestriper:
             # Bring everything back up to the median level
             full_noise_model -= np.nanmedian(median_arr)
 
+        if self.plot_dir is not None:
+            self.make_mask_plot(data=self.hdu['SCI'].data,
+                                mask=mask,
+                                )
+
         self.hdu['SCI'].data[zero_idx] = 0
         self.hdu['SCI'].data[nan_idx] = np.nan
 
@@ -623,9 +608,13 @@ class NircamDestriper:
                         med = np.nanmedian(data_quadrant, axis=1)
                     nan_idx = np.where(~np.isfinite(med))
 
-                    # We expect there to be 8 NaNs here, if there's more it's an issue
-                    if len(nan_idx[0]) > 8:
-                        logging.warning('Median filter failing on quadrants -- likely large extended source')
+                    # We expect there to be 8 NaNs here for FULL data, 0 for subarray, if there's more it's an issue
+                    if self.is_subarray:
+                        allowed_nans = 0
+                    else:
+                        allowed_nans = 8
+                    if len(nan_idx[0]) > allowed_nans:
+                        logging.warning('Median failing -- likely too much masked data')
 
                     med[~np.isfinite(med)] = 0
                     noise = med - median_filter(med, scale)
@@ -663,6 +652,11 @@ class NircamDestriper:
                 data -= noise[:, np.newaxis]
 
                 full_noise_model += noise[:, np.newaxis]
+
+        if self.plot_dir is not None and mask is not None:
+            self.make_mask_plot(data=self.hdu['SCI'].data,
+                                mask=mask,
+                                )
 
         self.hdu['SCI'].data[zero_idx] = 0
         self.hdu['SCI'].data[nan_idx] = np.nan
@@ -711,6 +705,34 @@ class NircamDestriper:
                 data[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size] += med_1 - med_2
 
         return data
+
+    def make_mask_plot(self,
+                       data,
+                       mask):
+        """Create mask diagnostic plot"""
+
+        plot_name = os.path.join(self.plot_dir,
+                                 self.hdu_out_name.split(os.path.sep)[-1].replace('.fits', '_filter+mask')
+                                 )
+
+        vmin, vmax = np.nanpercentile(data, [1, 99])
+        plt.figure(figsize=(8, 4))
+        plt.subplot(1, 2, 1)
+        plt.imshow(data, origin='lower', vmin=vmin, vmax=vmax)
+
+        plt.axis('off')
+
+        plt.title('Filtered Data')
+
+        plt.subplot(1, 2, 2)
+        plt.imshow(mask, origin='lower', interpolation='none')
+
+        plt.axis('off')
+
+        plt.title('Mask')
+
+        plt.savefig(plot_name + '.png', bbox_inches='tight')
+        plt.savefig(plot_name + '.pdf', bbox_inches='tight')
 
     def make_destripe_plot(self):
         """Create diagnostic plot for the destriping

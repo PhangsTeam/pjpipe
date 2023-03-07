@@ -183,9 +183,10 @@ class ArchiveDownload:
                                                          extension=self.extension,
                                                          )
 
-        # Finally, remove duplicates
+        # Finally, remove duplicates and sort
         if 'dataURI' in products.colnames:
             products = unique(products, keys='dataURI')
+            products.sort('dataURI')
 
         if self.verbose:
             print('[%s] Downloading %d files' % (get_time(), len(products)))
