@@ -175,10 +175,10 @@ sigma = 3
 
 [destripe_parameters]
 quadrants = true
+filter_diffuse = true
 destriping_method = 'pca'
 dilate_size = 7
 pca_reconstruct_components = 5
-pca_diffuse = true
 pca_final_med_row_subtraction = false
 
 [astrometry_parameters]

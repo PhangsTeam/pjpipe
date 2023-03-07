@@ -335,8 +335,8 @@ def background_match(files,
     for i in range(data_reproj.shape[-1]):
         data_reproj[:, :, i][mask != 0] = np.nan
 
-    # Take the raw median of each, now they've all been reprojected
-    meds = [np.nanmedian(data_reproj[:, :, i])
+    # Take a sigma-clipped median for each, to avoid errant brightness etc
+    meds = [sigma_clip(data_reproj[:, :, i])[0]
             for i in range(data_reproj.shape[-1])]
 
     # And match to the first one
@@ -752,10 +752,10 @@ class JWSTReprocess:
         elif destripe_parameter_dict == 'phangs':
             destripe_parameter_dict = {
                 'quadrants': True,
+                'filter_diffuse': True,
                 'destriping_method': 'pca',
                 'dilate_size': 7,
                 'pca_reconstruct_components': 5,
-                'pca_diffuse': True,
                 'pca_final_med_row_subtraction': False,
             }
 
