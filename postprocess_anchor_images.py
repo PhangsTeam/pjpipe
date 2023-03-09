@@ -341,7 +341,7 @@ for this_gal in gal_names:
                 print("Not found filter: ", other_miri)
                 continue
             offsets[other_miri] = -1.*float((this_table[table_mask]['intercept'])[0]) \
-                - float((this_table[table_mask]['intercept'])[0])*offsets['F770W']
+                + float((this_table[table_mask]['slope'])[0])*offsets['F770W']
     else:
         print("No F770W for ", this_gal)
         
@@ -365,7 +365,7 @@ for this_gal in gal_names:
                 print("Not found filter: ", other_nircam)
                 continue
             offsets[other_nircam] = -1.*float((this_table[table_mask]['intercept'])[0]) \
-                - float((this_table[table_mask]['intercept'])[0])*offsets['F300M']
+                + float((this_table[table_mask]['intercept'])[0])*offsets['F300M']
     else:
         print("No F300M for ", this_gal)
             
@@ -395,7 +395,7 @@ for this_gal in gal_names:
         # Read the input science image
         input_hdu = fits.open(input_file)['SCI']
 
-        this_offset = offsets[this_filt]
+        this_offset = float(offsets[this_filt])
         input_hdu.header['BKGRDVAL'] = this_offset
         new_data = input_hdu.data
         new_data[new_data==0] = np.nan
