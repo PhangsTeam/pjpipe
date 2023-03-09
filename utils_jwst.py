@@ -1,5 +1,5 @@
 from collections import OrderedDict
-import os, sys, socket, glob
+import sys, glob
 
 import numpy as np
 import scipy.stats
@@ -18,7 +18,7 @@ from reproject import reproject_interp
 import matplotlib.pyplot as plt
 
 from scipy.stats import spearmanr, gaussian_kde
-from aklpyutils.utils_stats import *
+from utils_stats import *
 
 def make_gaussian_psf(fwhm_arcsec = 1.0, oversample_by=10., outfile=None):
     """Adapted from Francesco Belfiore / Tom Williams. Could/should
@@ -167,7 +167,11 @@ def conv_with_kernel(image_hdu, kernel_hdu,
 def align_image(hdu_to_align, target_header, hdu_in=0,
                 order='bilinear', missing_value=np.nan,
                 outfile=None, overwrite=True):
-
+    """
+    Aligns an image to a target header and handles reattaching the
+    header to the file with updated WCS keywords.
+    """
+    
     reprojected_image, footprint = reproject_interp(
         hdu_to_align, target_header, hdu_in=hdu_in,
         order=order, return_footprint=True)

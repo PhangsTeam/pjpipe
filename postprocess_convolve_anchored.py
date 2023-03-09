@@ -1,9 +1,7 @@
 # Read and convolve all of current JWST images to F2100W matched
 # resolution as well as a few common round Gaussian resolutions.
 
-import os
-import socket
-import glob
+import os, glob
 
 from astropy.table import Table
 import numpy as np
@@ -31,12 +29,12 @@ input_tab = Table.read('jwst_image_key.txt', format='ascii.csv',comment='#')
 gal_names = np.unique(np.array(input_tab['galaxy']))
 filters = np.unique(np.array(input_tab['filter']))
 
-my_input_root = '../orig_data/'
-my_output_root = '../working_data/matched_res/'
+my_input_root = '../working_data/processed_jwst/anchored/'
 my_kern_dir = '../jwst_scripts_fork/PSF/kernels/'
+my_output_root = '../working_data/processed_jwst/anchored_matched_res/'
 
 # -----------------------------------------------------------------------------------
-# Execute
+# Loop over all galaxies and do the initial convolution 
 # -----------------------------------------------------------------------------------
 
 for this_gal in gal_names:
@@ -73,7 +71,7 @@ for this_gal in gal_names:
         # Convolve to F2100W
         # ---------------------        
 
-        if do_conv_to_f2100w:
+        if do_conv_initial_to_f2100w:
         
             output_file_name = my_output_root + this_gal + '_'+this_filt+'_atF2100W.fits'
             print("... building ", output_file_name)
@@ -96,7 +94,7 @@ for this_gal in gal_names:
         # Convolve to Gaussian
         # ---------------------        
 
-        if do_conv_to_gauss:
+        if do_conv_initial_to_gauss:
         
             output_file_name = my_output_root + this_gal + '_'+this_filt+'_atGauss1p15.fits'
             print("... building ", output_file_name)
@@ -132,5 +130,3 @@ for this_gal in gal_names:
                 convolved_hdu, kernel_hdu,
                 outfile=output_file_name, overwrite=True)
             convolved_more_hdu.writeto(output_file_name, overwrite=True)
-        
-        
