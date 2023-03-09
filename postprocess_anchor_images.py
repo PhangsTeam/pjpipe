@@ -365,7 +365,7 @@ for this_gal in gal_names:
                 print("Not found filter: ", other_nircam)
                 continue
             offsets[other_nircam] = -1.*float((this_table[table_mask]['intercept'])[0]) \
-                + float((this_table[table_mask]['intercept'])[0])*offsets['F300M']
+                + float((this_table[table_mask]['slope'])[0])*offsets['F300M']
     else:
         print("No F300M for ", this_gal)
             
