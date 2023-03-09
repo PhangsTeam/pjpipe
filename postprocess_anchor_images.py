@@ -397,7 +397,10 @@ for this_gal in gal_names:
 
         this_offset = offsets[this_filt]
         input_hdu.header['BKGRDVAL'] = this_offset
-        input_hdu.data = input_hdu.data + this_offset
+        new_data = input_hdu.data
+        new_data[new_data==0] = np.nan
+        new_data = new_data + this_offset
+        input_hdu.data = new_data
         
         # Write to disk
         output_file_name = my_output_root + this_gal + '_'+this_filt+'_anchored.fits'    
