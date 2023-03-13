@@ -49,7 +49,12 @@ if 'pmap' in config['pipeline']['crds_context']:
     os.environ['CRDS_CONTEXT'] = config['pipeline']['crds_context']
 
 reprocess_dir = os.path.join(working_dir, 'jwst_lv3_reprocessed')
-crds_dir = os.path.join(working_dir, 'crds')
+
+crds_dir = local['local']['crds_dir']
+if crds_dir == '':
+    crds_dir = os.path.join(working_dir, 'crds')
+if not os.path.exists(crds_dir):
+    os.makedirs(crds_dir)
 
 if flush_crds:
     os.system('rm -rf %s' % crds_dir)
@@ -68,7 +73,6 @@ for prop_id in prop_ids:
         alignment_table = os.path.join(script_dir,
                                        'alignment',
                                        alignment_table_name)
-        alignment_mapping = config['alignment_mapping']
 
         bands = (config['pipeline']['nircam_bands'] +
                  config['pipeline']['miri_bands'])
@@ -83,14 +87,22 @@ for prop_id in prop_ids:
                                bands=bands,
                                steps=config['pipeline']['steps'],
                                overwrites=config['pipeline']['overwrites'],
+                               obs_to_skip=config['pipeline']['obs_to_skip'],
                                lv1_parameter_dict=config['lv1_parameters'],
                                lv2_parameter_dict=config['lv2_parameters'],
                                lv3_parameter_dict=config['lv3_parameters'],
+                               bg_sub_parameter_dict=config['bg_sub_parameters'],
+                               destripe_parameter_dict=config['destripe_parameters'],
                                astrometry_parameter_dict=config['astrometry_parameters'],
                                lyot_method=config['pipeline']['lyot_method'],
-                               astrometric_alignment_type='table',
+                               degroup_tweakreg_short_nircam=config['pipeline']['degroup_tweakreg_short_nircam'],
+                               group_skymatch_dithers=config['pipeline']['group_skymatch_dithers'],
+                               bgr_check_type=config['pipeline']['bgr_check_type'],
+                               bgr_background_name=config['pipeline']['bgr_background_name'],
+                               bgr_observation_types=config['pipeline']['bgr_observation_types'],
+                               astrometric_alignment_type=config['pipeline']['astrometric_alignment_type'],
                                astrometric_alignment_table=alignment_table,
-                               alignment_mapping=alignment_mapping,
+                               alignment_mapping=config['alignment_mapping'],
                                procs=processors,
                                updated_flats_dir=updated_flats_dir,
                                # process_bgr_like_science=False,

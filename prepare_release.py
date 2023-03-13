@@ -2,6 +2,9 @@ import glob
 import os
 import sys
 
+from astropy.io import fits
+from tqdm import tqdm
+
 script_dir = os.path.dirname(os.path.realpath(__file__))
 
 try:
@@ -36,9 +39,15 @@ file_exts = ['i2d.fits',
              'cat.ecsv',
              'segm.fits']
 
+tweakback_ext = 'tweakback.fits'
+
 working_dir = local['local']['working_dir']
 version = config['pipeline']['data_version']
 prop_ids = config['projects']
+
+remove_bloat = config['prepare_release']['remove_bloat']
+move_tweakback = config['prepare_release']['move_tweakback']
+overwrite = config['prepare_release']['overwrite']
 
 reprocess_dir = os.path.join(working_dir, 'jwst_lv3_reprocessed')
 release_dir = os.path.join(working_dir, 'jwst_release')
@@ -48,13 +57,19 @@ release_dir = os.path.join(release_dir, version)
 if not os.path.exists(release_dir):
     os.makedirs(release_dir)
 
-for prop_id in prop_ids:
+hdu_ext_to_delete = [
+    'CON',
+    'WHT',
+    'VAR_POISSON',
+    'VAR_RNOISE',
+    'VAR_FLAT'
+]
+
+for prop_id in tqdm(prop_ids, ascii=True):
 
     targets = config['projects'][prop_id]['targets']
 
-    for target in targets:
-
-        print(target)
+    for target in tqdm(targets, ascii=True, leave=False):
 
         release_target_dir = os.path.join(release_dir, target)
         if not os.path.exists(release_target_dir):
@@ -67,7 +82,49 @@ for prop_id in prop_ids:
                                                 '*',
                                                 'lv3',
                                                 '*_%s' % file_ext))
+
             for file_name in file_names:
-                os.system('cp %s %s' % (file_name, release_target_dir))
+
+                hdu_out_name = os.path.join(release_target_dir, os.path.split(file_name)[-1])
+
+                if not os.path.exists(hdu_out_name) or overwrite:
+
+                    if file_ext in ['i2d.fits', 'i2d_align.fits'] and remove_bloat:
+                        # For these, we want to pull out only the data and error extensions. Everything else
+                        # is just bloat
+
+                        hdu = fits.open(file_name)
+                        for hdu_ext in hdu_ext_to_delete:
+                            del hdu[hdu_ext]
+
+                        out_name = os.path.join(release_target_dir, os.path.split(file_name)[-1])
+                        hdu.writeto(out_name, overwrite=True)
+                        hdu.close()
+
+                    else:
+
+                        os.system('cp %s %s' % (file_name, release_target_dir))
+
+        # Also move the tweakback files, but put these into a separate directory to avoid too much clutter
+
+        if move_tweakback:
+            tweakback_files = glob.glob(os.path.join(reprocess_dir,
+                                                     target,
+                                                     '*',
+                                                     'lv3',
+                                                     '*_%s' % tweakback_ext))
+            for tweakback_file in tweakback_files:
+
+                hdu_out_name = os.path.join(release_target_dir, os.path.split(tweakback_file)[-1])
+
+                if not os.path.exists(hdu_out_name) or overwrite:
+
+                    band = tweakback_file.split(os.path.sep)[-3]
+
+                    tweakback_dir = os.path.join(release_target_dir, '%s_tweakback' % band.lower())
+                    if not os.path.exists(tweakback_dir):
+                        os.makedirs(tweakback_dir)
+
+                    os.system('cp %s %s' % (tweakback_file, tweakback_dir))
 
 print('Complete!')

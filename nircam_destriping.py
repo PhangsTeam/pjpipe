@@ -27,6 +27,48 @@ matplotlib.rcParams['font.size'] = 14
 matplotlib.use('Agg')
 
 
+def butterworth_filter(data,
+                       data_std=None,
+                       dq_mask=None,
+                       return_high_sn_mask=False,
+                       ):
+    """Butterworth filter data, accounting for bad data"""
+
+    data = copy.deepcopy(data)
+
+    if data_std is None:
+        data_std = sigma_clipped_stats(data)[2]
+
+    # Make a high signal-to-noise mask, because these guys will cause bad ol' negative bowls
+    high_sn_mask = data > 10 * data_std
+    high_sn_mask = binary_dilation(high_sn_mask, iterations=1)
+
+    # Replace bad data with random noise
+    idx = np.where(np.isnan(data) | dq_mask | high_sn_mask)
+    data[idx] = np.random.normal(loc=0, scale=data_std, size=len(idx[0]))
+
+    # Pad out the data by reflection to avoid ringing at boundaries
+    data_pad = np.zeros([data.shape[0] * 2, data.shape[1] * 2])
+    data_pad[:data.shape[0], :data.shape[1]] = copy.deepcopy(data)
+    data_pad[-data.shape[0]:, -data.shape[1]:] = copy.deepcopy(data[::-1, ::-1])
+    data_pad[-data.shape[0]:, :data.shape[1]] = copy.deepcopy(data[::-1, :])
+    data_pad[:data.shape[0], -data.shape[1]:] = copy.deepcopy(data[:, ::-1])
+    data_pad = np.roll(data_pad, axis=[0, 1], shift=[data.shape[0] // 2, data.shape[1] // 2])
+    data_pad = data_pad[data.shape[0] // 4:-data.shape[0] // 4, data.shape[1] // 4:-data.shape[1] // 4]
+
+    # Filter the image to remove any large scale structure.
+    data_filter = filters.butterworth(data_pad,
+                                      high_pass=True,
+                                      )
+    data_filter = data_filter[data.shape[0] // 4:-data.shape[0] // 4, data.shape[1] // 4:-data.shape[1] // 4]
+    data_filter[idx] = np.random.normal(loc=0, scale=data_std, size=len(idx[0]))
+
+    if return_high_sn_mask:
+        return data_filter, high_sn_mask
+    else:
+        return data_filter
+
+
 class NircamDestriper:
 
     def __init__(self,
@@ -35,15 +77,15 @@ class NircamDestriper:
                  quadrants=True,
                  destriping_method='row_median',
                  use_sigma_clip=False,
+                 filter_diffuse=False,
                  sigma=3,
                  npixels=3,
                  dilate_size=11,
                  max_iters=20,
-                 median_filter_scales=None,
+                 median_filter_scales='',
                  pca_components=50,
                  pca_reconstruct_components=10,
-                 pca_diffuse=False,
-                 pca_final_med_row_subtraction=False,
+                 final_large_scale_subtraction=False,
                  pca_file=None,
                  just_sci_hdu=False,
                  plot_dir=None,
@@ -59,6 +101,13 @@ class NircamDestriper:
             * quadrants (bool): Whether to split the chip into 512 pixel segments, and destripe each (mostly)
                 separately. Defaults to True
             * destriping_method (str): Method to use for destriping. Allowed options are given by DESTRIPING_METHODS
+            * use_sigma_clip (bool): Whether to use sigma-clipped when levelling data between columns. Defaults to
+                False
+            * filter_diffuse (bool): Whether to perform high-pass filter on data, to remove diffuse, extended emission.
+                Defaults to False, but should be set True for observations where emission fills the FOV
+            * final_large_scale_subtraction (bool): Whether to perform a final large-scale subtraction for median filter
+                or PCA. This is because large-scale ripples may be left over after the diffuse emission filtering.
+                Defaults to False
             * sigma (float): Sigma for sigma-clipping. Defaults to 3
             * npixels (int): Pixels to grow for masking. Defaults to 5
             * dilate_size (int): make_source_mask dilation size. Defaults to 11
@@ -66,11 +115,6 @@ class NircamDestriper:
             * median_filter_scales (list): Scales for median filtering
             * pca_components (int): Number of PCA components to model. Defaults to 50
             * pca_reconstruct_components (int): Number of PCA components to use in reconstruction. Defaults to 10
-            * pca_diffuse (bool): Whether to perform high-pass filter on data before PCA, to remove diffuse, extended
-                emission. Defaults to False, but should be set True for observations where emission fills the FOV
-            * pca_final_med_row_subtraction (bool): Whether to perform a final row-by-row median subtraction from the
-                data after PCA. Generally this isn't needed, but may be required for the shortest filters. Defaults to
-                False.
             * pca_file (str): Path to save PCA model to (should be a .pkl file). If using quadrants, it will append
                 the quadrant number accordingly automatically. Defaults to None, which means will not save out files
             * just_sci_hdu (bool): Write full fits HDU, or just SCI? Useful for testing, defaults to False
@@ -105,20 +149,22 @@ class NircamDestriper:
 
         self.destriping_method = destriping_method
 
-        if median_filter_scales is None:
+        if median_filter_scales == '':
             median_filter_scales = [3, 7, 15, 31, 63, 127]
         self.median_filter_scales = median_filter_scales
 
         self.use_sigma_clip = use_sigma_clip
+        self.filter_diffuse = filter_diffuse
+        self.final_large_scale_subtraction = final_large_scale_subtraction
         self.sigma = sigma
         self.npixels = npixels
+        if max_iters == '':
+            max_iters = None
         self.max_iters = max_iters
         self.dilate_size = dilate_size
 
         self.pca_components = pca_components
         self.pca_reconstruct_components = pca_reconstruct_components
-        self.pca_diffuse = pca_diffuse
-        self.pca_final_med_row_subtraction = pca_final_med_row_subtraction
         self.pca_file = pca_file
 
         self.plot_dir = plot_dir
@@ -184,9 +230,9 @@ class NircamDestriper:
                                 )
 
         dq_mask = ~np.isfinite(self.hdu['SCI'].data) | \
-            ~np.isfinite(self.hdu['ERR'].data) | \
-            (self.hdu['SCI'].data == 0) | \
-            (self.hdu['DQ'].data != 0)
+                  ~np.isfinite(self.hdu['ERR'].data) | \
+                  (self.hdu['SCI'].data == 0) | \
+                  (self.hdu['DQ'].data != 0)
         mask = mask | dq_mask
 
         data = copy.deepcopy(self.hdu['SCI'].data)
@@ -209,31 +255,12 @@ class NircamDestriper:
 
         data -= data_med
 
-        if self.pca_diffuse:
+        if self.filter_diffuse:
 
-            # Make a high signal-to-noise mask, because these guys will cause bad ol' negative bowls
-            high_sn_mask = data > 10 * data_std
-            high_sn_mask = binary_dilation(high_sn_mask, iterations=1)
-
-            # Replace bad data with random noise
-            idx = np.where(np.isnan(data) | dq_mask | high_sn_mask)
-            data[idx] = np.random.normal(loc=0, scale=data_std, size=len(idx[0]))
-
-            # Pad out the data by reflection to avoid ringing at boundaries
-            data_pad = np.zeros([data.shape[0] * 2, data.shape[1] * 2])
-            data_pad[:data.shape[0], :data.shape[1]] = copy.deepcopy(data)
-            data_pad[-data.shape[0]:, -data.shape[1]:] = copy.deepcopy(data[::-1, ::-1])
-            data_pad[-data.shape[0]:, :data.shape[1]] = copy.deepcopy(data[::-1, :])
-            data_pad[:data.shape[0], -data.shape[1]:] = copy.deepcopy(data[:, ::-1])
-            data_pad = np.roll(data_pad, axis=[0, 1], shift=[data.shape[0] // 2, data.shape[1] // 2])
-            data_pad = data_pad[data.shape[0] // 4:-data.shape[0] // 4, data.shape[1] // 4:-data.shape[1] // 4]
-
-            # Filter the image to remove any large scale structure.
-            data_filter = filters.butterworth(data_pad,
-                                              high_pass=True,
-                                              )
-            data_filter = data_filter[data.shape[0] // 4:-data.shape[0] // 4, data.shape[1] // 4:-data.shape[1] // 4]
-            data_filter[idx] = np.random.normal(loc=0, scale=data_std, size=len(idx[0]))
+            data_filter, high_sn_mask = butterworth_filter(data,
+                                                           data_std=data_std,
+                                                           dq_mask=dq_mask,
+                                                           return_high_sn_mask=True)
 
             data_train = copy.deepcopy(data_filter)
 
@@ -254,31 +281,9 @@ class NircamDestriper:
             mask_train = mask_train | high_sn_mask
 
             if self.plot_dir is not None:
-                plot_name = os.path.join(self.plot_dir,
-                                         self.hdu_out_name.split(os.path.sep)[-1].replace('.fits', '_filter+mask')
-                                         )
-
-                vmin, vmax = np.nanpercentile(data_train, [1, 99])
-                plt.figure(figsize=(8, 4))
-                plt.subplot(1, 2, 1)
-                plt.imshow(data_train, origin='lower', vmin=vmin, vmax=vmax)
-
-                plt.axis('off')
-
-                plt.title('Filtered Data')
-
-                plt.subplot(1, 2, 2)
-                plt.imshow(mask_train, origin='lower', interpolation='none')
-
-                plt.axis('off')
-
-                plt.title('Mask')
-
-                plt.savefig(plot_name + '.png', bbox_inches='tight')
-                plt.savefig(plot_name + '.pdf', bbox_inches='tight')
-
-                # plt.show()
-                plt.close()
+                self.make_mask_plot(data=data_train,
+                                    mask=mask,
+                                    )
 
         else:
 
@@ -414,7 +419,7 @@ class NircamDestriper:
                                         )[1]
         full_noise_model -= noise_med
 
-        if self.pca_final_med_row_subtraction:
+        if self.final_large_scale_subtraction:
 
             # Do a final, row-by-row clipped median subtraction
 
@@ -430,9 +435,9 @@ class NircamDestriper:
             # We expect there to be 8 NaNs here for FULL mode, 0 for subarray, if there's more it's an issue
 
             if self.is_subarray:
-                allowed_nans = 8
-            else:
                 allowed_nans = 0
+            else:
+                allowed_nans = 8
             if len(nan_idx[0]) > allowed_nans:
                 logging.warning('Median failing -- likely too much masked data')
 
@@ -534,13 +539,22 @@ class NircamDestriper:
 
         full_noise_model = np.zeros_like(self.hdu['SCI'].data)
 
+        if self.filter_diffuse:
+            data_filter, high_sn_mask = butterworth_filter(self.hdu['SCI'].data,
+                                                           dq_mask=dq_mask,
+                                                           return_high_sn_mask=True)
+            data = copy.deepcopy(data_filter)
+            mask = mask | high_sn_mask
+        else:
+            data = copy.deepcopy(self.hdu['SCI'].data)
+
         if self.quadrants:
 
-            quadrant_size = int(self.hdu['SCI'].data.shape[1] / 4)
+            quadrant_size = int(data.shape[1] / 4)
 
             # Calculate medians and apply
             for i in range(4):
-                data_quadrants = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
+                data_quadrants = data[:, i * quadrant_size: (i + 1) * quadrant_size]
                 mask_quadrants = mask[:, i * quadrant_size: (i + 1) * quadrant_size]
 
                 median_quadrants = sigma_clipped_stats(data_quadrants,
@@ -555,7 +569,7 @@ class NircamDestriper:
 
         else:
 
-            median_arr = sigma_clipped_stats(self.hdu['SCI'].data,
+            median_arr = sigma_clipped_stats(data,
                                              mask=mask,
                                              sigma=self.sigma,
                                              maxiters=self.max_iters,
@@ -566,6 +580,11 @@ class NircamDestriper:
 
             # Bring everything back up to the median level
             full_noise_model -= np.nanmedian(median_arr)
+
+        if self.plot_dir is not None:
+            self.make_mask_plot(data=data,
+                                mask=mask,
+                                )
 
         self.hdu['SCI'].data[zero_idx] = 0
         self.hdu['SCI'].data[nan_idx] = np.nan
@@ -587,6 +606,7 @@ class NircamDestriper:
         full_noise_model = np.zeros_like(self.hdu['SCI'].data)
 
         mask = None
+        dq_mask = None
         if use_mask:
             mask = make_source_mask(self.hdu['SCI'].data,
                                     nsigma=self.sigma,
@@ -596,21 +616,30 @@ class NircamDestriper:
             dq_mask = ~np.isfinite(self.hdu['SCI'].data) | (self.hdu['SCI'].data == 0) | (self.hdu['DQ'].data != 0)
             mask = mask | dq_mask
 
+        if self.filter_diffuse:
+            data_filter, high_sn_mask = butterworth_filter(self.hdu['SCI'].data,
+                                                           dq_mask=dq_mask,
+                                                           return_high_sn_mask=True)
+            data = copy.deepcopy(data_filter)
+            mask = mask | high_sn_mask
+        else:
+            data = copy.deepcopy(self.hdu['SCI'].data)
+
         if self.quadrants:
 
-            quadrant_size = int(self.hdu['SCI'].data.shape[1] / 4)
+            quadrant_size = int(data.shape[1] / 4)
 
             # Calculate medians and apply
             for i in range(4):
 
                 if use_mask:
 
-                    data_quadrant = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
+                    data_quadrant = data[:, i * quadrant_size: (i + 1) * quadrant_size]
                     mask_quadrant = mask[:, i * quadrant_size: (i + 1) * quadrant_size]
 
                     data_quadrant = np.ma.array(data_quadrant, mask=mask_quadrant)
                 else:
-                    data_quadrant = self.hdu['SCI'].data[:, i * quadrant_size: (i + 1) * quadrant_size]
+                    data_quadrant = data[:, i * quadrant_size: (i + 1) * quadrant_size]
 
                 for scale in self.median_filter_scales:
 
@@ -623,9 +652,13 @@ class NircamDestriper:
                         med = np.nanmedian(data_quadrant, axis=1)
                     nan_idx = np.where(~np.isfinite(med))
 
-                    # We expect there to be 8 NaNs here, if there's more it's an issue
-                    if len(nan_idx[0]) > 8:
-                        logging.warning('Median filter failing on quadrants -- likely large extended source')
+                    # We expect there to be 8 NaNs here for FULL data, 0 for subarray, if there's more it's an issue
+                    if self.is_subarray:
+                        allowed_nans = 0
+                    else:
+                        allowed_nans = 8
+                    if len(nan_idx[0]) > allowed_nans:
+                        logging.warning('Median failing -- likely too much masked data')
 
                     med[~np.isfinite(med)] = 0
                     noise = med - median_filter(med, scale)
@@ -642,11 +675,11 @@ class NircamDestriper:
 
             if use_mask:
                 data = np.ma.array(
-                    copy.deepcopy(self.hdu['SCI'].data),
+                    copy.deepcopy(data),
                     mask=copy.deepcopy(mask)
                 )
             else:
-                data = copy.deepcopy(self.hdu['SCI'].data)
+                data = copy.deepcopy(data)
 
             for scale in self.median_filter_scales:
 
@@ -663,6 +696,39 @@ class NircamDestriper:
                 data -= noise[:, np.newaxis]
 
                 full_noise_model += noise[:, np.newaxis]
+
+        # Do a final large-scale subtraction for any remaining large ripples. Use the last couple of scales
+        n_scales = 2
+        if self.final_large_scale_subtraction:
+
+            sub_data = self.hdu['SCI'].data - full_noise_model
+
+            if use_mask:
+                sub_data = np.ma.array(
+                    copy.deepcopy(sub_data),
+                    mask=copy.deepcopy(mask)
+                )
+
+            for scale in self.median_filter_scales[-n_scales:]:
+
+                if use_mask:
+                    med = np.ma.median(sub_data, axis=1)
+                    mask_idx = np.where(med.mask)
+                    med = med.data
+                    med[mask_idx] = np.nan
+                else:
+                    med = np.nanmedian(sub_data, axis=1)
+                med[~np.isfinite(med)] = 0
+                noise = med - median_filter(med, scale)
+
+                sub_data -= noise[:, np.newaxis]
+
+                full_noise_model += noise[:, np.newaxis]
+
+        if self.plot_dir is not None and mask is not None:
+            self.make_mask_plot(data=data,
+                                mask=mask,
+                                )
 
         self.hdu['SCI'].data[zero_idx] = 0
         self.hdu['SCI'].data[nan_idx] = np.nan
@@ -711,6 +777,34 @@ class NircamDestriper:
                 data[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size] += med_1 - med_2
 
         return data
+
+    def make_mask_plot(self,
+                       data,
+                       mask):
+        """Create mask diagnostic plot"""
+
+        plot_name = os.path.join(self.plot_dir,
+                                 self.hdu_out_name.split(os.path.sep)[-1].replace('.fits', '_filter+mask')
+                                 )
+
+        vmin, vmax = np.nanpercentile(data, [1, 99])
+        plt.figure(figsize=(8, 4))
+        plt.subplot(1, 2, 1)
+        plt.imshow(data, origin='lower', vmin=vmin, vmax=vmax, interpolation='none')
+
+        plt.axis('off')
+
+        plt.title('Filtered Data')
+
+        plt.subplot(1, 2, 2)
+        plt.imshow(mask, origin='lower', interpolation='none')
+
+        plt.axis('off')
+
+        plt.title('Mask')
+
+        plt.savefig(plot_name + '.png', bbox_inches='tight')
+        plt.savefig(plot_name + '.pdf', bbox_inches='tight')
 
     def make_destripe_plot(self):
         """Create diagnostic plot for the destriping

@@ -36,6 +36,7 @@ calwebb_detector1 = None
 calwebb_image2 = None
 calwebb_image3 = None
 TweakRegStep = None
+SkyMatchStep = None
 
 # Pipeline steps
 ALLOWED_STEPS = [
@@ -43,6 +44,7 @@ ALLOWED_STEPS = [
     'lv2',
     'destripe',
     'bg_sub',
+    'dither_match',
     'lyot_adjust',
     'wcs_adjust',
     'lv3',
@@ -150,6 +152,7 @@ FWHM_PIX = {
 
 def parallel_destripe(hdu_name,
                       band,
+                      target,
                       destripe_parameter_dict=None,
                       pca_dir=None,
                       out_dir=None,
@@ -182,7 +185,9 @@ def parallel_destripe(hdu_name,
 
         value = parse_parameter_dict(destripe_parameter_dict,
                                      key,
-                                     band)
+                                     band,
+                                     target,
+                                     )
         if value == 'VAL_NOT_FOUND':
             continue
 
@@ -225,26 +230,28 @@ def parallel_tweakback(crf_file,
         }
     )
 
-    crf_im.set_correction(matrix=matrix,
-                          shift=shift,
-                          ref_tpwcs=ref_tpwcs,
-                          )
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        crf_im.set_correction(matrix=matrix,
+                              shift=shift,
+                              ref_tpwcs=ref_tpwcs,
+                              )
 
-    crf_input_im = crf_im.meta['image_model']
-    crf_input_im.meta.wcs = crf_im.wcs
+        crf_input_im = crf_im.meta['image_model']
+        crf_input_im.meta.wcs = crf_im.wcs
 
-    try:
-        update_fits_wcsinfo(
-            crf_input_im,
-            max_pix_error=0.01,
-            npoints=16,
-        )
-    except (ValueError, RuntimeError) as e:
-        logging.warning(
-            "Failed to update 'meta.wcsinfo' with FITS SIP "
-            f'approximation. Reported error is:\n"{e.args[0]}"'
-        )
-        return False
+        try:
+            update_fits_wcsinfo(
+                crf_input_im,
+                max_pix_error=0.01,
+                npoints=16,
+            )
+        except (ValueError, RuntimeError) as e:
+            logging.warning(
+                "Failed to update 'meta.wcsinfo' with FITS SIP "
+                f'approximation. Reported error is:\n"{e.args[0]}"'
+            )
+            return False
 
     crf_out_file = crf_file.replace('.fits', '_tweakback.fits')
     crf_input_im.save(crf_out_file)
@@ -252,30 +259,101 @@ def parallel_tweakback(crf_file,
     return True
 
 
-def sigma_clip(data, sigma=3, n_pixels=5, max_iterations=20):
+def sigma_clip(data,
+               dq_mask=None,
+               sigma=1.5,
+               n_pixels=5,
+               max_iterations=20,
+               ):
     """Get sigma-clipped statistics for data"""
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        mask = make_source_mask(data, nsigma=sigma, npixels=n_pixels)
+        mask = make_source_mask(data, mask=dq_mask, nsigma=sigma, npixels=n_pixels)
+        if dq_mask is not None:
+            mask = mask | dq_mask
         mean, median, std_dev = sigma_clipped_stats(data, mask=mask, sigma=sigma, maxiters=max_iterations)
 
     return mean, median, std_dev
 
 
-def background_subtract(hdu_filename):
+def background_subtract(hdu_filename,
+                        sigma=1.5,
+                        n_pixels=5,
+                        max_iterations=20,
+                        ):
     """Sigma-clipped background subtraction for fits HDU"""
 
     hdu = fits.open(hdu_filename)
-    mean, median, std = sigma_clip(hdu['SCI'].data)
+
+    dq_mask = hdu['DQ'].data != 0
+
+    mean, median, std = sigma_clip(hdu['SCI'].data,
+                                   dq_mask=dq_mask,
+                                   sigma=sigma,
+                                   n_pixels=n_pixels,
+                                   max_iterations=max_iterations,
+                                   )
     hdu['SCI'].data -= median
 
     return hdu
 
 
+def background_match(files,
+                     out_dir):
+    """Match a series of observations to a common level"""
+
+    hdus = []
+
+    for in_file in files:
+        hdu = fits.open(in_file)
+        hdus.append(hdu)
+
+    # Reproject the tiles and DQ arrays to the first pixel grid
+    data_reproj = np.full([*hdus[0]['SCI'].data.shape, len(files)], np.nan)
+
+    data_reproj[:, :, 0] = copy.deepcopy(hdus[0]['SCI'].data)
+
+    mask = np.zeros_like(hdus[0]['SCI'].data)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        for i, hdu in enumerate(hdus[1:]):
+            data_reproj[:, :, i + 1] = reproject_interp(hdu['SCI'],
+                                                        hdus[0]['SCI'].header,
+                                                        return_footprint=False,
+                                                        )
+
+            # Do this for DQ since the WCS are different
+            dq = fits.ImageHDU(hdu['DQ'].data, hdu['SCI'].header)
+            dq_reproj = reproject_interp(dq,
+                                         hdus[0]['SCI'].header,
+                                         order='nearest-neighbor',
+                                         return_footprint=False, )
+            mask[dq_reproj != 0] = 1
+
+    for i in range(data_reproj.shape[-1]):
+        data_reproj[:, :, i][mask != 0] = np.nan
+
+    # Take a sigma-clipped median for each, to avoid errant brightness etc
+    meds = [sigma_clip(data_reproj[:, :, i])[0]
+            for i in range(data_reproj.shape[-1])]
+
+    # And match to the first one
+    for i in range(len(hdus)):
+        hdus[i]['SCI'].data -= meds[i] - meds[0]
+
+        hdu_out_name = os.path.join(out_dir, os.path.split(files[i])[-1])
+        hdus[i].writeto(hdu_out_name, overwrite=True)
+        hdus[i].close()
+
+    return True
+
+
 def parse_fits_to_table(file,
                         check_bgr=False,
-                        check_type='parallel_off'
+                        check_type='parallel_off',
+                        background_name='off',
                         ):
     """Pull necessary info out of fits headers
 
@@ -283,8 +361,9 @@ def parse_fits_to_table(file,
         file (str): File to get info for
         check_bgr (bool): Whether to check if this is a science or background observation (in the MIRI case)
         check_type (str): How to check if background observation. Options are 'parallel_off', which will use the
-            filename to see if it's a parallel observation with NIRCAM, or 'off_in_name', which will use the observation
-            name to check
+            filename to see if it's a parallel observation with NIRCAM, or 'check_in_name', which will use the
+            observation name to check, matching against 'background_name'. Defaults to 'parallel_off'
+        background_name (str): Name to indicate background observation. Defaults to 'off'.
     """
 
     if check_bgr:
@@ -298,9 +377,9 @@ def parse_fits_to_table(file,
             if file_split.split('_')[1][2] == '2':
                 f_type = 'bgr'
 
-        elif check_type == 'off_in_name':
+        elif check_type == 'check_in_name':
             hdu = fits.open(file)
-            if 'off' in hdu[0].header['TARGPROP'].lower():
+            if background_name in hdu[0].header['TARGPROP'].lower():
                 f_type = 'bgr'
             hdu.close()
         else:
@@ -316,6 +395,7 @@ def parse_fits_to_table(file,
 def parse_parameter_dict(parameter_dict,
                          key,
                          band,
+                         target,
                          ):
     """Pull values out of a parameter dictionary
 
@@ -324,6 +404,7 @@ def parse_parameter_dict(parameter_dict,
         key (str): Particular key in parameter_dict to consider
         band (str): JWST band, to parse out band type and potentially per-band
             values
+        target (str): JWST target, for very specific values
 
     """
 
@@ -357,8 +438,18 @@ def parse_parameter_dict(parameter_dict,
         elif band in value.keys():
             value = value[band]
 
+        elif target in value.keys():
+            value = value[target]
+
         else:
             value = 'VAL_NOT_FOUND'
+
+        # Add another level, where we can specify this per-target
+        if isinstance(value, dict):
+            if target in value.keys():
+                value = value[target]
+            else:
+                value = 'VAL_NOT_FOUND'
 
     # Finally, if we have a string with a 'pix' in there, we need to convert to arcsec
     if isinstance(value, str):
@@ -398,6 +489,7 @@ def recursive_getattr(f,
 def attribute_setter(pipeobj,
                      parameter_dict,
                      band,
+                     target,
                      ):
     for key in parameter_dict.keys():
         if type(parameter_dict[key]) is dict:
@@ -405,6 +497,7 @@ def attribute_setter(pipeobj,
                 value = parse_parameter_dict(parameter_dict[key],
                                              subkey,
                                              band,
+                                             target,
                                              )
                 if value == 'VAL_NOT_FOUND':
                     continue
@@ -419,6 +512,7 @@ def attribute_setter(pipeobj,
             value = parse_parameter_dict(parameter_dict,
                                          key,
                                          band,
+                                         target,
                                          )
             if value == 'VAL_NOT_FOUND':
                 continue
@@ -449,15 +543,19 @@ class JWSTReprocess:
                  bands=None,
                  steps=None,
                  overwrites=None,
+                 obs_to_skip=None,
                  lv1_parameter_dict='phangs',
                  lv2_parameter_dict='phangs',
                  lv3_parameter_dict='phangs',
+                 bg_sub_parameter_dict=None,
                  destripe_parameter_dict='phangs',
                  astrometry_parameter_dict='phangs',
                  lyot_method='mask',
-                 degroup_short_nircam=True,
+                 degroup_tweakreg_short_nircam=True,
+                 group_skymatch_dithers=None,
                  bgr_check_type='parallel_off',
-                 astrometric_alignment_dict=None,
+                 bgr_background_name='off',
+                 bgr_observation_types=None,
                  astrometric_alignment_type='image',
                  astrometric_alignment_image=None,
                  astrometric_alignment_table=None,
@@ -493,23 +591,33 @@ class JWSTReprocess:
             * reprocess_dir (str): Path to reprocess data into
             * crds_dir (str): Path to CRDS data
             * bands (list): JWST filters to loop over
-            * steps (list): Steps to perform in the order they should be performed. Should be drawn from ALLOWED_STEPS.
-                Defaults to None, which will run the standard STScI pipeline
-            * overwrites (list): Steps to overwrite. Should be drawn from ALLOWED_STEPS. Defaults to None, which will
-                not overwrite anything
+            * steps (list or dict): Steps to perform in the order they should be performed. Should be drawn from
+                ALLOWED_STEPS. Can specify separately for NIRCam and MIRI. Defaults to None, which will run the standard
+                STScI pipeline
+            * overwrites (list or dict): Steps to overwrite. Should be drawn from ALLOWED_STEPS. Can be specified
+                separately for NIRCam and MIRI. Defaults to None, which will not overwrite anything
+            * obs_to_skip (list): Flag failed observations that may still be included in archive downloads. If the
+                filename matches part of any of the strings provided here, will not include that observation in
+                reprocessing. Defaults to None
             * lv1_parameter_dict (dict): Dictionary of parameters to feed to level 1 pipeline. See description above
                 for how this should be formatted. Defaults to 'phangs', which will use the parameters for the
                 PHANGS-JWST reduction. To keep pipeline default, use 'None'
             * lv2_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 2 pipeline
             * lv3_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 3 pipeline
+            * bg_sub_parameter_dict (dict): As `lv1_parameter_dict`, but for the background subtraction procedure
             * destripe_parameter_dict (dict): As `lv1_parameter_dict`, but for the destriping procedure
             * astrometry_parameter_dict (dict): As `lv1_parameter_dict`, but for astrometric alignment
             * lyot_method (str): Method to account for mistmatch lyot coronagraph in MIRI imaging. Can either mask with
                 `mask`, or adjust to main chip with `adjust`. Defaults to `mask`
-            * degroup_short_nircam (bool): Will degroup short wavelength NIRCAM observations for all steps beyond
-                relative alignment. This can alleviate steps between mosaic pointings
+            * degroup_tweakreg_short_nircam (bool): Will degroup short wavelength NIRCAM observations for all steps
+                beyond relative alignment. This can alleviate steps between mosaic pointings
+            * group_skymatch_dithers (list): Which type of observations to group in Skymatch. Should be one of
+                'nircam_short', 'nircam_long', 'miri'. Defaults to None, which will not tie any together
             * bgr_check_type (str): Method to check if MIRI obs is science or background. Options are 'parallel_off' and
-                off_in_name. Defaults to 'parallel_off'
+                'check_in_name'. Defaults to 'parallel_off'
+            * bgr_background_name (str): If `bgr_check_type` is 'check_in_name', this is the string to match
+            * bgr_observation_types (list): List of observation types with dedicated backgrounds. Defaults to None, i.e.
+                no observations have backgrounds
             * astrometric_alignment_type (str): Whether to align to image or table. Defaults to `image`
             * astrometric_alignment_image (str): Path to image to align astrometry to
             * astrometric_alignment_table (str): Path to table to align astrometry to
@@ -530,7 +638,6 @@ class JWSTReprocess:
                 the number of pointings to use (jwxxxxxyyyzzz_...), where zzz is the considered numbers
 
         TODO:
-            * Update destriping algorithm as we improve it
             * Record alignment parameters into the fits header
 
         """
@@ -541,7 +648,7 @@ class JWSTReprocess:
         # Use global variables, so we can import JWST stuff preserving environment variables
         global jwst
         global calwebb_detector1, calwebb_image2, calwebb_image3
-        global TweakRegStep
+        global TweakRegStep, SkyMatchStep
         global datamodels, update_fits_wcsinfo
 
         import jwst
@@ -549,6 +656,7 @@ class JWSTReprocess:
         from jwst.assign_wcs.util import update_fits_wcsinfo
         from jwst.pipeline import calwebb_detector1, calwebb_image2, calwebb_image3
         from jwst.tweakreg import TweakRegStep
+        from jwst.skymatch import SkyMatchStep
 
         self.target = target
 
@@ -639,16 +747,20 @@ class JWSTReprocess:
 
         self.lv3_parameter_dict = lv3_parameter_dict
 
+        if bg_sub_parameter_dict is None:
+            bg_sub_parameter_dict = {}
+        self.bg_sub_parameter_dict = bg_sub_parameter_dict
+
         if destripe_parameter_dict is None:
             destripe_parameter_dict = {}
         elif destripe_parameter_dict == 'phangs':
             destripe_parameter_dict = {
                 'quadrants': True,
+                'filter_diffuse': True,
                 'destriping_method': 'pca',
                 'dilate_size': 7,
                 'pca_reconstruct_components': 5,
-                'pca_diffuse': True,
-                'pca_final_med_row_subtraction': False,
+                'final_large_scale_subtraction': False,
             }
 
             # Old version, using median filter
@@ -678,7 +790,11 @@ class JWSTReprocess:
 
         self.lyot_method = lyot_method
 
-        self.degroup_short_nircam = degroup_short_nircam
+        self.degroup_tweakreg_short_nircam = degroup_tweakreg_short_nircam
+
+        if group_skymatch_dithers is None:
+            group_skymatch_dithers = []
+        self.group_skymatch_dithers = group_skymatch_dithers
 
         # Default to standard STScI pipeline
         if steps is None:
@@ -689,15 +805,22 @@ class JWSTReprocess:
             ]
         if overwrites is None:
             overwrites = []
+        if obs_to_skip is None:
+            obs_to_skip = []
 
         self.steps = steps
         self.overwrites = overwrites
+        self.obs_to_skip = obs_to_skip
 
         self.astrometric_alignment_type = astrometric_alignment_type
         self.astrometric_alignment_image = astrometric_alignment_image
         self.astrometric_alignment_table = astrometric_alignment_table
 
         self.bgr_check_type = bgr_check_type
+        self.bgr_background_name = bgr_background_name
+        if bgr_observation_types is None:
+            bgr_observation_types = []
+        self.bgr_observation_types = bgr_observation_types
 
         self.correct_lv1_wcs = correct_lv1_wcs
 
@@ -726,6 +849,7 @@ class JWSTReprocess:
             'lv2': 'rate',
             'destripe': 'cal',
             'bg_sub': 'cal',
+            'dither_match': 'cal',
             'lyot_adjust': 'cal',
             'wcs_adjust': 'cal',
             'lv3': 'cal',
@@ -737,6 +861,7 @@ class JWSTReprocess:
             'lv2': 'cal',
             'destripe': 'destripe',
             'bg_sub': 'bg_sub',
+            'dither_match': 'dither_match',
             'lyot_adjust': 'lyot_adjust',
             'wcs_adjust': 'wcs_adjust',
             'lv3': 'lv3',
@@ -748,6 +873,7 @@ class JWSTReprocess:
             'lv2': 'rate',
             'destripe': 'cal',
             'bg_sub': 'cal',
+            'dither_match': 'cal',
             'lyot_adjust': 'cal',
             'wcs_adjust': 'cal',
             'lv3': 'i2d',
@@ -788,12 +914,27 @@ class JWSTReprocess:
 
             self.logger.info('-> Processing band %s' % band)
 
-            if 'all' in self.overwrites:
+            if isinstance(self.steps, dict):
+                steps = self.steps[band_type]
+            else:
+                steps = copy.deepcopy(self.steps)
+
+            if isinstance(self.overwrites, dict):
+                overwrites = self.overwrites[band_type]
+            else:
+                overwrites = copy.deepcopy(self.overwrites)
+
+            if 'all' in overwrites:
                 shutil.rmtree(base_band_dir)
 
             in_band_dir = None
 
-            for step in self.steps:
+            no_raw_data = False
+
+            for step in steps:
+
+                if no_raw_data:
+                    continue
 
                 if step not in ALLOWED_STEPS:
                     raise Warning('Step %s not recognised!' % step)
@@ -803,7 +944,7 @@ class JWSTReprocess:
                 out_band_dir = os.path.join(base_band_dir, out_band_dir_dict[step])
                 step_ext = step_ext_dict[step]
 
-                overwrite = step in self.overwrites
+                overwrite = step in overwrites
 
                 # Flush if we're overwriting
                 if overwrite and step not in STEP_NO_DEL_DIR:
@@ -835,6 +976,7 @@ class JWSTReprocess:
                         if len(raw_files) == 0:
                             self.logger.warning('-> No raw files found. Skipping')
                             shutil.rmtree(base_band_dir)
+                            no_raw_data = True
                             continue
 
                         raw_files.sort()
@@ -843,6 +985,14 @@ class JWSTReprocess:
 
                             raw_fits_name = raw_file.split(os.path.sep)[-1]
                             hdu_out_name = os.path.join(in_band_dir, raw_fits_name)
+
+                            # If we have a failed observation, skip it
+                            skip_file = False
+                            for obs in self.obs_to_skip:
+                                if obs in raw_fits_name:
+                                    skip_file = True
+                            if skip_file:
+                                continue
 
                             if not os.path.exists(hdu_out_name) or overwrite:
 
@@ -958,24 +1108,32 @@ class JWSTReprocess:
                         # Don't update the current folder
                         continue
 
-                elif step == 'wcs_adjust' and band in self.wcs_adjust_dict.keys():
+                elif step == 'wcs_adjust':
 
-                    cal_files = glob.glob(os.path.join(in_band_dir,
-                                                       '*_%s.fits' % step_ext)
-                                          )
+                    if band in self.wcs_adjust_dict.keys():
 
-                    cal_files.sort()
+                        cal_files = glob.glob(os.path.join(in_band_dir,
+                                                           '*_%s.fits' % step_ext)
+                                              )
 
-                    if len(cal_files) == 0:
-                        self.logger.warning('-> No files found. Skipping')
-                        shutil.rmtree(base_band_dir)
+                        cal_files.sort()
+
+                        if len(cal_files) == 0:
+                            self.logger.warning('-> No files found. Skipping')
+                            shutil.rmtree(base_band_dir)
+                            continue
+
+                        self.wcs_adjust(input_dir=in_band_dir,
+                                        output_dir=out_band_dir,
+                                        band=band)
+
+                    else:
+
+                        # Don't update the current folder
                         continue
 
-                    self.wcs_adjust(input_dir=in_band_dir,
-                                    output_dir=out_band_dir,
-                                    band=band)
-
-                elif step == 'bg_sub':
+                elif step == 'dither_match':
+                    # Match the backgrounds for each set of dithers
 
                     cal_files = glob.glob(os.path.join(in_band_dir,
                                                        '*_%s.fits' % step_ext)
@@ -991,13 +1149,65 @@ class JWSTReprocess:
                         shutil.rmtree(base_band_dir)
                         continue
 
-                    for hdu_in_name in cal_files:
-                        hdu = background_subtract(hdu_in_name)
+                    dithers = np.unique(['_'.join(os.path.split(cal_file)[-1].split('_')[:2])
+                                         for cal_file in cal_files])
+
+                    for dither in tqdm(dithers, ascii=True):
+                        dither_files = glob.glob(os.path.join(in_band_dir,
+                                                              '%s*_%s.fits' % (dither, step_ext))
+                                                 )
+
+                        dither_files.sort()
+                        background_match(dither_files,
+                                         out_dir=out_band_dir)
+
+                elif step == 'bg_sub':
+                    # Subtract a sigma-clipped background from each image
+
+                    cal_files = glob.glob(os.path.join(in_band_dir,
+                                                       '*_%s.fits' % step_ext)
+                                          )
+
+                    cal_files.sort()
+
+                    if not os.path.exists(out_band_dir):
+                        os.makedirs(out_band_dir)
+
+                    if len(cal_files) == 0:
+                        self.logger.warning('-> No files found. Skipping')
+                        shutil.rmtree(base_band_dir)
+                        continue
+
+                    bg_sub_args = get_default_args(background_subtract)
+
+                    for hdu_in_name in tqdm(cal_files, ascii=True):
 
                         hdu_out_name = os.path.join(out_band_dir, hdu_in_name.split(os.path.sep)[-1])
-                        hdu.writeto(hdu_out_name, overwrite=True)
 
-                        hdu.close()
+                        if not os.path.exists(hdu_out_name) or overwrite:
+
+                            bg_sub_kws = {}
+                            for bg_sub_arg in bg_sub_args.keys():
+
+                                if bg_sub_arg in self.bg_sub_parameter_dict.keys():
+                                    arg_val = parse_parameter_dict(self.bg_sub_parameter_dict,
+                                                                   bg_sub_arg,
+                                                                   band,
+                                                                   self.target,
+                                                                   )
+                                    if arg_val == 'VAL_NOT_FOUND':
+                                        arg_val = bg_sub_args[bg_sub_arg]
+                                else:
+                                    arg_val = bg_sub_args[bg_sub_arg]
+
+                                bg_sub_kws[bg_sub_arg] = arg_val
+
+                            hdu = background_subtract(hdu_in_name,
+                                                      **bg_sub_kws)
+
+                            hdu.writeto(hdu_out_name, overwrite=True)
+
+                            hdu.close()
 
                 elif step == 'lv3':
 
@@ -1087,6 +1297,7 @@ class JWSTReprocess:
 
             for result in tqdm(pool.imap(partial(parallel_destripe,
                                                  band=band,
+                                                 target=self.target,
                                                  destripe_parameter_dict=self.destripe_parameter_dict,
                                                  pca_dir=pca_dir,
                                                  out_dir=out_dir,
@@ -1198,6 +1409,9 @@ class JWSTReprocess:
             output_dir (str): Where to save files to
             band (str): JWST filter
         """
+
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
 
         input_files = glob.glob(os.path.join(input_dir,
                                              '*cal.fits')
@@ -1315,7 +1529,9 @@ class JWSTReprocess:
             for f in all_fits_files:
                 tab.add_row(parse_fits_to_table(f,
                                                 check_bgr=check_bgr,
-                                                check_type=self.bgr_check_type)
+                                                check_type=self.bgr_check_type,
+                                                background_name=self.bgr_background_name,
+                                                )
                             )
             tab.sort(keys='Start')
 
@@ -1346,7 +1562,7 @@ class JWSTReprocess:
                 })
 
             # For testing purposes - enable level2 reduction for off images in the same way as the science
-            if (band_type == 'miri') and process_bgr_like_science:
+            if band_type in self.bgr_observation_types and process_bgr_like_science:
                 for row_id, row in enumerate(bgr_tab):
                     json_content['products'].append({
                         'name': f'offset_{band}_{row_id + 1}',
@@ -1357,8 +1573,8 @@ class JWSTReprocess:
                         ]
                     })
 
-            # Associate background files, but only for MIRI
-            if band_type == 'miri':
+            # Associate background files, but only for observations with background obs
+            if band_type in self.bgr_observation_types:
                 for product in json_content['products']:
                     for row in bgr_tab:
                         product['members'].append({
@@ -1437,7 +1653,9 @@ class JWSTReprocess:
 
                 tab.add_row(parse_fits_to_table(f,
                                                 check_bgr=check_bgr,
-                                                check_type=self.bgr_check_type)
+                                                check_type=self.bgr_check_type,
+                                                background_name=self.bgr_background_name,
+                                                )
                             )
 
             json_content = {"asn_type": "None",
@@ -1499,6 +1717,14 @@ class JWSTReprocess:
         else:
             raise Warning('Band %s not recognised!' % band)
 
+        if band_type == 'nircam':
+            if int(band[1:4]) <= 212:
+                band_type_short_long = 'nircam_short'
+            else:
+                band_type_short_long = 'nircam_long'
+        else:
+            band_type_short_long = 'miri'
+
         orig_dir = os.getcwd()
 
         os.chdir(input_dir)
@@ -1550,19 +1776,15 @@ class JWSTReprocess:
                     if not os.path.isdir(detector1.output_dir):
                         os.makedirs(detector1.output_dir)
 
-                    detector1 = attribute_setter(detector1, self.lv1_parameter_dict, band)
-                    # for key in self.lv1_parameter_dict.keys():
+                    detector1 = attribute_setter(detector1,
+                                                 parameter_dict=self.lv1_parameter_dict,
+                                                 band=band,
+                                                 target=self.target)
 
-                    #     value = parse_parameter_dict(self.lv1_parameter_dict,
-                    #                                  key,
-                    #                                  band)
-                    #     if value == 'VAL_NOT_FOUND':
-                    #         continue
-
-                    #     recursive_setattr(detector1, key, value)
-
-                    # Run the level 1 pipeline
-                    detector1.run(uncal_file)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore')
+                        # Run the level 1 pipeline
+                        detector1.run(uncal_file)
 
         elif pipeline_stage == 'lv2':
 
@@ -1579,24 +1801,20 @@ class JWSTReprocess:
                 if not os.path.isdir(im2.output_dir):
                     os.makedirs(im2.output_dir)
 
-                im2 = attribute_setter(im2, self.lv2_parameter_dict, band)
-
-                # for key in self.lv2_parameter_dict.keys():
-
-                #     value = parse_parameter_dict(self.lv2_parameter_dict,
-                #                                  key,
-                #                                  band)
-                #     if value == 'VAL_NOT_FOUND':
-                #         continue
-
-                #     recursive_setattr(im2, key, value)
+                im2 = attribute_setter(im2,
+                                       parameter_dict=self.lv2_parameter_dict,
+                                       band=band,
+                                       target=self.target,
+                                       )
 
                 if self.updated_flats_dir is not None:
                     my_flat = [f for f in glob.glob(os.path.join(self.updated_flats_dir, "*.fits")) if band in f]
                     if len(my_flat) != 0:
                         im2.flat_field.user_supplied_flat = my_flat[0]
                 # Run the level 2 pipeline
-                im2.run(asn_file)
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    im2.run(asn_file)
 
         elif pipeline_stage == 'lv3':
 
@@ -1616,30 +1834,7 @@ class JWSTReprocess:
                 # FWHM should be set per-band for both tweakreg and source catalogue
                 fwhm_pix = FWHM_PIX[band]
 
-                # If we're degrouping short NIRCAM observations, we still want to align grouped
-                if self.degroup_short_nircam:
-                    tweakreg = TweakRegStep()
-                    tweakreg.output_dir = output_dir
-                    tweakreg.save_results = False
-                    tweakreg.kernel_fwhm = fwhm_pix * 2
-
-                    try:
-                        tweakreg_params = self.lv3_parameter_dict['tweakreg']
-                    except KeyError:
-                        pass
-
-                    for tweakreg_key in tweakreg_params:
-                        value = parse_parameter_dict(tweakreg_params,
-                                                     tweakreg_key,
-                                                     band)
-
-                        if value == 'VAL_NOT_FOUND':
-                            continue
-
-                        recursive_setattr(tweakreg, tweakreg_key, value)
-                    asn_file = tweakreg.run(asn_file)
-
-                # Now run through the rest of the pipeline
+                # Set up to run lv3 pipeline
 
                 config = calwebb_image3.Image3Pipeline.get_config_from_reference(asn_file)
                 im3 = calwebb_image3.Image3Pipeline.from_config_section(config)
@@ -1648,15 +1843,47 @@ class JWSTReprocess:
                 im3.tweakreg.kernel_fwhm = fwhm_pix * 2
                 im3.source_catalog.kernel_fwhm = fwhm_pix * 2
 
-                im3 = attribute_setter(im3, self.lv3_parameter_dict, band)
+                im3 = attribute_setter(im3,
+                                       parameter_dict=self.lv3_parameter_dict,
+                                       band=band,
+                                       target=self.target,
+                                       )
 
-                if self.degroup_short_nircam:
+                # If we're degrouping short NIRCAM observations, we still want to align grouped
+                if self.degroup_tweakreg_short_nircam:
+                    tweakreg = TweakRegStep()
+                    tweakreg.output_dir = output_dir
+                    tweakreg.save_results = False
+                    tweakreg.kernel_fwhm = fwhm_pix * 2
+
+                    try:
+                        tweakreg_params = self.lv3_parameter_dict['tweakreg']
+                    except KeyError:
+                        tweakreg_params = {}
+
+                    for tweakreg_key in tweakreg_params:
+                        value = parse_parameter_dict(tweakreg_params,
+                                                     tweakreg_key,
+                                                     band,
+                                                     self.target,
+                                                     )
+
+                        if value == 'VAL_NOT_FOUND':
+                            continue
+
+                        recursive_setattr(tweakreg, tweakreg_key, value)
+
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore')
+                        asn_file = tweakreg.run(asn_file)
+
+                if self.degroup_tweakreg_short_nircam:
 
                     # Make sure we skip tweakreg since we've already done it
                     im3.tweakreg.skip = True
 
                     # Degroup the short NIRCAM observations, to avoid background issues
-                    if int(band[1:4]) <= 212 and band_type == 'nircam':
+                    if band_type_short_long == 'nircam_short':
                         degroup = True
                     else:
                         degroup = False
@@ -1664,8 +1891,47 @@ class JWSTReprocess:
                     if degroup:
                         for i, model in enumerate(asn_file._models):
                             model.meta.observation.exposure_number = str(i)
-                # Run the level 3 pipeline
-                im3.run(asn_file)
+
+                if band_type_short_long in self.group_skymatch_dithers:
+
+                    skymatch = SkyMatchStep()
+                    skymatch.output_dir = output_dir
+                    skymatch.save_results = False
+
+                    try:
+                        skymatch_params = self.lv3_parameter_dict['skymatch']
+                    except KeyError:
+                        skymatch_params = {}
+
+                    for skymatch_key in skymatch_params:
+                        value = parse_parameter_dict(skymatch_params,
+                                                     skymatch_key,
+                                                     band,
+                                                     self.target,
+                                                     )
+
+                        if value == 'VAL_NOT_FOUND':
+                            continue
+
+                        recursive_setattr(skymatch, skymatch_key, value)
+
+                    for model in asn_file._models:
+                        model.meta.observation.exposure_number = '1'
+
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore')
+                        asn_file = skymatch.run(asn_file)
+
+                    # Degroup again to avoid potential weirdness later
+                    for i, model in enumerate(asn_file._models):
+                        model.meta.observation.exposure_number = str(i)
+
+                    im3.skymatch.skip = True
+
+                # Run the rest of the level 3 pipeline
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    im3.run(asn_file)
 
         else:
 
@@ -1818,7 +2084,9 @@ class JWSTReprocess:
 
                     value = parse_parameter_dict(self.astrometry_parameter_dict,
                                                  key,
-                                                 band)
+                                                 band,
+                                                 self.target,
+                                                 )
                     if value == 'VAL_NOT_FOUND':
                         continue
 
@@ -1835,6 +2103,7 @@ class JWSTReprocess:
                         arg_val = parse_parameter_dict(self.astrometry_parameter_dict,
                                                        fit_wcs_arg,
                                                        band,
+                                                       self.target,
                                                        )
                         if arg_val == 'VAL_NOT_FOUND':
                             arg_val = fit_wcs_args[fit_wcs_arg]
@@ -1980,6 +2249,7 @@ class JWSTReprocess:
             if not os.path.exists(ref_hdu_name):
                 if not os.path.exists(aligned_file) or overwrite:
                     os.system('cp %s %s' % (jwst_file, aligned_file))
+                    continue
 
             if not os.path.exists(aligned_file) or overwrite:
                 ref_hdu = fits.open(ref_hdu_name)
@@ -1999,17 +2269,19 @@ class JWSTReprocess:
 
                 # Reproject the ref HDU to the image to align
 
-                ref_data = reproject_interp(fits.PrimaryHDU(data=ref_data, header=ref_hdu['SCI'].header),
-                                            wcs_jwst,
-                                            shape_out=jwst_hdu['SCI'].data.shape,
-                                            return_footprint=False,
-                                            )
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    ref_data = reproject_interp(fits.PrimaryHDU(data=ref_data, header=ref_hdu['SCI'].header),
+                                                wcs_jwst,
+                                                shape_out=jwst_hdu['SCI'].data.shape,
+                                                return_footprint=False,
+                                                )
 
-                ref_err = reproject_interp(fits.PrimaryHDU(data=ref_err, header=ref_hdu['SCI'].header),
-                                           wcs_jwst,
-                                           shape_out=jwst_hdu['SCI'].data.shape,
-                                           return_footprint=False,
-                                           )
+                    ref_err = reproject_interp(fits.PrimaryHDU(data=ref_err, header=ref_hdu['SCI'].header),
+                                               wcs_jwst,
+                                               shape_out=jwst_hdu['SCI'].data.shape,
+                                               return_footprint=False,
+                                               )
 
                 nan_idx = np.logical_or(np.isnan(ref_data),
                                         np.isnan(jwst_data))
