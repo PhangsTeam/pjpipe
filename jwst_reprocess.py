@@ -543,6 +543,7 @@ class JWSTReprocess:
                  bands=None,
                  steps=None,
                  overwrites=None,
+                 obs_to_skip=None,
                  lv1_parameter_dict='phangs',
                  lv2_parameter_dict='phangs',
                  lv3_parameter_dict='phangs',
@@ -595,6 +596,9 @@ class JWSTReprocess:
                 STScI pipeline
             * overwrites (list or dict): Steps to overwrite. Should be drawn from ALLOWED_STEPS. Can be specified
                 separately for NIRCam and MIRI. Defaults to None, which will not overwrite anything
+            * obs_to_skip (list): Flag failed observations that may still be included in archive downloads. If the
+                filename matches part of any of the strings provided here, will not include that observation in
+                reprocessing. Defaults to None
             * lv1_parameter_dict (dict): Dictionary of parameters to feed to level 1 pipeline. See description above
                 for how this should be formatted. Defaults to 'phangs', which will use the parameters for the
                 PHANGS-JWST reduction. To keep pipeline default, use 'None'
@@ -801,9 +805,12 @@ class JWSTReprocess:
             ]
         if overwrites is None:
             overwrites = []
+        if obs_to_skip is None:
+            obs_to_skip = []
 
         self.steps = steps
         self.overwrites = overwrites
+        self.obs_to_skip = obs_to_skip
 
         self.astrometric_alignment_type = astrometric_alignment_type
         self.astrometric_alignment_image = astrometric_alignment_image
@@ -978,6 +985,14 @@ class JWSTReprocess:
 
                             raw_fits_name = raw_file.split(os.path.sep)[-1]
                             hdu_out_name = os.path.join(in_band_dir, raw_fits_name)
+
+                            # If we have a failed observation, skip it
+                            skip_file = False
+                            for obs in self.obs_to_skip:
+                                if obs in raw_fits_name:
+                                    skip_file = True
+                            if skip_file:
+                                continue
 
                             if not os.path.exists(hdu_out_name) or overwrite:
 

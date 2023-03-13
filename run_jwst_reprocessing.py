@@ -87,6 +87,7 @@ for prop_id in prop_ids:
                                bands=bands,
                                steps=config['pipeline']['steps'],
                                overwrites=config['pipeline']['overwrites'],
+                               obs_to_skip=config['pipeline']['obs_to_skip'],
                                lv1_parameter_dict=config['lv1_parameters'],
                                lv2_parameter_dict=config['lv2_parameters'],
                                lv3_parameter_dict=config['lv3_parameters'],

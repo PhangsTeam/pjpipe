@@ -79,6 +79,10 @@ overwrites = [
 #    'astrometric_align',
 ]
 
+obs_to_skip = [
+    'jw02107007003_02105_00003'
+]
+
 
 [alignment]
 ic5332 = 'ic5332_agb_cat.fits'
