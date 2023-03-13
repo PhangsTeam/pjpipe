@@ -186,7 +186,8 @@ for this_gal in gal_names:
         this_plot_fname = my_plot_dir+this_gal+'_'+comp_filt+'_vs_'+ref_filt+'.png'
         slope, intercept = solve_for_offset(
             comp_hdu, ref_hdu, mask_hdu=None,
-            xmin=0.25, xmax=2.0, binsize=0.1,
+            # Note WISE3 specific
+            xmin=0.0, xmax=0.8, binsize=0.1,
             make_plot=True, plot_fname=this_plot_fname,
             label_str=this_gal+'\n'+comp_filt+' vs. '+ref_filt)
 

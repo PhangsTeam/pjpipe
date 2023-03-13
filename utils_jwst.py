@@ -209,8 +209,10 @@ def solve_for_offset(
 
     Returns:
 
-    offset, slope : the value to add to REF to get COMP along with
-    the SLOPE to multiply REF by. That is:
+    offset, slope : the value to subtract from COMP to match the zero
+    point of REF assuming they can be related by a single scaling,
+    along with the SLOPE to multiply REF by to get COMP after removing
+    a DC offset. That is:
 
     comp = slope * ref + offset
 
