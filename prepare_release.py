@@ -65,23 +65,24 @@ hdu_ext_to_delete = [
     'VAR_FLAT'
 ]
 
-for prop_id in tqdm(prop_ids, ascii=True):
+for prop_id in tqdm(prop_ids, ascii=True, desc='prop ids'):
 
     targets = config['projects'][prop_id]['targets']
 
-    for target in tqdm(targets, ascii=True, leave=False):
+    for target in tqdm(targets, ascii=True, leave=False, desc='targets'):
 
         release_target_dir = os.path.join(release_dir, target)
         if not os.path.exists(release_target_dir):
             os.makedirs(release_target_dir)
 
-        for file_ext in file_exts:
+        for file_ext in tqdm(file_exts, ascii=True, leave=False, desc='main files'):
 
             file_names = glob.glob(os.path.join(reprocess_dir,
                                                 target,
                                                 '*',
                                                 'lv3',
                                                 '*_%s' % file_ext))
+            file_names.sort()
 
             for file_name in file_names:
 
@@ -113,7 +114,9 @@ for prop_id in tqdm(prop_ids, ascii=True):
                                                      '*',
                                                      'lv3',
                                                      '*_%s' % tweakback_ext))
-            for tweakback_file in tweakback_files:
+            tweakback_files.sort()
+
+            for tweakback_file in tqdm(tweakback_files, ascii=True, leave=False, desc='tweakback'):
 
                 hdu_out_name = os.path.join(release_target_dir, os.path.split(tweakback_file)[-1])
 
