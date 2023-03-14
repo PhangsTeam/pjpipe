@@ -300,8 +300,17 @@ def background_subtract(hdu_filename,
 
 
 def background_match(files,
-                     out_dir):
-    """Match a series of observations to a common level"""
+                     out_dir,
+                     remove_background=False,
+                     ):
+    """Match a series of observations to a common level
+
+    Args:
+        files: List of files to match
+        out_dir: Directory to save the subtracted files to
+        remove_background (bool): Whether to remove the calculated background, or just to match to the first tile in
+            the sequence. Defaults to False
+    """
 
     hdus = []
 
@@ -341,7 +350,10 @@ def background_match(files,
 
     # And match to the first one
     for i in range(len(hdus)):
-        hdus[i]['SCI'].data -= meds[i] - meds[0]
+        if remove_background:
+            hdus[i]['SCI'].data -= meds[i]
+        else:
+            hdus[i]['SCI'].data -= meds[i] - meds[0]
 
         hdu_out_name = os.path.join(out_dir, os.path.split(files[i])[-1])
         hdus[i].writeto(hdu_out_name, overwrite=True)
@@ -1141,25 +1153,29 @@ class JWSTReprocess:
 
                     cal_files.sort()
 
-                    if not os.path.exists(out_band_dir):
-                        os.makedirs(out_band_dir)
-
                     if len(cal_files) == 0:
                         self.logger.warning('-> No files found. Skipping')
                         shutil.rmtree(base_band_dir)
                         continue
 
-                    dithers = np.unique(['_'.join(os.path.split(cal_file)[-1].split('_')[:2])
-                                         for cal_file in cal_files])
+                    if not os.path.exists(out_band_dir):
+                        os.makedirs(out_band_dir)
 
-                    for dither in tqdm(dithers, ascii=True):
-                        dither_files = glob.glob(os.path.join(in_band_dir,
-                                                              '%s*_%s.fits' % (dither, step_ext))
-                                                 )
+                    out_files = glob.glob(os.path.join(out_band_dir,
+                                                       '*.fits'))
+                    if len(out_files) == 0 or overwrite:
 
-                        dither_files.sort()
-                        background_match(dither_files,
-                                         out_dir=out_band_dir)
+                        dithers = np.unique(['_'.join(os.path.split(cal_file)[-1].split('_')[:2])
+                                             for cal_file in cal_files])
+
+                        for dither in tqdm(dithers, ascii=True):
+                            dither_files = glob.glob(os.path.join(in_band_dir,
+                                                                  '%s*_%s.fits' % (dither, step_ext))
+                                                     )
+
+                            dither_files.sort()
+                            background_match(dither_files,
+                                             out_dir=out_band_dir)
 
                 elif step == 'bg_sub':
                     # Subtract a sigma-clipped background from each image

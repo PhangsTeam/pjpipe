@@ -197,5 +197,5 @@ sigma = 3
 
 [prepare_release]
 remove_bloat = true
-move_tweakback = false
+move_tweakback = true
 overwrite = false
