@@ -37,6 +37,7 @@ calwebb_image2 = None
 calwebb_image3 = None
 TweakRegStep = None
 SkyMatchStep = None
+SourceCatalogStep = None
 
 # Pipeline steps
 ALLOWED_STEPS = [
@@ -556,6 +557,7 @@ class JWSTReprocess:
                  steps=None,
                  overwrites=None,
                  obs_to_skip=None,
+                 extra_obs_to_include=None,
                  lv1_parameter_dict='phangs',
                  lv2_parameter_dict='phangs',
                  lv3_parameter_dict='phangs',
@@ -563,7 +565,9 @@ class JWSTReprocess:
                  destripe_parameter_dict='phangs',
                  astrometry_parameter_dict='phangs',
                  lyot_method='mask',
-                 degroup_tweakreg_short_nircam=True,
+                 tweakreg_create_custom_catalogs=None,
+                 degroup_short_nircam=True,
+                 group_tweakreg_dithers=None,
                  group_skymatch_dithers=None,
                  bgr_check_type='parallel_off',
                  bgr_background_name='off',
@@ -611,6 +615,9 @@ class JWSTReprocess:
             * obs_to_skip (list): Flag failed observations that may still be included in archive downloads. If the
                 filename matches part of any of the strings provided here, will not include that observation in
                 reprocessing. Defaults to None
+            * extra_obs_to_include (dict): Dictionary in the form {target: {other_target: [obs_to_match]}}. Will then
+                include observations from other targets in the reprocessing. Generally you shouldn't need to use this,
+                but may be useful for taking background observations from another target. Defaults to None
             * lv1_parameter_dict (dict): Dictionary of parameters to feed to level 1 pipeline. See description above
                 for how this should be formatted. Defaults to 'phangs', which will use the parameters for the
                 PHANGS-JWST reduction. To keep pipeline default, use 'None'
@@ -621,9 +628,14 @@ class JWSTReprocess:
             * astrometry_parameter_dict (dict): As `lv1_parameter_dict`, but for astrometric alignment
             * lyot_method (str): Method to account for mistmatch lyot coronagraph in MIRI imaging. Can either mask with
                 `mask`, or adjust to main chip with `adjust`. Defaults to `mask`
-            * degroup_tweakreg_short_nircam (bool): Will degroup short wavelength NIRCAM observations for all steps
-                beyond relative alignment. This can alleviate steps between mosaic pointings
-            * group_skymatch_dithers (list): Which type of observations to group in Skymatch. Should be one of
+            * tweakreg_create_custom_catalogs (list): Whether to use the SourceCatalogStep for tweakreg source finding,
+                rather than the default algorithm. Should be list of 'nircam_short', 'nircam_long', 'miri'. Defaults
+                to None, which will not tie any together
+            * degroup_short_nircam (bool): Will degroup short wavelength NIRCAM observations for all steps beyond
+                relative alignment. This can alleviate steps between mosaic pointings
+            * group_tweakreg_dithers (list): Which type of observations to group in Tweakreg. Should be list of
+                'nircam_short', 'nircam_long', 'miri'. Defaults to None, which will not tie any together
+            * group_skymatch_dithers (list): Which type of observations to group in Skymatch. Should be list of
                 'nircam_short', 'nircam_long', 'miri'. Defaults to None, which will not tie any together
             * bgr_check_type (str): Method to check if MIRI obs is science or background. Options are 'parallel_off' and
                 'check_in_name'. Defaults to 'parallel_off'
@@ -660,7 +672,7 @@ class JWSTReprocess:
         # Use global variables, so we can import JWST stuff preserving environment variables
         global jwst
         global calwebb_detector1, calwebb_image2, calwebb_image3
-        global TweakRegStep, SkyMatchStep
+        global TweakRegStep, SkyMatchStep, SourceCatalogStep
         global datamodels, update_fits_wcsinfo
 
         import jwst
@@ -669,6 +681,7 @@ class JWSTReprocess:
         from jwst.pipeline import calwebb_detector1, calwebb_image2, calwebb_image3
         from jwst.tweakreg import TweakRegStep
         from jwst.skymatch import SkyMatchStep
+        from jwst.source_catalog import SourceCatalogStep
 
         self.target = target
 
@@ -802,7 +815,15 @@ class JWSTReprocess:
 
         self.lyot_method = lyot_method
 
-        self.degroup_tweakreg_short_nircam = degroup_tweakreg_short_nircam
+        self.degroup_short_nircam = degroup_short_nircam
+
+        if tweakreg_create_custom_catalogs is None:
+            tweakreg_create_custom_catalogs = []
+        self.tweakreg_create_custom_catalogs = tweakreg_create_custom_catalogs
+
+        if group_tweakreg_dithers is None:
+            group_tweakreg_dithers = []
+        self.group_tweakreg_dithers = group_tweakreg_dithers
 
         if group_skymatch_dithers is None:
             group_skymatch_dithers = []
@@ -819,10 +840,13 @@ class JWSTReprocess:
             overwrites = []
         if obs_to_skip is None:
             obs_to_skip = []
+        if extra_obs_to_include is None:
+            extra_obs_to_include = {}
 
         self.steps = steps
         self.overwrites = overwrites
         self.obs_to_skip = obs_to_skip
+        self.extra_obs_to_include = extra_obs_to_include
 
         self.astrometric_alignment_type = astrometric_alignment_type
         self.astrometric_alignment_image = astrometric_alignment_image
@@ -984,6 +1008,25 @@ class JWSTReprocess:
                                          '*%s_%s.fits' % (band_ext, step_ext),
                                          )
                         )
+
+                        # Include any additionally specified observations
+                        if self.target in self.extra_obs_to_include.keys():
+
+                            extra_obs_to_include = self.extra_obs_to_include[self.target]
+                            for other_target in extra_obs_to_include.keys():
+                                for obs_to_include in extra_obs_to_include[other_target]:
+
+                                    extra_files = glob.glob(
+                                        os.path.join(self.raw_dir,
+                                                     other_target,
+                                                     'mastDownload',
+                                                     'JWST',
+                                                     '%s*%s' % (obs_to_include, band_ext),
+                                                     '*%s_%s.fits' % (band_ext, step_ext),
+                                                     )
+                                    )
+
+                                    raw_files.extend(extra_files)
 
                         if len(raw_files) == 0:
                             self.logger.warning('-> No raw files found. Skipping')
@@ -1338,7 +1381,7 @@ class JWSTReprocess:
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
 
-        for hdu_name in in_files:
+        for hdu_name in tqdm(in_files, ascii=True):
             hdu = fits.open(hdu_name)
 
             out_name = os.path.join(out_dir,
@@ -1396,10 +1439,13 @@ class JWSTReprocess:
 
         """
 
+        lyot_i = slice(735, None)
+        lyot_j = slice(None, 290)
+
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
 
-        for hdu_name in in_files:
+        for hdu_name in tqdm(in_files, ascii=True):
             hdu = fits.open(hdu_name)
 
             out_name = os.path.join(out_dir,
@@ -1408,8 +1454,9 @@ class JWSTReprocess:
             if os.path.exists(out_name):
                 return True
 
-            hdu['SCI'].data[735:, :290] = 0
-            hdu['DQ'].data[735:, :290] = 1  # Masks the coronagraph area
+            hdu['SCI'].data[lyot_i, lyot_j] = np.nan
+            hdu['ERR'].data[lyot_i, lyot_j] = np.nan
+            hdu['DQ'].data[lyot_i, lyot_j] = 513  # Masks the coronagraph area like the other coronagraphs
             hdu.writeto(out_name, overwrite=True)
 
             hdu.close()
@@ -1859,18 +1906,76 @@ class JWSTReprocess:
                 im3.tweakreg.kernel_fwhm = fwhm_pix * 2
                 im3.source_catalog.kernel_fwhm = fwhm_pix * 2
 
+                if band_type_short_long in self.tweakreg_create_custom_catalogs:
+                    im3.tweakreg.use_custom_catalogs = True
+
+                # Remove the tweakreg_source_catalog part, if it exists
+                lv3_parameter_dict = copy.deepcopy(self.lv3_parameter_dict)
+                if 'tweakreg_source_catalog' in lv3_parameter_dict.keys():
+                    lv3_parameter_dict.pop('tweakreg_source_catalog')
+
                 im3 = attribute_setter(im3,
-                                       parameter_dict=self.lv3_parameter_dict,
+                                       parameter_dict=lv3_parameter_dict,
                                        band=band,
                                        target=self.target,
                                        )
 
-                # If we're degrouping short NIRCAM observations, we still want to align grouped
-                if self.degroup_tweakreg_short_nircam:
-                    tweakreg = TweakRegStep()
+                # Load the asn file in, so we have access to everything we need later
+                asn_file = datamodels.ModelContainer(asn_file)
+
+                if band_type_short_long in self.tweakreg_create_custom_catalogs:
+                    # Create custom catalogs for tweakreg
+
+                    for model in asn_file._models:
+
+                        config = SourceCatalogStep.get_config_from_reference(asn_file)
+                        catalog = SourceCatalogStep.from_config_section(config)
+                        catalog.output_dir = input_dir
+                        catalog.kernel_fwhm = fwhm_pix * 2
+                        catalog.save_results = True
+
+                        try:
+                            catalog_params = self.lv3_parameter_dict['tweakreg_source_catalog']
+                        except KeyError:
+                            catalog_params = {}
+
+                        for catalog_key in catalog_params:
+                            value = parse_parameter_dict(catalog_params,
+                                                         catalog_key,
+                                                         band,
+                                                         self.target,
+                                                         )
+
+                            if value == 'VAL_NOT_FOUND':
+                                continue
+
+                            recursive_setattr(catalog, catalog_key, value)
+
+                        edit_model = copy.deepcopy(model)
+
+                        # Mask out bad data quality
+                        dq_idx = edit_model.dq != 0
+                        edit_model.data[dq_idx] = 0
+                        edit_model.err[dq_idx] = 0
+                        edit_model.wht[dq_idx] = 0
+                        edit_model.wht[~dq_idx] = 1
+
+                        catalog.run(edit_model)
+
+                        model.meta.tweakreg_catalog = model.meta.filename.replace('_cal.fits', '_cat.ecsv')
+
+                # Run the tweakreg step with custom hacks if required
+                if (self.degroup_short_nircam and band_type_short_long == 'nircam_short') \
+                        or band_type_short_long in self.group_tweakreg_dithers:
+
+                    config = TweakRegStep.get_config_from_reference(asn_file)
+                    tweakreg = TweakRegStep.from_config_section(config)
                     tweakreg.output_dir = output_dir
                     tweakreg.save_results = False
                     tweakreg.kernel_fwhm = fwhm_pix * 2
+
+                    if band_type_short_long in self.tweakreg_create_custom_catalogs:
+                        tweakreg.use_custom_catalogs = True
 
                     try:
                         tweakreg_params = self.lv3_parameter_dict['tweakreg']
@@ -1889,28 +1994,27 @@ class JWSTReprocess:
 
                         recursive_setattr(tweakreg, tweakreg_key, value)
 
+                    # Group up the dithers
+                    if band_type_short_long in self.group_tweakreg_dithers:
+                        for model in asn_file._models:
+                            model.meta.observation.exposure_number = '1'
+
                     with warnings.catch_warnings():
                         warnings.simplefilter('ignore')
                         asn_file = tweakreg.run(asn_file)
 
-                if self.degroup_tweakreg_short_nircam:
-
                     # Make sure we skip tweakreg since we've already done it
                     im3.tweakreg.skip = True
 
-                    # Degroup the short NIRCAM observations, to avoid background issues
-                    if band_type_short_long == 'nircam_short':
-                        degroup = True
-                    else:
-                        degroup = False
+                    # Degroup again to avoid potential weirdness later
+                    for i, model in enumerate(asn_file._models):
+                        model.meta.observation.exposure_number = str(i)
 
-                    if degroup:
-                        for i, model in enumerate(asn_file._models):
-                            model.meta.observation.exposure_number = str(i)
-
+                # Run the skymatch step with custom hacks if required
                 if band_type_short_long in self.group_skymatch_dithers:
 
-                    skymatch = SkyMatchStep()
+                    config = SkyMatchStep.get_config_from_reference(asn_file)
+                    skymatch = SkyMatchStep.from_config_section(config)
                     skymatch.output_dir = output_dir
                     skymatch.save_results = False
 
