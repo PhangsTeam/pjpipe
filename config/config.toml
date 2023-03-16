@@ -35,7 +35,7 @@ targets = [
 ]
 
 [pipeline]
-data_version = 'v0p7'
+data_version = 'v0p7p1'
 flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
@@ -52,7 +52,9 @@ miri_bands = [
     'F2100W',
 ]
 
-degroup_tweakreg_short_nircam = true
+degroup_short_nircam = true
+tweakreg_create_custom_catalogs = ['miri']
+group_tweakreg_dithers = ['miri']
 group_skymatch_dithers = []
 
 bgr_check_type = 'parallel_off'
@@ -67,20 +69,45 @@ lyot_method = 'mask'
 
 astrometric_alignment_type = 'table'
 
-steps = [
+steps.nircam = [
     'lv1',
     'lv2',
     'destripe',
-    'lyot_adjust',
     'lv3',
     'astrometric_align',
 ]
-overwrites = [
+steps.miri = [
+    'lv1',
+    'lv2',
+    'lyot_adjust',
+    'dither_match',
+    'lv3',
+    'astrometric_align',
+]
+
+overwrites.nircam = [
+]
+
+overwrites.miri = [
+#    'all',
+#    'lyot_adjust',
+#    'dither_match',
+#    'lv3',
 #    'astrometric_align',
 ]
 
 obs_to_skip = [
     'jw02107007003_02105_00003'
+]
+
+# For IC5332, pull the backgrounds from NGC7496
+[extra_obs_to_include.ic5332]
+#ngc0628 = [
+#    'jw02107040001',
+#    'jw02107040002',
+#]
+ngc7496 = [
+    'jw02107041001',
 ]
 
 
@@ -127,6 +154,12 @@ sigma = 1.5
 [lv3_parameters]
 save_results = true
 
+[lv3_parameters.tweakreg_source_catalog]
+snr_threshold = 2
+npixels = 5
+bkg_boxsize = 25
+deblend = true
+
 [lv3_parameters.tweakreg]
 align_to_gaia = false
 brightest = 500
@@ -139,8 +172,9 @@ searchrad = '10pix'
 separation = '10pix'
 tolerance.nircam_short = '5pix'
 tolerance.nircam_long = '10pix'
-tolerance.miri='10pix'
-use2dhist = false
+tolerance.miri = '10pix'
+use2dhist.nircam = false
+use2dhist.miri = true
 roundlo.nircam = -0.5
 roundhi.nircam = 0.5
 # Tweak boxsize, so we detect objects in diffuse emission
@@ -197,5 +231,5 @@ sigma = 3
 
 [prepare_release]
 remove_bloat = true
-move_tweakback = true
+move_tweakback = false
 overwrite = false
