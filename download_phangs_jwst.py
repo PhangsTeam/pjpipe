@@ -17,7 +17,7 @@ if len(sys.argv) == 1:
 elif len(sys.argv) == 2:
     local_file = script_dir + '/config/local.toml'
     config_file = sys.argv[1]
-    
+
 elif len(sys.argv) == 3:
     local_file = sys.argv[2]
     config_file = sys.argv[1]
@@ -43,7 +43,7 @@ else:
         login = True
     except KeyError:
         pass
-    
+
 if not os.path.exists(base_dir):
     os.makedirs(base_dir)
 

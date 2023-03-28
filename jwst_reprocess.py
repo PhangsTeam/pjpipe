@@ -1304,11 +1304,11 @@ class JWSTReprocess:
                                           )
 
                 elif step == 'astrometric_align':
-
-                    if self.use_field_in_lev3 is not None:
-                        in_band_dir += '_field_' + \
-                                       '_'.join(np.atleast_1d(self.use_field_in_lev3).astype(str))
-
+                    
+                    # if self.use_field_in_lev3 is not None:
+                    #     in_band_dir += '_field_' + \
+                    #                    '_'.join(np.atleast_1d(self.use_field_in_lev3).astype(str))
+                    
                     if band in self.alignment_mapping.keys():
                         self.align_wcs_to_jwst(in_band_dir,
                                                band,
@@ -1720,7 +1720,7 @@ class JWSTReprocess:
                                                 background_name=self.bgr_background_name,
                                                 )
                             )
-
+            
             json_content = {"asn_type": "None",
                             "asn_rule": "DMS_Level3_Base",
                             "version_id": time.strftime('%Y%m%dt%H%M%S'),

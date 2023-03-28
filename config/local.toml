@@ -1,6 +1,7 @@
 [local]
-api_key = ''
+api_key = 'cffbf9e6e21b4b0baead567299186b19'
+crds_dir = '/mnt/space/erosolow/phangs_jwst/crds/'
 raw_dir = '/mnt/space/erosolow/phangs_jwst/'
 working_dir = '/mnt/space/erosolow/phangs_jwst/working/'
 updated_flats_dir = ''
-processors = 8
+processors = 4
