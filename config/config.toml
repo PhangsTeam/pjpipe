@@ -35,7 +35,7 @@ targets = [
 ]
 
 [pipeline]
-data_version = 'v0p7p1'
+data_version = 'v0p7p2'
 flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
@@ -52,14 +52,26 @@ miri_bands = [
     'F2100W',
 ]
 
-degroup_short_nircam = true
-tweakreg_create_custom_catalogs = ['miri']
-group_tweakreg_dithers = ['miri']
-group_skymatch_dithers = []
+tweakreg_create_custom_catalogs = [
+#    'miri',
+]
+group_tweakreg_dithers = [
+    'nircam_short',
+    'nircam_long',
+    'miri',
+]
+group_skymatch_dithers = [
+    'miri',
+]
+degroup_skymatch_dithers = [
+    'nircam_short',
+]
 
 bgr_check_type = 'parallel_off'
 bgr_background_name = 'off'
-bgr_observation_types = ['miri']
+bgr_observation_types = [
+    'miri',
+]
 
 lev3_fields = [] # indicate numbers of particular field if you want
                   # to limit the level3
@@ -73,6 +85,7 @@ steps.nircam = [
     'lv1',
     'lv2',
     'destripe',
+    'wcs_adjust',
     'lv3',
     'astrometric_align',
 ]
@@ -81,17 +94,20 @@ steps.miri = [
     'lv2',
     'lyot_adjust',
     'dither_match',
+    'wcs_adjust',
     'lv3',
     'astrometric_align',
 ]
 
 overwrites.nircam = [
+#    'wcs_adjust',
+#    'lv3',
+#    'astrometric_align',
 ]
 
 overwrites.miri = [
-#    'all',
-#    'lyot_adjust',
 #    'dither_match',
+#    'wcs_adjust',
 #    'lv3',
 #    'astrometric_align',
 ]
@@ -107,9 +123,92 @@ obs_to_skip = [
 #    'jw02107040002',
 #]
 ngc7496 = [
-    'jw02107041001',
+    'jw02107041001_0?2',
 ]
 
+[wcs_adjust]
+
+[wcs_adjust.ic5332]
+jw02107018002.shift = [-0.03, 0.004]
+
+[wcs_adjust.ngc0628]
+jw02107039002.shift = [-0.19, -0.08]
+jw02107039003.shift = [-0.22, -0.10]
+
+jw02107040002.shift = [0.04, 0.00]
+
+[wcs_adjust.ngc1087]
+jw02107001002.shift = [-0.16, -0.03]
+
+[wcs_adjust.ngc1300]
+jw02107002002.shift = [-0.20, -0.02]
+jw02107002003.shift = [-0.07, -0.04]
+jw02107002004.shift = [-0.25, -0.02]
+
+jw02107020002.shift = [0.04, -0.02]
+
+[wcs_adjust.ngc1365]
+jw02107003002.shift = [-0.12, -0.02]
+jw02107003003.shift = [-0.18, -0.05]
+jw02107003004.shift = [-0.05, -0.06]
+
+jw02107021002.shift = [-0.15, -0.04]
+
+[wcs_adjust.ngc1433]
+jw02107005002.shift = [0.34, -0.06]
+jw02107005003.shift = [0.32, -0.05]
+jw02107005004.shift = [0.34, -0.03]
+
+jw02107023002.shift = [0.20, 0.00]
+
+[wcs_adjust.ngc1512]
+jw02107006002.shift = [-0.36, -0.02]
+jw02107006003.shift = [-0.39, -0.05]
+jw02107006004.shift = [-0.08, -0.07]
+
+jw02107024002.shift = [0.17, -0.02]
+
+[wcs_adjust.ngc1566]
+jw02107007002.shift = [0.00, 0.02]
+jw02107007003.shift = [-0.47, -0.90]
+jw02107007004.shift = [-0.40, -0.91]
+
+jw02107025002.shift = [-0.10, -0.07]
+
+[wcs_adjust.ngc1672]
+jw02107008002.shift = [-0.47, 0.00]
+
+jw02107026002.shift = [0.00, 0.02]
+
+[wcs_adjust.ngc3627]
+jw02107011002.shift = [0.08, -0.05]
+jw02107011003.shift = [-0.04, -0.04]
+jw02107011004.shift = [0.24, 0.13]
+
+jw02107029002.shift = [-0.03, 0.14]
+
+[wcs_adjust.ngc4303]
+jw02107013002.shift = [-0.04, 0.00]
+jw02107013003.shift = [-0.06, 0.01]
+jw02107013004.shift = [0.09, -0.08]
+
+[wcs_adjust.ngc4321]
+jw02107014002.shift = [0.09, -0.03]
+jw02107014003.shift = [-0.08, -0.04]
+jw02107014004.shift = [-0.07, -0.04]
+
+[wcs_adjust.ngc4535]
+jw02107015002.shift = [-0.17, 0.05]
+
+[wcs_adjust.ngc5068]
+jw02107016002.shift = [-0.16, 0.22]
+jw02107016003.shift = [0.00, 0.00]
+jw02107016004.shift = [-0.20, 0.20]
+
+jw02107034002.shift = [-0.14, 0.14]
+
+[wcs_adjust.ngc7496]
+jw02107038002.shift = [0.09, -0.06]
 
 [alignment]
 ic5332 = 'ic5332_agb_cat.fits'
@@ -158,9 +257,20 @@ save_results = true
 snr_threshold = 2
 npixels = 5
 bkg_boxsize = 25
-deblend = true
+deblend = false
+
+filter.is_extended = false
+#filter.roundness_lower = -0.5
+#filter.roundness_upper = 0.5
 
 [lv3_parameters.tweakreg]
+
+# Skip the longer wavelengths, since we inherit the solutions
+# from the shorter band
+skip.F1000W = true
+skip.F1130W = true
+skip.F2100W = true
+
 align_to_gaia = false
 brightest = 500
 snr_threshold = 3
@@ -168,32 +278,49 @@ expand_refcat = true
 fitgeometry = 'shift'
 minobj = 3
 peakmax.nircam = 20
-searchrad = '10pix'
-separation = '10pix'
-tolerance.nircam_short = '5pix'
-tolerance.nircam_long = '10pix'
-tolerance.miri = '10pix'
-use2dhist.nircam = false
-use2dhist.miri = true
 roundlo.nircam = -0.5
 roundhi.nircam = 0.5
+
+# Take relatively tight tolerances since we've already shifted
+# close to the correct solution
+separation.miri = 1
+separation.nircam = 2
+tolerance.nircam_short = 0.3
+tolerance.nircam_long = 0.3
+tolerance.miri = 1
+use2dhist = false
+
 # Tweak boxsize, so we detect objects in diffuse emission
 bkg_boxsize.nircam_short = 100
 bkg_boxsize.nircam_long = 100
 bkg_boxsize.miri = 25
 enforce_user_order = true
 
+# Parameters to get wcs_adjust shifts
+#searchrad = 2
+#separation.miri = 1
+#tolerance.miri = 0.7
+#separation.nircam = 2
+#tolerance.nircam = 1
+#use2dhist = true
+#nclip = 5
+
 [lv3_parameters.skymatch]
+
 skymethod = 'global+match'
 subtract = true
 apply_sky.miri = true
 skystat = 'median'
 nclip.nircam = 20
 nclip.miri = 10
-lsigma.nircam =  3
+lsigma.nircam = 3
 lsigma.miri = 1.5
 usigma.nircam = 3
 usigma.miri = 1.5
+
+# For a few problematic cases, we can use this setup
+apply_sky.F2100W.ic5332 = false
+apply_sky.F2100W.ngc5068 = false
 
 [lv3_parameters.outlier_detection]
 in_memory = true
