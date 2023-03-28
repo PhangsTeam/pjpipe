@@ -14,6 +14,7 @@ from multiprocessing import cpu_count
 
 import numpy as np
 from astropy.io import fits
+from astropy.nddata.bitmask import interpret_bit_flags, bitfield_to_boolean_mask
 from astropy.stats import sigma_clipped_stats
 from astropy.table import Table, QTable
 from drizzlepac import updatehdr
@@ -31,6 +32,7 @@ from nircam_destriping import NircamDestriper
 
 jwst = None
 datamodels = None
+pixel = None
 update_fits_wcsinfo = None
 calwebb_detector1 = None
 calwebb_image2 = None
@@ -272,7 +274,7 @@ def sigma_clip(data,
         warnings.simplefilter('ignore')
         mask = make_source_mask(data, mask=dq_mask, nsigma=sigma, npixels=n_pixels)
         if dq_mask is not None:
-            mask = mask | dq_mask
+            mask = np.logical_or(mask, dq_mask)
         mean, median, std_dev = sigma_clipped_stats(data, mask=mask, sigma=sigma, maxiters=max_iterations)
 
     return mean, median, std_dev
@@ -309,56 +311,111 @@ def background_match(files,
     Args:
         files: List of files to match
         out_dir: Directory to save the subtracted files to
-        remove_background (bool): Whether to remove the calculated background, or just to match to the first tile in
+        remove_background (bool): Whether to remove a calculated background, or just to match to the first tile in
             the sequence. Defaults to False
     """
 
     hdus = []
 
     for in_file in files:
-        hdu = fits.open(in_file)
+        hdu = datamodels.open(in_file)
         hdus.append(hdu)
 
+    dq_bits = interpret_bit_flags('~DO_NOT_USE+NON_SCIENCE', flag_name_map=pixel)
+
     # Reproject the tiles and DQ arrays to the first pixel grid
-    data_reproj = np.full([*hdus[0]['SCI'].data.shape, len(files)], np.nan)
+    data_reproj = np.full([*hdus[0].data.shape, len(files)], np.nan)
 
-    data_reproj[:, :, 0] = copy.deepcopy(hdus[0]['SCI'].data)
+    data_reproj[:, :, 0] = copy.deepcopy(hdus[0].data)
 
-    mask = np.zeros_like(hdus[0]['SCI'].data)
+    sci_mask = np.zeros_like(hdus[0].data)
+    dq_mask = np.zeros_like(hdus[0].data)
+
+    sci_mask[np.logical_or(hdus[0].data == 0,
+                           ~np.isfinite(hdus[0].data)
+                           )] = 1
+    dq_bit_mask = bitfield_to_boolean_mask(
+        hdus[0].dq.astype(np.uint8),
+        dq_bits,
+        good_mask_value=0,
+        dtype=np.uint8
+    )
+    dq_mask[dq_bit_mask != 0] = 1
+
+    # Calculate a "background value", to potentially subtract later
+    bg_val = sigma_clip(data_reproj[:, :, 0],
+                        dq_mask=dq_mask,
+                        )[1]
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
+        wcs = hdus[0].meta.wcs.to_fits_sip()
         for i, hdu in enumerate(hdus[1:]):
-            data_reproj[:, :, i + 1] = reproject_interp(hdu['SCI'],
-                                                        hdus[0]['SCI'].header,
+
+            hdu_wcs = hdu.meta.wcs.to_fits_sip()
+            data_reproj[:, :, i + 1] = reproject_interp((hdu.data, hdu_wcs),
+                                                        wcs,
                                                         return_footprint=False,
                                                         )
 
             # Do this for DQ since the WCS are different
-            dq = fits.ImageHDU(hdu['DQ'].data, hdu['SCI'].header)
+            dq = fits.ImageHDU(hdu.dq, wcs)
             dq_reproj = reproject_interp(dq,
-                                         hdus[0]['SCI'].header,
+                                         wcs,
                                          order='nearest-neighbor',
-                                         return_footprint=False, )
-            mask[dq_reproj != 0] = 1
+                                         return_footprint=False,
+                                         )
+            dq_reproj[~np.isfinite(dq_reproj)] = 0
 
+            # Catch any 0s/NaNs in the science image
+            sci_mask[np.logical_or(data_reproj[:, :, i + 1] == 0,
+                                   ~np.isfinite(data_reproj[:, :, i + 1])
+                                   )] = 1
+
+            # Convert the DQ non-science/do not use to another mask
+            dq_bit_mask = bitfield_to_boolean_mask(
+                dq_reproj.astype(np.uint8),
+                dq_bits,
+                good_mask_value=0,
+                dtype=np.uint8
+            )
+            dq_mask[dq_bit_mask != 0] = 1
+
+    # Get rid of any pixels masked in any DQ mask or missing in any science image
     for i in range(data_reproj.shape[-1]):
-        data_reproj[:, :, i][mask != 0] = np.nan
+        data_reproj[:, :, i][dq_mask != 0] = np.nan
+        data_reproj[:, :, i][sci_mask != 0] = np.nan
 
-    # Take a sigma-clipped median for each, to avoid errant brightness etc
-    meds = [sigma_clip(data_reproj[:, :, i])[0]
-            for i in range(data_reproj.shape[-1])]
-
-    # And match to the first one
+    # Minimize the differences between each tile and the first
     for i in range(len(hdus)):
+
+        diff = data_reproj[:, :, i] - data_reproj[:, :, 0]
+        diff = diff.flatten()
+
+        # Sigma-clip to remove outliers in the distribution
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            diff_val = sigma_clipped_stats(diff, maxiters=None)[1]
+
+        hdus[i].data -= diff_val
+        # if hdus[i].meta.background.level is not None:
+        #     hdus[i].meta.background.level += diff_val
+        # else:
+        #     hdus[i].meta.background.level = diff_val
+
+        # Remove the pre-calculated background if we want that
         if remove_background:
-            hdus[i]['SCI'].data -= meds[i]
-        else:
-            hdus[i]['SCI'].data -= meds[i] - meds[0]
+            hdus[i].data -= bg_val
+
+        #     if hdus[i].meta.background.level is not None:
+        #         hdus[i].meta.background.level += bg_val
+        #     else:
+        #         hdus[i].meta.background.level = bg_val
+        #
+        # hdus[i].meta.background.subtracted = True
 
         hdu_out_name = os.path.join(out_dir, os.path.split(files[i])[-1])
-        hdus[i].writeto(hdu_out_name, overwrite=True)
-        hdus[i].close()
+        hdus[i].save(hdu_out_name, overwrite=True)
 
     return True
 
@@ -442,17 +499,23 @@ def parse_parameter_dict(parameter_dict,
 
     if isinstance(value, dict):
 
-        if band_type in value.keys():
-            value = value[band_type]
+        # Define a priority here. It goes:
+        # * target
+        # * band
+        # * nircam_short/nircam_long
+        # * nircam/miri
 
-        elif band_type == 'nircam' and short_long in value.keys():
-            value = value[short_long]
+        if target in value.keys():
+            value = value[target]
 
         elif band in value.keys():
             value = value[band]
 
-        elif target in value.keys():
-            value = value[target]
+        elif band_type == 'nircam' and short_long in value.keys():
+            value = value[short_long]
+
+        elif band_type in value.keys():
+            value = value[band_type]
 
         else:
             value = 'VAL_NOT_FOUND'
@@ -566,9 +629,9 @@ class JWSTReprocess:
                  astrometry_parameter_dict='phangs',
                  lyot_method='mask',
                  tweakreg_create_custom_catalogs=None,
-                 degroup_short_nircam=True,
                  group_tweakreg_dithers=None,
                  group_skymatch_dithers=None,
+                 degroup_skymatch_dithers=None,
                  bgr_check_type='parallel_off',
                  bgr_background_name='off',
                  bgr_observation_types=None,
@@ -631,12 +694,13 @@ class JWSTReprocess:
             * tweakreg_create_custom_catalogs (list): Whether to use the SourceCatalogStep for tweakreg source finding,
                 rather than the default algorithm. Should be list of 'nircam_short', 'nircam_long', 'miri'. Defaults
                 to None, which will not tie any together
-            * degroup_short_nircam (bool): Will degroup short wavelength NIRCAM observations for all steps beyond
-                relative alignment. This can alleviate steps between mosaic pointings
             * group_tweakreg_dithers (list): Which type of observations to group in Tweakreg. Should be list of
                 'nircam_short', 'nircam_long', 'miri'. Defaults to None, which will not tie any together
             * group_skymatch_dithers (list): Which type of observations to group in Skymatch. Should be list of
                 'nircam_short', 'nircam_long', 'miri'. Defaults to None, which will not tie any together
+            * degroup_skymatch_dithers (list): Which type of observations to degroup in Skymatch. Should be list of
+                'nircam_short', 'nircam_long', 'miri'. Will only do anything for short NIRCam observations. Defaults to
+                None, which will not tie any together
             * bgr_check_type (str): Method to check if MIRI obs is science or background. Options are 'parallel_off' and
                 'check_in_name'. Defaults to 'parallel_off'
             * bgr_background_name (str): If `bgr_check_type` is 'check_in_name', this is the string to match
@@ -648,7 +712,7 @@ class JWSTReprocess:
             * alignment_mapping (dict): Dictionary to map basing alignments off cross-correlation with other aligned
                 band. Should be of the form {'band': 'reference_band'}
             * wcs_adjust_dict (dict): dict to adjust image group WCS before tweakreg step. Should be of form
-                {filter: {'group': {'matrix': [[1, 0], [0, 1]], 'shift': [dx, dy]}}}. Defaults to None.
+                {target: {'visit': {'matrix': [[1, 0], [0, 1]], 'shift': [dx, dy]}}}. Defaults to None.
             * correct_lv1_wcs (bool): Check WCS in uncal files, since there is a bug that some don't have this populated
                 when pulled from the archive. Defaults to False
             * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds.stsci.edu', which will be the
@@ -673,11 +737,12 @@ class JWSTReprocess:
         global jwst
         global calwebb_detector1, calwebb_image2, calwebb_image3
         global TweakRegStep, SkyMatchStep, SourceCatalogStep
-        global datamodels, update_fits_wcsinfo
+        global datamodels, pixel, update_fits_wcsinfo
 
         import jwst
         from jwst import datamodels
         from jwst.assign_wcs.util import update_fits_wcsinfo
+        from jwst.datamodels.dqflags import pixel
         from jwst.pipeline import calwebb_detector1, calwebb_image2, calwebb_image3
         from jwst.tweakreg import TweakRegStep
         from jwst.skymatch import SkyMatchStep
@@ -815,8 +880,6 @@ class JWSTReprocess:
 
         self.lyot_method = lyot_method
 
-        self.degroup_short_nircam = degroup_short_nircam
-
         if tweakreg_create_custom_catalogs is None:
             tweakreg_create_custom_catalogs = []
         self.tweakreg_create_custom_catalogs = tweakreg_create_custom_catalogs
@@ -828,6 +891,10 @@ class JWSTReprocess:
         if group_skymatch_dithers is None:
             group_skymatch_dithers = []
         self.group_skymatch_dithers = group_skymatch_dithers
+
+        if degroup_skymatch_dithers is None:
+            degroup_skymatch_dithers = []
+        self.degroup_skymatch_dithers = degroup_skymatch_dithers
 
         # Default to standard STScI pipeline
         if steps is None:
@@ -1015,7 +1082,6 @@ class JWSTReprocess:
                             extra_obs_to_include = self.extra_obs_to_include[self.target]
                             for other_target in extra_obs_to_include.keys():
                                 for obs_to_include in extra_obs_to_include[other_target]:
-
                                     extra_files = glob.glob(
                                         os.path.join(self.raw_dir,
                                                      other_target,
@@ -1165,7 +1231,7 @@ class JWSTReprocess:
 
                 elif step == 'wcs_adjust':
 
-                    if band in self.wcs_adjust_dict.keys():
+                    if self.target in self.wcs_adjust_dict.keys():
 
                         cal_files = glob.glob(os.path.join(in_band_dir,
                                                            '*_%s.fits' % step_ext)
@@ -1180,7 +1246,7 @@ class JWSTReprocess:
 
                         self.wcs_adjust(input_dir=in_band_dir,
                                         output_dir=out_band_dir,
-                                        band=band)
+                                        )
 
                     else:
 
@@ -1464,13 +1530,12 @@ class JWSTReprocess:
     def wcs_adjust(self,
                    input_dir,
                    output_dir,
-                   band):
+                   ):
         """Adjust WCS so the tweakreg solution is closer to 0. Should be run on cal.fits files
 
         Args:
             input_dir (str): Input directory
             output_dir (str): Where to save files to
-            band (str): JWST filter
         """
 
         if not os.path.exists(output_dir):
@@ -1480,6 +1545,8 @@ class JWSTReprocess:
                                              '*cal.fits')
                                 )
         input_files.sort()
+
+        repeat_keys = []
 
         for input_file in tqdm(input_files,
                                ascii=True):
@@ -1511,33 +1578,45 @@ class JWSTReprocess:
             )
 
             # Pull out the info we need to shift
-            group = os.path.split(input_file)[-1]
-            group = '_'.join(group.split('_')[:3])
+            visit = os.path.split(input_file)[-1].split('_')[0]
 
             try:
-                wcs_adjust_vals = self.wcs_adjust_dict[band][group]
-                matrix = wcs_adjust_vals['matrix']
-                shift = wcs_adjust_vals['shift']
+                wcs_adjust_vals = self.wcs_adjust_dict[self.target][visit]
+
+                try:
+                    matrix = wcs_adjust_vals['matrix']
+                except KeyError:
+                    matrix = [[1, 0], [0, 1]]
+
+                try:
+                    shift = wcs_adjust_vals['shift']
+                except KeyError:
+                    shift = [0, 0]
+
             except KeyError:
-                self.logger.info('No WCS adjust info found for %s. Defaulting to no shift' % group)
+                if visit not in repeat_keys:
+                    self.logger.info('No WCS adjust info found for %s. Defaulting to no shift' % visit)
+                    repeat_keys.append(visit)
                 matrix = [[1, 0], [0, 1]]
                 shift = [0, 0]
 
-            im.set_correction(matrix=matrix, shift=shift)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                im.set_correction(matrix=matrix, shift=shift)
 
-            input_im.meta.wcs = im.wcs
+                input_im.meta.wcs = im.wcs
 
-            try:
-                update_fits_wcsinfo(
-                    input_im,
-                    max_pix_error=0.01,
-                    npoints=16,
-                )
-            except (ValueError, RuntimeError) as e:
-                self.logger.warning(
-                    "Failed to update 'meta.wcsinfo' with FITS SIP "
-                    f'approximation. Reported error is:\n"{e.args[0]}"'
-                )
+                try:
+                    update_fits_wcsinfo(
+                        input_im,
+                        max_pix_error=0.01,
+                        npoints=16,
+                    )
+                except (ValueError, RuntimeError) as e:
+                    self.logger.warning(
+                        "Failed to update 'meta.wcsinfo' with FITS SIP "
+                        f'approximation. Reported error is:\n"{e.args[0]}"'
+                    )
 
             input_im.save(output_file)
 
@@ -1962,91 +2041,130 @@ class JWSTReprocess:
 
                         catalog.run(edit_model)
 
-                        model.meta.tweakreg_catalog = model.meta.filename.replace('_cal.fits', '_cat.ecsv')
+                        # Finally, filter the catalog
+                        original_catalog = model.meta.filename.replace('_cal.fits', '_cat.ecsv')
+                        filter_catalog = model.meta.filename.replace('_cal.fits', '_cat_filter.ecsv')
+                        cat = Table.read(original_catalog)
+
+                        if 'filter' in catalog_params.keys():
+                            for key in catalog_params['filter']:
+
+                                if '_lower' in key:
+                                    lower = catalog_params['filter'][key]
+                                    upper_key = key.replace('_lower', '_upper')
+                                    if upper_key in catalog_params['filter'].keys():
+                                        upper = catalog_params['filter'][upper_key]
+                                    else:
+                                        upper = np.inf
+
+                                    cat = cat[np.logical_and(lower <= cat[key.replace('_lower', '')],
+                                                             cat[key.replace('_lower', '')] <= upper)]
+
+                                elif '_upper' in key:
+                                    upper = catalog_params['filter'][key]
+                                    lower_key = key.replace('_upper', '_lower')
+                                    if lower_key in catalog_params['filter'].keys():
+                                        lower = catalog_params['filter'][lower_key]
+                                    else:
+                                        lower = -np.inf
+
+                                    cat = cat[np.logical_and(lower <= cat[key.replace('_upper', '')],
+                                                             cat[key.replace('_upper', '')] <= upper)]
+
+                                else:
+                                    cat = cat[cat[key] == catalog_params['filter'][key]]
+
+                        cat.write(filter_catalog, format='ascii.ecsv', overwrite=True)
+
+                        model.meta.tweakreg_catalog = filter_catalog
 
                 # Run the tweakreg step with custom hacks if required
-                if (self.degroup_short_nircam and band_type_short_long == 'nircam_short') \
-                        or band_type_short_long in self.group_tweakreg_dithers:
 
-                    config = TweakRegStep.get_config_from_reference(asn_file)
-                    tweakreg = TweakRegStep.from_config_section(config)
-                    tweakreg.output_dir = output_dir
-                    tweakreg.save_results = False
-                    tweakreg.kernel_fwhm = fwhm_pix * 2
+                config = TweakRegStep.get_config_from_reference(asn_file)
+                tweakreg = TweakRegStep.from_config_section(config)
+                tweakreg.output_dir = output_dir
+                tweakreg.save_results = False
+                tweakreg.kernel_fwhm = fwhm_pix * 2
 
-                    if band_type_short_long in self.tweakreg_create_custom_catalogs:
-                        tweakreg.use_custom_catalogs = True
+                if band_type_short_long in self.tweakreg_create_custom_catalogs:
+                    tweakreg.use_custom_catalogs = True
 
-                    try:
-                        tweakreg_params = self.lv3_parameter_dict['tweakreg']
-                    except KeyError:
-                        tweakreg_params = {}
+                try:
+                    tweakreg_params = self.lv3_parameter_dict['tweakreg']
+                except KeyError:
+                    tweakreg_params = {}
 
-                    for tweakreg_key in tweakreg_params:
-                        value = parse_parameter_dict(tweakreg_params,
-                                                     tweakreg_key,
-                                                     band,
-                                                     self.target,
-                                                     )
+                for tweakreg_key in tweakreg_params:
+                    value = parse_parameter_dict(tweakreg_params,
+                                                 tweakreg_key,
+                                                 band,
+                                                 self.target,
+                                                 )
 
-                        if value == 'VAL_NOT_FOUND':
-                            continue
+                    if value == 'VAL_NOT_FOUND':
+                        continue
 
-                        recursive_setattr(tweakreg, tweakreg_key, value)
+                    recursive_setattr(tweakreg, tweakreg_key, value)
 
-                    # Group up the dithers
-                    if band_type_short_long in self.group_tweakreg_dithers:
-                        for model in asn_file._models:
-                            model.meta.observation.exposure_number = '1'
+                # Group up the dithers
+                if band_type_short_long in self.group_tweakreg_dithers:
+                    for model in asn_file._models:
+                        model.meta.observation.exposure_number = '1'
 
-                    with warnings.catch_warnings():
-                        warnings.simplefilter('ignore')
-                        asn_file = tweakreg.run(asn_file)
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    asn_file = tweakreg.run(asn_file)
 
-                    # Make sure we skip tweakreg since we've already done it
-                    im3.tweakreg.skip = True
+                # Make sure we skip tweakreg since we've already done it
+                im3.tweakreg.skip = True
 
-                    # Degroup again to avoid potential weirdness later
+                # Degroup again to avoid potential weirdness later
+                if band_type_short_long in self.group_tweakreg_dithers:
                     for i, model in enumerate(asn_file._models):
                         model.meta.observation.exposure_number = str(i)
 
                 # Run the skymatch step with custom hacks if required
+                config = SkyMatchStep.get_config_from_reference(asn_file)
+                skymatch = SkyMatchStep.from_config_section(config)
+                skymatch.output_dir = output_dir
+                skymatch.save_results = False
+
+                try:
+                    skymatch_params = self.lv3_parameter_dict['skymatch']
+                except KeyError:
+                    skymatch_params = {}
+
+                for skymatch_key in skymatch_params:
+                    value = parse_parameter_dict(skymatch_params,
+                                                 skymatch_key,
+                                                 band,
+                                                 self.target,
+                                                 )
+
+                    if value == 'VAL_NOT_FOUND':
+                        continue
+
+                    recursive_setattr(skymatch, skymatch_key, value)
+
                 if band_type_short_long in self.group_skymatch_dithers:
-
-                    config = SkyMatchStep.get_config_from_reference(asn_file)
-                    skymatch = SkyMatchStep.from_config_section(config)
-                    skymatch.output_dir = output_dir
-                    skymatch.save_results = False
-
-                    try:
-                        skymatch_params = self.lv3_parameter_dict['skymatch']
-                    except KeyError:
-                        skymatch_params = {}
-
-                    for skymatch_key in skymatch_params:
-                        value = parse_parameter_dict(skymatch_params,
-                                                     skymatch_key,
-                                                     band,
-                                                     self.target,
-                                                     )
-
-                        if value == 'VAL_NOT_FOUND':
-                            continue
-
-                        recursive_setattr(skymatch, skymatch_key, value)
-
                     for model in asn_file._models:
                         model.meta.observation.exposure_number = '1'
 
-                    with warnings.catch_warnings():
-                        warnings.simplefilter('ignore')
-                        asn_file = skymatch.run(asn_file)
-
-                    # Degroup again to avoid potential weirdness later
+                # Alternatively, degroup (this will only do anything for nircam_short)
+                elif band_type_short_long in self.degroup_skymatch_dithers:
                     for i, model in enumerate(asn_file._models):
                         model.meta.observation.exposure_number = str(i)
 
-                    im3.skymatch.skip = True
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    asn_file = skymatch.run(asn_file)
+
+                # Degroup again to avoid potential weirdness later
+                if band_type_short_long in self.group_skymatch_dithers:
+                    for i, model in enumerate(asn_file._models):
+                        model.meta.observation.exposure_number = str(i)
+
+                im3.skymatch.skip = True
 
                 # Run the rest of the level 3 pipeline
                 with warnings.catch_warnings():
