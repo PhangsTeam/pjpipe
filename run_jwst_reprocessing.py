@@ -37,6 +37,11 @@ updated_flats_dir = local['local']['updated_flats_dir']
 if updated_flats_dir == '':
     updated_flats_dir = None
 
+if 'webb_psf_data' in local['local'].keys():
+    webb_psf_dir = local['local']['webb_psf_data']
+else:
+    webb_psf_dir = None
+
 # We may want to occasionally flush out the CRDS directory to avoid weirdness between mappings. Probably do this at
 # the start of another version cycle
 flush_crds = config['pipeline']['flush_crds']
@@ -64,6 +69,19 @@ reprocess_dir_ext = config['pipeline']['data_version']
 
 reprocess_dir += '_%s' % reprocess_dir_ext
 
+if 'api_key' in local['local'].keys():
+    os.environ['MAST_API_TOKEN'] = local['local']['api_key']
+
+# Load in WCS adjusts, if we have them
+wcs_adjust_filename = os.path.join(reprocess_dir, 'wcs_adjust.toml')
+if os.path.exists(wcs_adjust_filename):
+    with open(wcs_adjust_filename, 'rb') as f:
+        wcs_adjust = tomllib.load(f)
+    wcs_adjust_dict = wcs_adjust['wcs_adjust']
+else:
+    wcs_adjust_dict = None
+
+
 prop_ids = config['projects']
 for prop_id in prop_ids:
     targets = config['projects'][prop_id]['targets']
@@ -84,6 +102,7 @@ for prop_id in prop_ids:
                                raw_dir=raw_dir,
                                reprocess_dir=reprocess_dir,
                                crds_dir=crds_dir,
+                               webb_psf_dir=webb_psf_dir,
                                bands=bands,
                                steps=config['pipeline']['steps'],
                                overwrites=config['pipeline']['overwrites'],
@@ -94,8 +113,11 @@ for prop_id in prop_ids:
                                lv3_parameter_dict=config['lv3_parameters'],
                                bg_sub_parameter_dict=config['bg_sub_parameters'],
                                destripe_parameter_dict=config['destripe_parameters'],
+                               astrometric_catalog_parameter_dict=config['astrometric_catalog_parameters'],
                                astrometry_parameter_dict=config['astrometry_parameters'],
-                               wcs_adjust_dict=config['wcs_adjust'],
+                               psf_model_parameter_dict=config['psf_model_parameters'],
+                               psf_model_dict=config['psf_model'],
+                               wcs_adjust_dict=wcs_adjust_dict,
                                lyot_method=config['pipeline']['lyot_method'],
                                tweakreg_create_custom_catalogs=config['pipeline']['tweakreg_create_custom_catalogs'],
                                group_tweakreg_dithers=config['pipeline']['group_tweakreg_dithers'],
@@ -107,6 +129,7 @@ for prop_id in prop_ids:
                                astrometric_alignment_type=config['pipeline']['astrometric_alignment_type'],
                                astrometric_alignment_table=alignment_table,
                                alignment_mapping=config['alignment_mapping'],
+                               alignment_mapping_mode=config['pipeline']['alignment_mapping_mode'],
                                procs=processors,
                                updated_flats_dir=updated_flats_dir,
                                # process_bgr_like_science=False,
