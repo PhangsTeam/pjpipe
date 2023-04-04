@@ -35,7 +35,7 @@ targets = [
 ]
 
 [pipeline]
-data_version = 'v0p7p2'
+data_version = 'v0p7p3'
 flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
@@ -80,12 +80,14 @@ lev3_fields = [] # indicate numbers of particular field if you want
 lyot_method = 'mask'
 
 astrometric_alignment_type = 'table'
+alignment_mapping_mode = 'shift'
 
 steps.nircam = [
     'lv1',
     'lv2',
     'destripe',
     'wcs_adjust',
+#    'psf_model',
     'lv3',
     'astrometric_align',
 ]
@@ -93,9 +95,11 @@ steps.miri = [
     'lv1',
     'lv2',
     'lyot_adjust',
-    'dither_match',
     'wcs_adjust',
+    'dither_match',
+#    'psf_model',
     'lv3',
+    'astrometric_catalog',
     'astrometric_align',
 ]
 
@@ -106,9 +110,10 @@ overwrites.nircam = [
 ]
 
 overwrites.miri = [
-#    'dither_match',
 #    'wcs_adjust',
+#    'dither_match',
 #    'lv3',
+#    'astrometric_catalog',
 #    'astrometric_align',
 ]
 
@@ -118,97 +123,20 @@ obs_to_skip = [
 
 # For IC5332, pull the backgrounds from NGC7496
 [extra_obs_to_include.ic5332]
-#ngc0628 = [
-#    'jw02107040001',
-#    'jw02107040002',
-#]
 ngc7496 = [
     'jw02107041001_0?2',
 ]
 
-[wcs_adjust]
+[psf_model_parameters]
+mode = 'replace'
+fit_method = 'image'
 
-[wcs_adjust.ic5332]
-jw02107018002.shift = [-0.03, 0.004]
+[psf_model]
 
-[wcs_adjust.ngc0628]
-jw02107039002.shift = [-0.19, -0.08]
-jw02107039003.shift = [-0.22, -0.10]
-
-jw02107040002.shift = [0.04, 0.00]
-
-[wcs_adjust.ngc1087]
-jw02107001002.shift = [-0.16, -0.03]
-
-[wcs_adjust.ngc1300]
-jw02107002002.shift = [-0.20, -0.02]
-jw02107002003.shift = [-0.07, -0.04]
-jw02107002004.shift = [-0.25, -0.02]
-
-jw02107020002.shift = [0.04, -0.02]
-
-[wcs_adjust.ngc1365]
-jw02107003002.shift = [-0.12, -0.02]
-jw02107003003.shift = [-0.18, -0.05]
-jw02107003004.shift = [-0.05, -0.06]
-
-jw02107021002.shift = [-0.15, -0.04]
-
-[wcs_adjust.ngc1433]
-jw02107005002.shift = [0.34, -0.06]
-jw02107005003.shift = [0.32, -0.05]
-jw02107005004.shift = [0.34, -0.03]
-
-jw02107023002.shift = [0.20, 0.00]
-
-[wcs_adjust.ngc1512]
-jw02107006002.shift = [-0.36, -0.02]
-jw02107006003.shift = [-0.39, -0.05]
-jw02107006004.shift = [-0.08, -0.07]
-
-jw02107024002.shift = [0.17, -0.02]
-
-[wcs_adjust.ngc1566]
-jw02107007002.shift = [0.00, 0.02]
-jw02107007003.shift = [-0.47, -0.90]
-jw02107007004.shift = [-0.40, -0.91]
-
-jw02107025002.shift = [-0.10, -0.07]
-
-[wcs_adjust.ngc1672]
-jw02107008002.shift = [-0.47, 0.00]
-
-jw02107026002.shift = [0.00, 0.02]
-
-[wcs_adjust.ngc3627]
-jw02107011002.shift = [0.08, -0.05]
-jw02107011003.shift = [-0.04, -0.04]
-jw02107011004.shift = [0.24, 0.13]
-
-jw02107029002.shift = [-0.03, 0.14]
-
-[wcs_adjust.ngc4303]
-jw02107013002.shift = [-0.04, 0.00]
-jw02107013003.shift = [-0.06, 0.01]
-jw02107013004.shift = [0.09, -0.08]
-
-[wcs_adjust.ngc4321]
-jw02107014002.shift = [0.09, -0.03]
-jw02107014003.shift = [-0.08, -0.04]
-jw02107014004.shift = [-0.07, -0.04]
-
-[wcs_adjust.ngc4535]
-jw02107015002.shift = [-0.17, 0.05]
-
-[wcs_adjust.ngc5068]
-jw02107016002.shift = [-0.16, 0.22]
-jw02107016003.shift = [0.00, 0.00]
-jw02107016004.shift = [-0.20, 0.20]
-
-jw02107034002.shift = [-0.14, 0.14]
-
-[wcs_adjust.ngc7496]
-jw02107038002.shift = [0.09, -0.06]
+[psf_model.ngc7496]
+F2100W = [
+    [347.4471073, -43.4278438],
+]
 
 [alignment]
 ic5332 = 'ic5332_agb_cat.fits'
@@ -233,10 +161,13 @@ ngc7320 = 'Gaia_DR3_NGC7320.fits'
 ngc7496 = 'ngc7496_agb_cat.fits'
 
 [alignment_mapping]
-F770W = 'F335M'
+#F770W = 'F335M'
+#F1000W = 'F770W'
+#F1130W = 'F1000W'
+#F2100W = 'F1130W'
 F1000W = 'F770W'
-F1130W = 'F1000W'
-F2100W = 'F1130W'
+F1130W = 'F770W'
+F2100W = 'F770W'
 
 [lv1_parameters]
 save_results = true
@@ -265,8 +196,9 @@ filter.is_extended = false
 
 [lv3_parameters.tweakreg]
 
-# Skip the longer wavelengths, since we inherit the solutions
-# from the shorter band
+# Skip MIRI wavelengths, since we have already
+# solved for this
+skip.F770W = true
 skip.F1000W = true
 skip.F1130W = true
 skip.F2100W = true
@@ -296,20 +228,13 @@ bkg_boxsize.nircam_long = 100
 bkg_boxsize.miri = 25
 enforce_user_order = true
 
-# Parameters to get wcs_adjust shifts
-#searchrad = 2
-#separation.miri = 1
-#tolerance.miri = 0.7
-#separation.nircam = 2
-#tolerance.nircam = 1
-#use2dhist = true
-#nclip = 5
-
 [lv3_parameters.skymatch]
 
-skymethod = 'global+match'
+# Turn off matching for MIRI since we've done it
+# already
+skymethod.nircam = 'global+match'
+skymethod.miri = 'global'
 subtract = true
-apply_sky.miri = true
 skystat = 'median'
 nclip.nircam = 20
 nclip.miri = 10
@@ -317,10 +242,6 @@ lsigma.nircam = 3
 lsigma.miri = 1.5
 usigma.nircam = 3
 usigma.miri = 1.5
-
-# For a few problematic cases, we can use this setup
-apply_sky.F2100W.ic5332 = false
-apply_sky.F2100W.ngc5068 = false
 
 [lv3_parameters.outlier_detection]
 in_memory = true
@@ -345,6 +266,13 @@ destriping_method = 'pca'
 dilate_size = 7
 pca_reconstruct_components = 5
 pca_final_med_row_subtraction = false
+
+[astrometric_catalog_parameters]
+snr = 50
+sharplo = 0.2
+sharphi = 1.0
+roundlo = -0.5
+roundhi = 0.5
 
 [astrometry_parameters]
 searchrad = 15

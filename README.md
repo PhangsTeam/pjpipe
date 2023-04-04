@@ -48,6 +48,12 @@ The resulting images will be stored in the working directory stored in your `wor
 * `miri_destriping` contains routines for destriping MIRI data
 * `run_miri_destriping` wraps around `miri_destriping`
 
+## General tools
+
+* `get_wcs_adjust` will get WCS shifts and output in a format you can paste straight into a config file. It needs to run
+  on data processed up to just before level 3, and will output a 'wcs_adjust.toml' file into the reprocess directory
+* `psf_subtraction` has routines for PSF modelling/subtraction for saturated data
+
 ## Data homogenisation tools
 
 * `make_kernels` creates convolution kernels from JWST or Gaussian PSFs, using the Aniano method. For now at least, these kernels are circularised
@@ -78,8 +84,11 @@ installed by default:
 * astroquery
 * drizzlepac
 * image-registration (install the GitHub version: pip install git+https://github.com/keflavich/image_registration.git)
+* lmfit (only required for PSF modelling)
+* numdifftools (only required for PSF modelling)
 * pytest
 * reproject
 * tomli (not required for python>=3.11)
 * tqdm
+* webbpsf (only required for PSF modelling)
 
