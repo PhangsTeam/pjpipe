@@ -37,6 +37,7 @@ file_exts = ['i2d.fits',
              'i2d_align.fits',
              'i2d_align_table.fits',
              'cat.ecsv',
+             'astro_cat.fits',
              'segm.fits']
 
 tweakback_ext = 'tweakback.fits'

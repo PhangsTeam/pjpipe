@@ -12,11 +12,14 @@ import warnings
 from functools import partial
 from multiprocessing import cpu_count
 
+import astropy.units as u
 import numpy as np
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.nddata.bitmask import interpret_bit_flags, bitfield_to_boolean_mask
 from astropy.stats import sigma_clipped_stats
 from astropy.table import Table, QTable
+from astropy.wcs import WCS
 from drizzlepac import updatehdr
 from image_registration import cross_correlation_shifts
 from photutils.segmentation import make_source_mask
@@ -40,6 +43,8 @@ calwebb_image3 = None
 TweakRegStep = None
 SkyMatchStep = None
 SourceCatalogStep = None
+webbpsf = None
+PSFSubtraction = None
 
 # Pipeline steps
 ALLOWED_STEPS = [
@@ -50,12 +55,15 @@ ALLOWED_STEPS = [
     'dither_match',
     'lyot_adjust',
     'wcs_adjust',
+    'psf_model',
     'lv3',
+    'astrometric_catalog',
     'astrometric_align',
 ]
 
 # Pipeline steps where we don't want to delete the whole directory
 STEP_NO_DEL_DIR = [
+    'astrometric_catalog',
     'astrometric_align',
 ]
 
@@ -151,6 +159,8 @@ FWHM_PIX = {
     'F2100W': 5.989,
     'F2550W': 7.312,
 }
+
+RAD2ARCSEC = 3600.0 * np.rad2deg(1.0)
 
 
 def parallel_destripe(hdu_name,
@@ -302,122 +312,129 @@ def background_subtract(hdu_filename,
     return hdu
 
 
-def background_match(files,
-                     out_dir,
-                     remove_background=False,
-                     ):
-    """Match a series of observations to a common level
+def background_match_dithers(files1,
+                             files2):
+    """Calculate relative difference between groups of files (i.e. dithers)"""
 
-    Args:
-        files: List of files to match
-        out_dir: Directory to save the subtracted files to
-        remove_background (bool): Whether to remove a calculated background, or just to match to the first tile in
-            the sequence. Defaults to False
-    """
-
-    hdus = []
-
-    for in_file in files:
-        hdu = datamodels.open(in_file)
-        hdus.append(hdu)
+    diffs = []
 
     dq_bits = interpret_bit_flags('~DO_NOT_USE+NON_SCIENCE', flag_name_map=pixel)
 
-    # Reproject the tiles and DQ arrays to the first pixel grid
-    data_reproj = np.full([*hdus[0].data.shape, len(files)], np.nan)
+    for file1 in files1:
+        for file2 in files2:
+            hdu1 = datamodels.open(file1)
+            hdu2 = datamodels.open(file2)
 
-    data_reproj[:, :, 0] = copy.deepcopy(hdus[0].data)
+            # Mask data and reproject hdu2 to hdu1
 
-    sci_mask = np.zeros_like(hdus[0].data)
-    dq_mask = np.zeros_like(hdus[0].data)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                wcs1 = hdu1.meta.wcs.to_fits_sip()
+                wcs2 = hdu2.meta.wcs.to_fits_sip()
 
-    sci_mask[np.logical_or(hdus[0].data == 0,
-                           ~np.isfinite(hdus[0].data)
-                           )] = 1
-    dq_bit_mask = bitfield_to_boolean_mask(
-        hdus[0].dq.astype(np.uint8),
-        dq_bits,
-        good_mask_value=0,
-        dtype=np.uint8
-    )
-    dq_mask[dq_bit_mask != 0] = 1
-
-    # Calculate a "background value", to potentially subtract later
-    bg_val = sigma_clip(data_reproj[:, :, 0],
-                        dq_mask=dq_mask,
-                        )[1]
-
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        wcs = hdus[0].meta.wcs.to_fits_sip()
-        for i, hdu in enumerate(hdus[1:]):
-
-            hdu_wcs = hdu.meta.wcs.to_fits_sip()
-            data_reproj[:, :, i + 1] = reproject_interp((hdu.data, hdu_wcs),
-                                                        wcs,
-                                                        return_footprint=False,
-                                                        )
-
-            # Do this for DQ since the WCS are different
-            dq = fits.ImageHDU(hdu.dq, wcs)
-            dq_reproj = reproject_interp(dq,
-                                         wcs,
-                                         order='nearest-neighbor',
-                                         return_footprint=False,
-                                         )
-            dq_reproj[~np.isfinite(dq_reproj)] = 0
-
-            # Catch any 0s/NaNs in the science image
-            sci_mask[np.logical_or(data_reproj[:, :, i + 1] == 0,
-                                   ~np.isfinite(data_reproj[:, :, i + 1])
-                                   )] = 1
-
-            # Convert the DQ non-science/do not use to another mask
-            dq_bit_mask = bitfield_to_boolean_mask(
-                dq_reproj.astype(np.uint8),
+            dq_bit_mask1 = bitfield_to_boolean_mask(
+                hdu1.dq.astype(np.uint8),
                 dq_bits,
                 good_mask_value=0,
                 dtype=np.uint8
             )
-            dq_mask[dq_bit_mask != 0] = 1
+            dq_bit_mask2 = bitfield_to_boolean_mask(
+                hdu1.dq.astype(np.uint8),
+                dq_bits,
+                good_mask_value=0,
+                dtype=np.uint8
+            )
 
-    # Get rid of any pixels masked in any DQ mask or missing in any science image
-    for i in range(data_reproj.shape[-1]):
-        data_reproj[:, :, i][dq_mask != 0] = np.nan
-        data_reproj[:, :, i][sci_mask != 0] = np.nan
+            data1 = copy.deepcopy(hdu1.data)
+            data1[dq_bit_mask1 == 1] = np.nan
+            data2 = copy.deepcopy(hdu2.data)
+            data2[dq_bit_mask2 == 1] = np.nan
 
-    # Minimize the differences between each tile and the first
-    for i in range(len(hdus)):
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
 
-        diff = data_reproj[:, :, i] - data_reproj[:, :, 0]
-        diff = diff.flatten()
+                # Make some source masks
+                mask1 = make_source_mask(data1,
+                                         nsigma=1.5,
+                                         npixels=3)
+                data1[mask1] = np.nan
 
+                mask2 = make_source_mask(data2,
+                                         nsigma=1.5,
+                                         npixels=3,
+                                         )
+                data2[mask2] = np.nan
+
+                # Reproject
+                data_reproj = reproject_interp((data2, wcs2),
+                                               wcs1,
+                                               return_footprint=False,
+                                               )
+
+            # Get diffs, remove NaNs
+            diff = data_reproj - data1
+            diff = diff[np.isfinite(diff)]
+            diffs.extend(diff)
+
+    n_pix = len(diffs)
+
+    if n_pix > 0:
         # Sigma-clip to remove outliers in the distribution
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            diff_val = sigma_clipped_stats(diff, maxiters=None)[1]
+            delta = sigma_clipped_stats(diffs, maxiters=None)[1]
+    else:
+        delta = 0
 
-        hdus[i].data -= diff_val
-        # if hdus[i].meta.background.level is not None:
-        #     hdus[i].meta.background.level += diff_val
-        # else:
-        #     hdus[i].meta.background.level = diff_val
+    return n_pix, delta
 
-        # Remove the pre-calculated background if we want that
-        if remove_background:
-            hdus[i].data -= bg_val
 
-        #     if hdus[i].meta.background.level is not None:
-        #         hdus[i].meta.background.level += bg_val
-        #     else:
-        #         hdus[i].meta.background.level = bg_val
-        #
-        # hdus[i].meta.background.subtracted = True
+def calculate_optimum_delta(in_files,
+                            delta_matrix,
+                            weight_matrix,
+                            ):
+    """Calculate optimum (relative) offset between a set of files"""
 
-        hdu_out_name = os.path.join(out_dir, os.path.split(files[i])[-1])
-        hdus[i].save(hdu_out_name, overwrite=True)
+    deltas = np.zeros(len(in_files))
 
-    return True
+    for i in range(1, len(in_files)):
+        dither_vals = []
+        dither_weights = []
+
+        # Loop over and get all the ways we can get to 0
+        all_combos = [[i, x] for x in range(i - 1, -1, -1)]
+
+        max_depth_reached = False
+        while not max_depth_reached:
+            for item in all_combos:
+                if item[-1] != 0:
+                    all_combos.remove(item)
+                    item = [[*item, x] for x in range(item[-1] - 1, -1, -1)]
+                    all_combos.extend(item)
+            if np.all([item[-1] == 0 for item in all_combos]):
+                max_depth_reached = True
+
+        for combo in all_combos:
+            val = np.nansum([delta_matrix[combo[i + 1], combo[i]]
+                             for i in range(len(combo) - 1)])
+            weight = np.array([weight_matrix[combo[i + 1], combo[i]]
+                               for i in range(len(combo) - 1)])
+
+            # If any of these have no coverage, skip
+            if np.any(weight == 0):
+                continue
+
+            dither_vals.append(val)
+
+            # The final weight here is the mean of all the weights,
+            # since we want to down-weight pathways with fewer
+            # overlapping pixels
+            dither_weights.append(np.nanmean(weight))
+
+        # deltas[i] = np.nanmean(dither_vals)
+        deltas[i] = np.average(dither_vals, weights=dither_weights)
+
+    return deltas
 
 
 def parse_fits_to_table(file,
@@ -625,7 +642,9 @@ class JWSTReprocess:
                  lv2_parameter_dict='phangs',
                  lv3_parameter_dict='phangs',
                  bg_sub_parameter_dict=None,
+                 psf_model_parameter_dict=None,
                  destripe_parameter_dict='phangs',
+                 astrometric_catalog_parameter_dict=None,
                  astrometry_parameter_dict='phangs',
                  lyot_method='mask',
                  tweakreg_create_custom_catalogs=None,
@@ -639,9 +658,12 @@ class JWSTReprocess:
                  astrometric_alignment_image=None,
                  astrometric_alignment_table=None,
                  alignment_mapping=None,
+                 alignment_mapping_mode='cross_corr',
                  wcs_adjust_dict=None,
+                 psf_model_dict=None,
                  correct_lv1_wcs=False,
                  crds_url='https://jwst-crds.stsci.edu',
+                 webb_psf_dir=None,
                  procs=None,
                  updated_flats_dir=None,
                  process_bgr_like_science=False,
@@ -687,7 +709,10 @@ class JWSTReprocess:
             * lv2_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 2 pipeline
             * lv3_parameter_dict (dict): As `lv1_parameter_dict`, but for the level 3 pipeline
             * bg_sub_parameter_dict (dict): As `lv1_parameter_dict`, but for the background subtraction procedure
+            * psf_model_parameter_dict (dict): As `lv1_parameter_dict`, but for PSF modelling
             * destripe_parameter_dict (dict): As `lv1_parameter_dict`, but for the destriping procedure
+            * astrometric_catalog_parameter_dict (dict): As `lv1_parameter_dict`, but for generating the astrometric
+                catalog
             * astrometry_parameter_dict (dict): As `lv1_parameter_dict`, but for astrometric alignment
             * lyot_method (str): Method to account for mistmatch lyot coronagraph in MIRI imaging. Can either mask with
                 `mask`, or adjust to main chip with `adjust`. Defaults to `mask`
@@ -709,14 +734,19 @@ class JWSTReprocess:
             * astrometric_alignment_type (str): Whether to align to image or table. Defaults to `image`
             * astrometric_alignment_image (str): Path to image to align astrometry to
             * astrometric_alignment_table (str): Path to table to align astrometry to
-            * alignment_mapping (dict): Dictionary to map basing alignments off cross-correlation with other aligned
-                band. Should be of the form {'band': 'reference_band'}
+            * alignment_mapping (dict): Dictionary to map basing alignments off shifts/cross-correlation with other
+                aligned band. Should be of the form {'band': 'reference_band'}
+            * alignment_mapping_mode (str): Whether to apply the shift from another band's alignment ('shift') or try
+                to cross-correlate to match ('cross_corr'). Defaults to 'cross_corr'
             * wcs_adjust_dict (dict): dict to adjust image group WCS before tweakreg step. Should be of form
                 {target: {'visit': {'matrix': [[1, 0], [0, 1]], 'shift': [dx, dy]}}}. Defaults to None.
+            * psf_model_dict (dict): dict of initial guesses for saturation to replace in images. Should be of form
+                {target: {band: [ [ra, dec], [ra, dec] ]}}. Defaults to None
             * correct_lv1_wcs (bool): Check WCS in uncal files, since there is a bug that some don't have this populated
                 when pulled from the archive. Defaults to False
             * crds_url (str): URL to get CRDS files from. Defaults to 'https://jwst-crds.stsci.edu', which will be the
                 latest versions of the files
+            * webb_psf_dir (str): Directory for WebbPSF. Defaults to None, which will then not import the PSF modelling
             * procs (int): Number of parallel processes to run during destriping. Will default to half the number of
                 cores in the system
             * updated_flats_dir (str): Directory with the updated flats to use instead of default ones.
@@ -738,6 +768,8 @@ class JWSTReprocess:
         global calwebb_detector1, calwebb_image2, calwebb_image3
         global TweakRegStep, SkyMatchStep, SourceCatalogStep
         global datamodels, pixel, update_fits_wcsinfo
+        global webbpsf
+        global PSFSubtraction
 
         import jwst
         from jwst import datamodels
@@ -747,6 +779,13 @@ class JWSTReprocess:
         from jwst.tweakreg import TweakRegStep
         from jwst.skymatch import SkyMatchStep
         from jwst.source_catalog import SourceCatalogStep
+
+        self.webbpsf_imported = False
+        if webb_psf_dir is not None:
+            os.environ['WEBBPSF_PATH'] = webb_psf_dir
+            import webbpsf
+            from psf_subtraction import PSFSubtraction
+            self.webbpsf_imported = True
 
         self.target = target
 
@@ -762,6 +801,14 @@ class JWSTReprocess:
         if alignment_mapping is None:
             alignment_mapping = {}
         self.alignment_mapping = alignment_mapping
+        self.alignment_mapping_mode = alignment_mapping_mode
+
+        if psf_model_parameter_dict is None:
+            psf_model_parameter_dict = {}
+        if psf_model_dict is None:
+            psf_model_dict = {}
+        self.psf_model_parameter_dict = psf_model_parameter_dict
+        self.psf_model_dict = psf_model_dict
 
         if wcs_adjust_dict is None:
             wcs_adjust_dict = {}
@@ -876,6 +923,10 @@ class JWSTReprocess:
                 'sigma': 3,
             }
 
+        if astrometric_catalog_parameter_dict is None:
+            astrometric_catalog_parameter_dict = {}
+        self.astrometric_catalog_parameter_dict = astrometric_catalog_parameter_dict
+
         self.astrometry_parameter_dict = astrometry_parameter_dict
 
         self.lyot_method = lyot_method
@@ -955,7 +1006,9 @@ class JWSTReprocess:
             'dither_match': 'cal',
             'lyot_adjust': 'cal',
             'wcs_adjust': 'cal',
+            'psf_model': 'cal',
             'lv3': 'cal',
+            'astrometric_catalog': 'lv3',
             'astrometric_align': 'lv3',
         }
 
@@ -967,7 +1020,9 @@ class JWSTReprocess:
             'dither_match': 'dither_match',
             'lyot_adjust': 'lyot_adjust',
             'wcs_adjust': 'wcs_adjust',
+            'psf_model': 'psf_model',
             'lv3': 'lv3',
+            'astrometric_catalog': 'lv3',
             'astrometric_align': 'lv3',
         }
 
@@ -979,7 +1034,9 @@ class JWSTReprocess:
             'dither_match': 'cal',
             'lyot_adjust': 'cal',
             'wcs_adjust': 'cal',
+            'psf_model': 'cal',
             'lv3': 'i2d',
+            'astrometric_catalog': 'i2d',
             'astrometric_align': 'i2d_align',
         }
 
@@ -1161,6 +1218,7 @@ class JWSTReprocess:
                     # Run lv2 asn generation
                     asn_file = self.run_asn2(directory=in_band_dir,
                                              band=band,
+                                             parallel=True,
                                              process_bgr_like_science=self.process_bgr_like_science,
                                              overwrite=overwrite,
                                              )
@@ -1254,7 +1312,8 @@ class JWSTReprocess:
                         continue
 
                 elif step == 'dither_match':
-                    # Match the backgrounds for each set of dithers
+                    # Match the backgrounds for each set of dithers, and then
+                    # for each tile in a mosaic (if applicable)
 
                     cal_files = glob.glob(os.path.join(in_band_dir,
                                                        '*_%s.fits' % step_ext)
@@ -1277,14 +1336,75 @@ class JWSTReprocess:
                         dithers = np.unique(['_'.join(os.path.split(cal_file)[-1].split('_')[:2])
                                              for cal_file in cal_files])
 
-                        for dither in tqdm(dithers, ascii=True):
+                        # First pass where we do this per-dither
+
+                        for dither in tqdm(dithers, ascii=True, desc='Matching dithers within group'):
                             dither_files = glob.glob(os.path.join(in_band_dir,
                                                                   '%s*_%s.fits' % (dither, step_ext))
                                                      )
 
                             dither_files.sort()
-                            background_match(dither_files,
-                                             out_dir=out_band_dir)
+
+                            delta_mat = np.zeros((len(dither_files), len(dither_files)), dtype=float)
+                            weight_mat = np.zeros((len(dither_files), len(dither_files)), dtype=float)
+
+                            for i in range(len(dither_files)):
+                                for j in range(i + 1, len(dither_files)):
+                                    n_pix, delta = background_match_dithers([dither_files[i]],
+                                                                            [dither_files[j]],
+                                                                            )
+
+                                    delta_mat[i, j] = delta
+                                    weight_mat[i, j] = n_pix
+
+                            deltas = calculate_optimum_delta(dither_files,
+                                                             delta_matrix=delta_mat,
+                                                             weight_matrix=weight_mat)
+
+                            # Apply this calculated value
+                            for i, dither_file in enumerate(dither_files):
+                                hdu = datamodels.open(dither_file)
+                                hdu.data -= deltas[i]
+                                hdu.save(dither_file.replace(in_band_dir, out_band_dir))
+
+                        # Now do a second pass where we find the offset between different dithers, but only for
+                        # multiple dithers. We do this replacement in-place
+
+                        if len(dithers) > 1:
+                            delta_mat = np.zeros((len(dithers), len(dithers)), dtype=float)
+                            weight_mat = np.zeros((len(dithers), len(dithers)), dtype=float)
+
+                            for i in tqdm(range(len(dithers)), ascii=True, desc='Matching between mosaic tiles'):
+                                for j in range(i + 1, len(dithers)):
+                                    dither1 = copy.deepcopy(dithers[i])
+                                    dither2 = copy.deepcopy(dithers[j])
+
+                                    dither_files1 = glob.glob(os.path.join(out_band_dir,
+                                                                           '%s*_cal.fits' % dither1)
+                                                              )
+                                    dither_files2 = glob.glob(os.path.join(out_band_dir,
+                                                                           '%s*_cal.fits' % dither2)
+                                                              )
+
+                                    n_pix, delta = background_match_dithers(dither_files1,
+                                                                            dither_files2)
+
+                                    delta_mat[i, j] = delta
+                                    weight_mat[i, j] = n_pix
+
+                            deltas = calculate_optimum_delta(dithers,
+                                                             delta_matrix=delta_mat,
+                                                             weight_matrix=weight_mat)
+
+                            # Finally, apply this calculated value
+                            for i in range(1, len(dithers)):
+                                dither_files = glob.glob(os.path.join(out_band_dir,
+                                                                      '%s*_cal.fits' % dithers[i])
+                                                         )
+                                for dither_file in dither_files:
+                                    hdu = datamodels.open(dither_file)
+                                    hdu.data -= deltas[i]
+                                    hdu.save(dither_file)
 
                 elif step == 'bg_sub':
                     # Subtract a sigma-clipped background from each image
@@ -1334,6 +1454,44 @@ class JWSTReprocess:
 
                             hdu.close()
 
+                elif step == 'psf_model':
+
+                    if not self.webbpsf_imported:
+                        self.logger.warning('WebbPSF has not been imported! Cannot do PSF modelling')
+                        continue
+
+                    found_sat_coords = False
+                    if self.target in self.psf_model_dict.keys():
+                        if band in self.psf_model_dict[self.target].keys():
+                            found_sat_coords = True
+                            sat_coords = self.psf_model_dict[self.target][band]
+
+                    if not found_sat_coords:
+                        continue
+
+                    cal_files = glob.glob(os.path.join(in_band_dir,
+                                                       '*_%s.fits' % step_ext)
+                                          )
+                    cal_files.sort()
+
+                    if len(cal_files) == 0:
+                        self.logger.warning('-> No files found. Skipping')
+                        shutil.rmtree(base_band_dir)
+                        continue
+
+                    cal_files.sort()
+
+                    if not os.path.exists(out_band_dir):
+                        os.makedirs(out_band_dir)
+
+                    self.run_psf_model(files=cal_files,
+                                       out_dir=out_band_dir,
+                                       sat_coords=sat_coords,
+                                       target=self.target,
+                                       band_type=band_type,
+                                       band=band,
+                                       )
+
                 elif step == 'lv3':
 
                     if self.use_field_in_lev3 is not None:
@@ -1369,6 +1527,13 @@ class JWSTReprocess:
                                           overwrite=overwrite,
                                           )
 
+                elif step == 'astrometric_catalog':
+
+                    self.generate_astrometric_catalog(in_band_dir,
+                                                      band,
+                                                      overwrite=overwrite,
+                                                      )
+
                 elif step == 'astrometric_align':
                     
                     # if self.use_field_in_lev3 is not None:
@@ -1378,11 +1543,19 @@ class JWSTReprocess:
                     if band in self.alignment_mapping.keys():
                         self.align_wcs_to_jwst(in_band_dir,
                                                band,
+                                               mode=self.alignment_mapping_mode,
                                                overwrite=overwrite,
                                                )
                     else:
+
+                        if 'astrometric_catalog' in steps:
+                            cat_suffix = 'astro_cat.fits'
+                        else:
+                            cat_suffix = 'cat.ecsv'
+
                         self.align_wcs_to_ref(in_band_dir,
                                               band,
+                                              cat_suffix=cat_suffix,
                                               overwrite=overwrite,
                                               )
 
@@ -1431,6 +1604,66 @@ class JWSTReprocess:
                                          files),
                                total=len(files), ascii=True):
                 results.append(result)
+
+    def run_psf_model(self,
+                      files,
+                      out_dir,
+                      sat_coords,
+                      target,
+                      band_type,
+                      band,
+                      ):
+        """Run PSF modelling, looping over calibrated files
+
+        Args:
+            * files (list): List of files to loop over
+            * out_dir (str): Where to save PSF modelled files to
+            * sat_coords (list): [ra, dec] list of coords to fit PSFs to
+            * target (str): Target to match parameter dict to
+            * band_type (str): Either miri or nircam
+            * band (str): JWST band
+        """
+
+        fit_dir = os.path.join(out_dir, 'fit')
+        plot_dir = os.path.join(out_dir, 'plot')
+
+        if not os.path.exists(fit_dir):
+            os.makedirs(fit_dir)
+        if not os.path.exists(plot_dir):
+            os.makedirs(plot_dir)
+
+        for hdu_name in tqdm(files, ascii=True):
+
+            out_file = os.path.join(out_dir,
+                                    os.path.split(hdu_name)[-1],
+                                    )
+            if os.path.exists(out_file):
+                continue
+
+            psf_sub = PSFSubtraction(hdu_in_name=hdu_name,
+                                     hdu_out_name=out_file,
+                                     sat_coords=sat_coords,
+                                     instrument=band_type,
+                                     band=band,
+                                     fit_dir=fit_dir,
+                                     plot_dir=plot_dir,
+                                     )
+
+            for key in self.psf_model_parameter_dict.keys():
+
+                value = parse_parameter_dict(self.psf_model_parameter_dict,
+                                             key,
+                                             band,
+                                             target,
+                                             )
+                if value == 'VAL_NOT_FOUND':
+                    continue
+
+                recursive_setattr(psf_sub, key, value)
+
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                psf_sub.run_fitting()
 
     def adjust_lyot(self,
                     in_files,
@@ -1623,6 +1856,7 @@ class JWSTReprocess:
     def run_asn2(self,
                  directory=None,
                  band=None,
+                 parallel=True,
                  process_bgr_like_science=False,
                  overwrite=False,
                  ):
@@ -1631,6 +1865,8 @@ class JWSTReprocess:
         Args:
             * directory (str): Directory for files and asn file
             * band (str): JWST filter
+            * parallel (bool): Whether to write out asn file for each science target, for parallelisability.
+                Defaults to True
             * process_bgr_like_science (bool): if True, than additionally process the offset images
                 in the same way as the science (for testing purposes only)
             * overwrite (bool): Whether to overwrite or not. Defaults to False.
@@ -1660,54 +1896,115 @@ class JWSTReprocess:
 
         os.chdir(directory)
 
-        asn_lv2_filename = 'asn_lv2_%s.json' % band
+        tab = Table(names=['File', 'Type', 'Obs_ID', 'Filter', 'Start', 'Exptime', 'Objname', "Program"],
+                    dtype=[str, str, str, str, str, float, str, str])
 
-        if not os.path.exists(asn_lv2_filename) or overwrite:
+        all_fits_files = glob.glob('*%s_rate.fits' % band_ext)
+        for f in all_fits_files:
+            tab.add_row(parse_fits_to_table(f,
+                                            check_bgr=check_bgr,
+                                            check_type=self.bgr_check_type,
+                                            background_name=self.bgr_background_name,
+                                            )
+                        )
+        tab.sort(keys='Start')
 
-            tab = Table(names=['File', 'Type', 'Obs_ID', 'Filter', 'Start', 'Exptime', 'Objname', "Program"],
-                        dtype=[str, str, str, str, str, float, str, str])
+        # Loop over science first, then backgrounds
+        sci_tab = tab[tab['Type'] == 'sci']
+        bgr_tab = tab[tab['Type'] == 'bgr']
 
-            all_fits_files = glob.glob('*%s_rate.fits' % band_ext)
-            for f in all_fits_files:
-                tab.add_row(parse_fits_to_table(f,
-                                                check_bgr=check_bgr,
-                                                check_type=self.bgr_check_type,
-                                                background_name=self.bgr_background_name,
-                                                )
-                            )
-            tab.sort(keys='Start')
+        json_content_orig = {"asn_type": "image2",
+                             "asn_rule": "DMSLevel2bBase",
+                             "version_id": time.strftime('%Y%m%dt%H%M%S'),
+                             "code_version": jwst.__version__,
+                             "degraded_status": "No known degraded exposures in association.",
+                             "program": tab['Program'][0],
+                             "constraints": "none",
+                             "asn_id": 'o' + (tab['Obs_ID'][0]),
+                             "asn_pool": "none",
+                             "products": []
+                             }
 
-            json_content = {"asn_type": "image2",
-                            "asn_rule": "DMSLevel2bBase",
-                            "version_id": time.strftime('%Y%m%dt%H%M%S'),
-                            "code_version": jwst.__version__,
-                            "degraded_status": "No known degraded exposures in association.",
-                            "program": tab['Program'][0],
-                            "constraints": "none",
-                            "asn_id": 'o' + (tab['Obs_ID'][0]),
-                            "asn_pool": "none",
-                            "products": []
-                            }
+        if parallel:
 
-            # Loop over science first, then backgrounds
-            sci_tab = tab[tab['Type'] == 'sci']
-            bgr_tab = tab[tab['Type'] == 'bgr']
+            asn_lv2_filename = []
 
-            for row in sci_tab:
-                json_content['products'].append({
-                    'name': os.path.split(row['File'])[1].split('_rate.fits')[0],
-                    'members': [
-                        {'expname': row['File'],
-                         'exptype': 'science',
-                         'exposerr': 'null'}
-                    ]
-                })
+            for row_id, sci_row in enumerate(sci_tab):
 
-            # For testing purposes - enable level2 reduction for off images in the same way as the science
-            if band_type in self.bgr_observation_types and process_bgr_like_science:
-                for row_id, row in enumerate(bgr_tab):
+                asn_filename = 'asn_lv2_%s_%d.json' % (band, row_id)
+                asn_lv2_filename.append(asn_filename)
+
+                if not os.path.exists(asn_filename) or overwrite:
+
+                    json_content = copy.deepcopy(json_content_orig)
+
                     json_content['products'].append({
-                        'name': f'offset_{band}_{row_id + 1}',
+                        'name': os.path.split(sci_row['File'])[1].split('_rate.fits')[0],
+                        'members': [
+                            {'expname': sci_row['File'],
+                             'exptype': 'science',
+                             'exposerr': 'null'}
+                        ]
+                    })
+
+                    # Associate background files, but only for observations with background obs
+                    if band_type in self.bgr_observation_types:
+                        for product in json_content['products']:
+                            for row in bgr_tab:
+                                product['members'].append({
+                                    'expname': row['File'],
+                                    'exptype': 'background',
+                                    'exposerr': 'null'
+                                })
+
+                    with open(asn_filename, 'w') as f:
+                        json.dump(json_content, f)
+
+            # If we're processing the backgrounds like science, do that here too
+
+            if band_type in self.bgr_observation_types and process_bgr_like_science:
+                for row_id, sci_row in enumerate(bgr_tab):
+
+                    asn_filename = 'asn_lv2_%s_bgr_%d.json' % (band, row_id)
+                    asn_lv2_filename.append(asn_filename)
+
+                    if not os.path.exists(asn_filename) or overwrite:
+
+                        json_content = copy.deepcopy(json_content_orig)
+
+                        json_content['products'].append({
+                            'name': f'offset_{band}_{row_id + 1}',
+                            'members': [
+                                {'expname': sci_row['File'],
+                                 'exptype': 'science',
+                                 'exposerr': 'null'}
+                            ]
+                        })
+
+                        # Associate background files, but only for observations with background obs
+                        if band_type in self.bgr_observation_types:
+                            for product in json_content['products']:
+                                for row in bgr_tab:
+                                    product['members'].append({
+                                        'expname': row['File'],
+                                        'exptype': 'background',
+                                        'exposerr': 'null'
+                                    })
+
+                        with open(asn_filename, 'w') as f:
+                            json.dump(json_content, f)
+
+        else:
+
+            asn_lv2_filename = 'asn_lv2_%s.json' % band
+
+            if not os.path.exists(asn_lv2_filename) or overwrite:
+
+                json_content = copy.deepcopy(json_content_orig)
+
+                for row in sci_tab:
+                    json_content['products'].append({
+                        'name': os.path.split(row['File'])[1].split('_rate.fits')[0],
                         'members': [
                             {'expname': row['File'],
                              'exptype': 'science',
@@ -1715,18 +2012,30 @@ class JWSTReprocess:
                         ]
                     })
 
-            # Associate background files, but only for observations with background obs
-            if band_type in self.bgr_observation_types:
-                for product in json_content['products']:
-                    for row in bgr_tab:
-                        product['members'].append({
-                            'expname': row['File'],
-                            'exptype': 'background',
-                            'exposerr': 'null'
+                # For testing purposes - enable level2 reduction for off images in the same way as the science
+                if band_type in self.bgr_observation_types and process_bgr_like_science:
+                    for row_id, row in enumerate(bgr_tab):
+                        json_content['products'].append({
+                            'name': f'offset_{band}_{row_id + 1}',
+                            'members': [
+                                {'expname': row['File'],
+                                 'exptype': 'science',
+                                 'exposerr': 'null'}
+                            ]
                         })
 
-            with open(asn_lv2_filename, 'w') as f:
-                json.dump(json_content, f)
+                # Associate background files, but only for observations with background obs
+                if band_type in self.bgr_observation_types:
+                    for product in json_content['products']:
+                        for row in bgr_tab:
+                            product['members'].append({
+                                'expname': row['File'],
+                                'exptype': 'background',
+                                'exposerr': 'null'
+                            })
+
+                with open(asn_lv2_filename, 'w') as f:
+                    json.dump(json_content, f)
 
         os.chdir(orig_dir)
 
@@ -1883,50 +2192,29 @@ class JWSTReprocess:
 
                 uncal_files.sort()
 
-                for uncal_file in uncal_files:
+                if not os.path.exists(output_dir):
+                    os.makedirs(output_dir)
 
-                    # Sometimes the WCS is catastrophically wrong. Try to correct that here
-                    if self.correct_lv1_wcs:
-                        if 'MAST_API_TOKEN' not in os.environ.keys():
-                            os.environ['MAST_API_TOKEN'] = input('Input MAST API token: ')
+                if self.correct_lv1_wcs:
+                    if 'MAST_API_TOKEN' not in os.environ.keys():
+                        os.environ['MAST_API_TOKEN'] = input('Input MAST API token: ')
 
-                        os.system('set_telescope_pointing.py %s' % uncal_file)
+                # For speed, we want to parallelise these up by dither since we use the
+                # persistence file
 
-                    config = calwebb_detector1.Detector1Pipeline.get_config_from_reference(uncal_file)
-                    detector1 = calwebb_detector1.Detector1Pipeline.from_config_section(config)
+                dithers = np.unique(['_'.join(os.path.split(uncal_file)[-1].split('_')[:2])
+                                     for uncal_file in uncal_files])
 
-                    # Pull out the trapsfilled file from preceding exposure if needed. Only for NIRCAM
+                with mp.get_context('fork').Pool(self.procs) as pool:
 
-                    persist_file = ''
+                    results = []
 
-                    if band_type == 'nircam':
-                        uncal_file_split = uncal_file.split('_')
-                        exposure_str = uncal_file_split[2]
-                        exposure_int = int(exposure_str)
-
-                        if exposure_int > 1:
-                            previous_exposure_str = '%05d' % (exposure_int - 1)
-                            persist_file = uncal_file.replace(exposure_str, previous_exposure_str)
-                            persist_file = persist_file.replace('_uncal.fits', '_trapsfilled.fits')
-                            persist_file = os.path.join(output_dir, persist_file)
-
-                    # Specify the name of the trapsfilled file
-                    detector1.persistence.input_trapsfilled = persist_file
-
-                    # Set other parameters
-                    detector1.output_dir = output_dir
-                    if not os.path.isdir(detector1.output_dir):
-                        os.makedirs(detector1.output_dir)
-
-                    detector1 = attribute_setter(detector1,
-                                                 parameter_dict=self.lv1_parameter_dict,
-                                                 band=band,
-                                                 target=self.target)
-
-                    with warnings.catch_warnings():
-                        warnings.simplefilter('ignore')
-                        # Run the level 1 pipeline
-                        detector1.run(uncal_file)
+                    for result in pool.imap(partial(self.parallel_lv1,
+                                                    band=band,
+                                                    output_dir=output_dir,
+                                                    ),
+                                            dithers):
+                        results.append(result)
 
         elif pipeline_stage == 'lv2':
 
@@ -1937,26 +2225,22 @@ class JWSTReprocess:
 
                 os.system('rm -rf %s' % output_dir)
 
-                config = calwebb_image2.Image2Pipeline.get_config_from_reference(asn_file)
-                im2 = calwebb_image2.Image2Pipeline.from_config_section(config)
-                im2.output_dir = output_dir
-                if not os.path.isdir(im2.output_dir):
-                    os.makedirs(im2.output_dir)
+                if not os.path.exists(output_dir):
+                    os.makedirs(output_dir)
 
-                im2 = attribute_setter(im2,
-                                       parameter_dict=self.lv2_parameter_dict,
-                                       band=band,
-                                       target=self.target,
-                                       )
+                if isinstance(asn_file, str):
+                    asn_file = [asn_file]
 
-                if self.updated_flats_dir is not None:
-                    my_flat = [f for f in glob.glob(os.path.join(self.updated_flats_dir, "*.fits")) if band in f]
-                    if len(my_flat) != 0:
-                        im2.flat_field.user_supplied_flat = my_flat[0]
-                # Run the level 2 pipeline
-                with warnings.catch_warnings():
-                    warnings.simplefilter('ignore')
-                    im2.run(asn_file)
+                with mp.get_context('fork').Pool(self.procs) as pool:
+
+                    results = []
+
+                    for result in pool.imap(partial(self.parallel_lv2,
+                                                    band=band,
+                                                    output_dir=output_dir,
+                                                    ),
+                                            asn_file):
+                        results.append(result)
 
         elif pipeline_stage == 'lv3':
 
@@ -1970,7 +2254,7 @@ class JWSTReprocess:
 
                 os.system('rm -rf %s' % output_dir)
 
-                if not os.path.isdir(output_dir):
+                if not os.path.exists(output_dir):
                     os.makedirs(output_dir)
 
                 # FWHM should be set per-band for both tweakreg and source catalogue
@@ -2177,9 +2461,153 @@ class JWSTReprocess:
 
         os.chdir(orig_dir)
 
+    def parallel_lv1(self,
+                     group,
+                     band=None,
+                     output_dir=None,
+                     ):
+        """Function to parallelise lv1 reprocessing"""
+
+        if band in NIRCAM_BANDS:
+            band_type = 'nircam'
+        elif band in MIRI_BANDS:
+            band_type = 'miri'
+        else:
+            raise Warning('Band %s not recognised!' % band)
+
+        uncal_files = glob.glob('%s*_uncal.fits' % group
+                                )
+
+        uncal_files.sort()
+
+        for uncal_file in uncal_files:
+
+            # Sometimes the WCS is catastrophically wrong. Try to correct that here
+            if self.correct_lv1_wcs:
+                os.system('set_telescope_pointing.py %s' % uncal_file)
+
+            config = calwebb_detector1.Detector1Pipeline.get_config_from_reference(uncal_file)
+            detector1 = calwebb_detector1.Detector1Pipeline.from_config_section(config)
+
+            # Pull out the trapsfilled file from preceding exposure if needed. Only for NIRCAM
+
+            persist_file = ''
+
+            if band_type == 'nircam':
+                uncal_file_split = uncal_file.split('_')
+                exposure_str = uncal_file_split[2]
+                exposure_int = int(exposure_str)
+
+                if exposure_int > 1:
+                    previous_exposure_str = '%05d' % (exposure_int - 1)
+                    persist_file = uncal_file.replace(exposure_str, previous_exposure_str)
+                    persist_file = persist_file.replace('_uncal.fits', '_trapsfilled.fits')
+                    persist_file = os.path.join(output_dir, persist_file)
+
+            # Specify the name of the trapsfilled file
+            detector1.persistence.input_trapsfilled = persist_file
+
+            # Set other parameters
+            detector1.output_dir = output_dir
+
+            detector1 = attribute_setter(detector1,
+                                         parameter_dict=self.lv1_parameter_dict,
+                                         band=band,
+                                         target=self.target)
+
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                # Run the level 1 pipeline
+                detector1.run(uncal_file)
+
+    def parallel_lv2(self,
+                     asn_file,
+                     band=None,
+                     output_dir=None,
+                     ):
+        """Function to parallelise running lv2 processing"""
+
+        config = calwebb_image2.Image2Pipeline.get_config_from_reference(asn_file)
+        im2 = calwebb_image2.Image2Pipeline.from_config_section(config)
+        im2.output_dir = output_dir
+
+        im2 = attribute_setter(im2,
+                               parameter_dict=self.lv2_parameter_dict,
+                               band=band,
+                               target=self.target,
+                               )
+
+        if self.updated_flats_dir is not None:
+            my_flat = [f for f in glob.glob(os.path.join(self.updated_flats_dir, "*.fits")) if band in f]
+            if len(my_flat) != 0:
+                im2.flat_field.user_supplied_flat = my_flat[0]
+        # Run the level 2 pipeline
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            im2.run(asn_file)
+
+    def generate_astrometric_catalog(self,
+                                     input_dir,
+                                     band,
+                                     overwrite=False
+                                     ):
+        """Generate a catalog for absolute astrometric alignment
+
+        Args:
+            input_dir (str): Directory to search for files
+            band (str): JWST band in question
+            overwrite (bool): Overwrite or not. Defaults to False
+        """
+
+        jwst_files = glob.glob(os.path.join(input_dir,
+                                            '*i2d.fits'))
+
+        for jwst_file in jwst_files:
+
+            cat_name = jwst_file.replace('i2d.fits', 'astro_cat.fits')
+            if not os.path.exists(cat_name) or overwrite:
+
+                hdu = fits.open(jwst_file)
+                data_hdu = hdu['SCI']
+                w = WCS(data_hdu)
+                data = data_hdu.data
+
+                snr = self.astrometric_catalog_parameter_dict['snr']
+
+                mask = data == 0
+                mean, median, rms = sigma_clip(data, dq_mask=mask)
+                threshold = median + snr * rms
+
+                kernel_fwhm = FWHM_PIX[band]
+
+                daofind = DAOStarFinder(fwhm=kernel_fwhm,
+                                        threshold=threshold,
+                                        )
+
+                for astro_key in self.astrometric_catalog_parameter_dict:
+                    value = parse_parameter_dict(self.astrometric_catalog_parameter_dict,
+                                                 astro_key,
+                                                 band,
+                                                 self.target,
+                                                 )
+
+                    if value == 'VAL_NOT_FOUND':
+                        continue
+
+                    recursive_setattr(daofind, astro_key, value)
+
+                sources = daofind(data, mask=mask)
+
+                # Add in RA and Dec
+                ra, dec = w.all_pix2world(sources['xcentroid'], sources['ycentroid'], 0)
+                sky_coords = SkyCoord(ra * u.deg, dec * u.deg)
+                sources.add_column(sky_coords, name='sky_centroid')
+                sources.write(cat_name, overwrite=True)
+
     def align_wcs_to_ref(self,
                          input_dir,
                          band,
+                         cat_suffix='cat.ecsv',
                          overwrite=False,
                          ):
         """Align JWST image to external references. Either a table or an image
@@ -2187,6 +2615,7 @@ class JWSTReprocess:
         Args:
             * input_dir (str): Directory to find files to align
             * band (str): JWST band to align
+            * cat_suffix (str): Suffix for the astrometric catalog. Defaults to 'cat.ecsv'
             * overwrite (bool): Whether to overwrite or not. Defaults to False
         """
 
@@ -2280,22 +2709,29 @@ class JWSTReprocess:
 
                 # Read in the source catalogue from the pipeline
 
-                source_cat_name = jwst_file.replace('i2d.fits', 'cat.ecsv')
-                sources = Table.read(source_cat_name, format='ascii.ecsv')
-                # convenience for CARTA viewing.
-                sources.write(source_cat_name.replace('.ecsv', '.fits'), overwrite=True)
+                source_cat_name = jwst_file.replace('i2d.fits', cat_suffix)
 
-                # Filter out extended
-                sources = sources[~sources['is_extended']]
+                if cat_suffix.split('.')[-1] == 'ecsv':
+
+                    sources = Table.read(source_cat_name, format='ascii.ecsv')
+                    # convenience for CARTA viewing.
+                    sources.write(source_cat_name.replace('.ecsv', '.fits'), overwrite=True)
+                else:
+                    sources = Table.read(source_cat_name)
+
+                # Filter out extended sources
+                if 'is_extended' in sources.colnames:
+                    sources = sources[~sources['is_extended']]
                 # Filter based on roundness and sharpness
                 # sources = sources[np.logical_and(sources['sharpness'] >= 0.2,
                 #                                  sources['sharpness'] <= 1.0)]
                 # sources = sources[np.logical_and(sources['roundness'] >= -1.0,
                 #                                  sources['roundness'] <= 1.0)]
 
-                # Convert sources into a reference catalogue
+                # Apply these to the image
                 wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
                 wcs_jwst_corrector = FITSWCSCorrector(wcs_jwst)
+                wcs_jwst_corrector_orig = copy.deepcopy(wcs_jwst_corrector)
 
                 jwst_tab = Table()
 
@@ -2362,23 +2798,28 @@ class JWSTReprocess:
                                           **fit_wcs_kws,
                                           )
 
-                wcs_aligned = wcs_aligned_fit.wcs
+                # Pull out alignment properties and save to JWST metadata
+                shift, matrix = wcs_aligned_fit.meta['fit_info']['shift'], wcs_aligned_fit.meta['fit_info']['matrix']
 
-                self.logger.info('Original WCS:')
-                self.logger.info(wcs_jwst)
-                self.logger.info('Updated WCS:')
-                self.logger.info(wcs_aligned)
-
+                # And properly update the header
                 updatehdr.update_wcs(jwst_hdu,
                                      'SCI',
-                                     wcs_aligned,
+                                     wcs_aligned_fit.wcs,
                                      wcsname='TWEAK',
-                                     reusename=True)
+                                     reusename=True,
+                                     )
+                jwst_hdu.writeto(aligned_file, overwrite=True)
+                jwst_hdu.close()
+
+                # Add in metadata
+                jwst_hdu = datamodels.open(aligned_file)
+                jwst_hdu.meta.abs_astro_alignment = {'shift': shift,
+                                                     'matrix': matrix,
+                                                     }
+                # Write out the datamodel
+                jwst_hdu.write(aligned_file)
 
                 # Also apply this to each individual crf file
-
-                matrix = wcs_aligned_fit.meta['fit_info']['matrix']
-                shift = wcs_aligned_fit.meta['fit_info']['shift']
                 crf_files = glob.glob(os.path.join(input_dir,
                                                    '*_crf.fits')
                                       )
@@ -2392,7 +2833,7 @@ class JWSTReprocess:
                     for result in tqdm(pool.imap(partial(parallel_tweakback,
                                                          matrix=matrix,
                                                          shift=shift,
-                                                         ref_tpwcs=wcs_jwst_corrector,
+                                                         ref_tpwcs=wcs_jwst_corrector_orig,
                                                          ),
                                                  crf_files),
                                        total=len(crf_files),
@@ -2429,20 +2870,20 @@ class JWSTReprocess:
 
                 aligned_tab.write(aligned_table, format='fits', overwrite=True)
 
-                jwst_hdu.writeto(aligned_file, overwrite=True)
-
-                jwst_hdu.close()
-
     def align_wcs_to_jwst(self,
                           input_dir,
                           band,
+                          mode='cross_corr',
                           overwrite=False,
                           ):
-        """Internally align image to already aligned JWST one via cross-correlation
+        """Internally align image to already aligned JWST one, either through pulling out corrector terms or via
+        cross-correlation
 
         Args:
             * input_dir (str): Directory to find files to align
             * band (str): JWST band to align
+            * mode (str): Either 'cross_corr' (use cross-correlation) or 'shift' (pull out transformation from previous
+                alignment). Defaults to 'cross_corr'
             * overwrite (bool): Whether to overwrite or not. Defaults to False
         """
 
@@ -2490,81 +2931,118 @@ class JWSTReprocess:
                     continue
 
             if not os.path.exists(aligned_file) or overwrite:
-                ref_hdu = fits.open(ref_hdu_name)
+
                 jwst_hdu = fits.open(jwst_file)
 
                 wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
                 wcs_jwst_corrector = FITSWCSCorrector(wcs_jwst)
+                wcs_jwst_corrector_orig = copy.deepcopy(wcs_jwst_corrector)
 
-                ref_data = copy.deepcopy(ref_hdu['SCI'].data)
-                jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
+                if mode == 'cross_corr':
+                    ref_hdu = fits.open(ref_hdu_name)
 
-                ref_err = copy.deepcopy(ref_hdu['ERR'].data)
-                jwst_err = copy.deepcopy(jwst_hdu['ERR'].data)
+                    ref_data = copy.deepcopy(ref_hdu['SCI'].data)
+                    jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
 
-                ref_data[ref_data == 0] = np.nan
-                jwst_data[jwst_data == 0] = np.nan
+                    ref_err = copy.deepcopy(ref_hdu['ERR'].data)
+                    jwst_err = copy.deepcopy(jwst_hdu['ERR'].data)
 
-                # Reproject the ref HDU to the image to align
+                    ref_data[ref_data == 0] = np.nan
+                    jwst_data[jwst_data == 0] = np.nan
 
-                with warnings.catch_warnings():
-                    warnings.simplefilter('ignore')
-                    ref_data = reproject_interp(fits.PrimaryHDU(data=ref_data, header=ref_hdu['SCI'].header),
-                                                wcs_jwst,
-                                                shape_out=jwst_hdu['SCI'].data.shape,
-                                                return_footprint=False,
-                                                )
+                    # Reproject the ref HDU to the image to align
+                    ref_wcs = HSTWCS(ref_hdu, 'SCI')
 
-                    ref_err = reproject_interp(fits.PrimaryHDU(data=ref_err, header=ref_hdu['SCI'].header),
-                                               wcs_jwst,
-                                               shape_out=jwst_hdu['SCI'].data.shape,
-                                               return_footprint=False,
-                                               )
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore')
+                        ref_data = reproject_interp((ref_data, ref_wcs),
+                                                    wcs_jwst,
+                                                    shape_out=jwst_data.shape,
+                                                    return_footprint=False,
+                                                    )
 
-                nan_idx = np.logical_or(np.isnan(ref_data),
-                                        np.isnan(jwst_data))
+                        ref_err = reproject_interp((ref_err, ref_wcs),
+                                                   wcs_jwst,
+                                                   shape_out=jwst_data.shape,
+                                                   return_footprint=False,
+                                                   )
 
-                ref_data[nan_idx] = np.nan
-                jwst_data[nan_idx] = np.nan
+                    nan_idx = np.logical_or(np.isnan(ref_data),
+                                            np.isnan(jwst_data))
 
-                # ref_data[:,520:920] = np.nan
-                # jwst_data[:, 520:920] = np.nan
-                # ref_err[:, 520:920] = np.nan
-                # jwst_err[:, 520:920] = np.nan
-                #
-                # ref_err[(ref_data > 100) | (ref_data<-0.1)] = np.nan
-                # jwst_err[(jwst_data > 100) | (jwst_data<-0.1)] = np.nan
-                # jwst_data[(jwst_data>100) | (jwst_data<-0.1)] = np.nan
-                # ref_data[(ref_data > 100) | (ref_data<-0.1)] = np.nan
+                    ref_data[nan_idx] = np.nan
+                    jwst_data[nan_idx] = np.nan
 
-                ref_err[nan_idx] = np.nan
-                jwst_err[nan_idx] = np.nan
+                    # ref_data[:,520:920] = np.nan
+                    # jwst_data[:, 520:920] = np.nan
+                    # ref_err[:, 520:920] = np.nan
+                    # jwst_err[:, 520:920] = np.nan
+                    #
+                    # ref_err[(ref_data > 100) | (ref_data<-0.1)] = np.nan
+                    # jwst_err[(jwst_data > 100) | (jwst_data<-0.1)] = np.nan
+                    # jwst_data[(jwst_data>100) | (jwst_data<-0.1)] = np.nan
+                    # ref_data[(ref_data > 100) | (ref_data<-0.1)] = np.nan
 
-                # Make sure we're square, since apparently this causes weirdness
-                data_size_min = min(jwst_data.shape)
-                data_slice_i = slice(jwst_data.shape[0] // 2 - data_size_min // 2,
-                                     jwst_data.shape[0] // 2 + data_size_min // 2)
-                data_slice_j = slice(jwst_data.shape[1] // 2 - data_size_min // 2,
-                                     jwst_data.shape[1] // 2 + data_size_min // 2)
+                    ref_err[nan_idx] = np.nan
+                    jwst_err[nan_idx] = np.nan
 
-                x_off, y_off = cross_correlation_shifts(ref_data[data_slice_i, data_slice_j],
-                                                        jwst_data[data_slice_i, data_slice_j],
-                                                        errim1=ref_err[data_slice_i, data_slice_j],
-                                                        errim2=jwst_err[data_slice_i, data_slice_j],
-                                                        )
+                    # Make sure we're square, since apparently this causes weirdness
+                    data_size_min = min(jwst_data.shape)
+                    data_slice_i = slice(jwst_data.shape[0] // 2 - data_size_min // 2,
+                                         jwst_data.shape[0] // 2 + data_size_min // 2)
+                    data_slice_j = slice(jwst_data.shape[1] // 2 - data_size_min // 2,
+                                         jwst_data.shape[1] // 2 + data_size_min // 2)
 
-                self.logger.info('Found offset of [%.2f, %.2f]' % (x_off, y_off))
+                    x_off, y_off = cross_correlation_shifts(ref_data[data_slice_i, data_slice_j],
+                                                            jwst_data[data_slice_i, data_slice_j],
+                                                            errim1=ref_err[data_slice_i, data_slice_j],
+                                                            errim2=jwst_err[data_slice_i, data_slice_j],
+                                                            )
+                    shift = [-x_off, -y_off]
+                    matrix = None
 
-                # Apply correction directly to CRPIX
-                wcs_jwst_corrector.wcs.wcs.crpix += [x_off, y_off]
+                    self.logger.info('Found offset of %s' % shift)
 
-                wcs_aligned = wcs_jwst_corrector.wcs
+                    # Apply correction
+                    wcs_jwst_corrector.set_correction(shift=shift,
+                                                      ref_tpwcs=wcs_jwst_corrector,
+                                                      )
 
-                updatehdr.update_wcs(jwst_hdu,
-                                     'SCI',
-                                     wcs_aligned,
-                                     wcsname='TWEAK',
-                                     reusename=True)
+                    updatehdr.update_wcs(jwst_hdu,
+                                         'SCI',
+                                         wcs_jwst_corrector.wcs,
+                                         wcsname='TWEAK',
+                                         reusename=True)
+
+                    jwst_hdu.writeto(aligned_file, overwrite=True)
+                    jwst_hdu.close()
+
+                elif mode == 'shift':
+
+                    ref_hdu = datamodels.open(ref_hdu_name)
+
+                    shift = ref_hdu.meta.abs_astro_alignment.shift
+                    matrix = ref_hdu.meta.abs_astro_alignment.matrix
+
+                    # Cast these to numpy so they can be pickled properly later
+                    shift = shift.astype(np.ndarray)
+                    matrix = matrix.astype(np.ndarray)
+
+                    wcs_jwst_corrector.set_correction(matrix=matrix,
+                                                      shift=shift,
+                                                      ref_tpwcs=wcs_jwst_corrector,
+                                                      )
+                    updatehdr.update_wcs(jwst_hdu,
+                                         'SCI',
+                                         wcs_jwst_corrector.wcs,
+                                         wcsname='TWEAK',
+                                         reusename=True)
+
+                    jwst_hdu.writeto(aligned_file, overwrite=True)
+                    jwst_hdu.close()
+
+                else:
+                    raise ValueError('mode should be one of cross_corr, shift')
 
                 # Also apply this to each individual crf file
 
@@ -2574,15 +3052,14 @@ class JWSTReprocess:
 
                 crf_files.sort()
 
-                shift = [-x_off, -y_off]
-
                 with mp.get_context('fork').Pool(self.procs) as pool:
 
                     results = []
 
                     for result in tqdm(pool.imap(partial(parallel_tweakback,
                                                          shift=shift,
-                                                         ref_tpwcs=wcs_jwst_corrector,
+                                                         matrix=matrix,
+                                                         ref_tpwcs=wcs_jwst_corrector_orig,
                                                          ),
                                                  crf_files),
                                        total=len(crf_files),
@@ -2593,9 +3070,3 @@ class JWSTReprocess:
 
                 if not all(results):
                     self.logger.warning('Not all crf files tweakbacked. May cause issues!')
-
-                jwst_hdu.writeto(aligned_file, overwrite=True)
-
-                jwst_hdu.close()
-
-                ref_hdu.close()
