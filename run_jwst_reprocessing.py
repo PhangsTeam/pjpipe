@@ -10,6 +10,7 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
+bands = None
 if len(sys.argv) == 1:
     config_file = script_dir + '/config/config.toml'
     local_file = script_dir + '/config/local.toml'
@@ -21,6 +22,11 @@ elif len(sys.argv) == 2:
 elif len(sys.argv) == 3:
     local_file = sys.argv[2]
     config_file = sys.argv[1]
+
+elif len(sys.argv) == 4:
+    local_file = sys.argv[2]
+    config_file = sys.argv[1]
+    bands = [sys.argv[3]]
 
 else:
     raise Warning('Cannot parse %d arguments!' % len(sys.argv))
@@ -81,6 +87,11 @@ if os.path.exists(wcs_adjust_filename):
 else:
     wcs_adjust_dict = None
 
+if 'alignment_dir' in local['local'].keys():
+    alignment_dir = local['local']['alignment_dir']
+else:
+    alignment_dir = os.path.join(script_dir, 'alignment')
+
 
 prop_ids = config['projects']
 for prop_id in prop_ids:
@@ -88,12 +99,13 @@ for prop_id in prop_ids:
     for target in targets:
 
         alignment_table_name = config['alignment'][target]
-        alignment_table = os.path.join(script_dir,
-                                       'alignment',
+        alignment_table = os.path.join(alignment_dir,
                                        alignment_table_name)
 
-        bands = (config['pipeline']['nircam_bands'] +
-                 config['pipeline']['miri_bands'])
+        if bands is None:
+            bands = (config['pipeline']['nircam_bands'] +
+                     config['pipeline']['miri_bands'])
+
         cur_field = config['pipeline']['lev3_fields']
         if cur_field == []:
             cur_field = None

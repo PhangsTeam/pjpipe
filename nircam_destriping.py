@@ -1,15 +1,17 @@
 import copy
+import logging
 import os
 import pickle
-import logging
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
-from astropy.stats import sigma_clipped_stats
+from astropy.nddata.bitmask import interpret_bit_flags, bitfield_to_boolean_mask
+from astropy.stats import sigma_clipped_stats, SigmaClip
+from jwst.datamodels.dqflags import pixel
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from photutils.segmentation import make_source_mask
+from photutils.segmentation import detect_threshold, detect_sources
 from scipy.ndimage import binary_dilation
 from scipy.ndimage import median_filter
 from scipy.stats import median_abs_deviation
@@ -18,11 +20,46 @@ from skimage import filters
 import pca.vwpca as vw
 import pca.vwpca_normgappy as gappy
 
-DESTRIPING_METHODS = ['row_median', 'median_filter', 'pca']
+DESTRIPING_METHODS = [
+    'row_median',
+    'median_filter',
+    'remstripe',
+    'pca',
+]
 
 matplotlib.rcParams['mathtext.fontset'] = 'stix'
 matplotlib.rcParams['font.family'] = 'STIXGeneral'
 matplotlib.rcParams['font.size'] = 14
+
+
+def make_source_mask(data,
+                     mask=None,
+                     nsigma=3,
+                     npixels=3,
+                     dilate_size=11,
+                     sigclip_iters=5,
+                     ):
+    """Make a source mask from segmentation image"""
+
+    sc = SigmaClip(sigma=nsigma, maxiters=sigclip_iters)
+    threshold = detect_threshold(data,
+                                 mask=mask,
+                                 nsigma=nsigma,
+                                 sigma_clip=sc,
+                                 )
+
+    segment_map = detect_sources(data,
+                                 threshold,
+                                 npixels=npixels,
+                                 )
+
+    # If sources are detected, we can make a segmentation mask, else fall back to 0 array
+    try:
+        mask = segment_map.make_source_mask(size=dilate_size)
+    except AttributeError:
+        mask = np.zeros(data.shape, dtype=bool)
+
+    return mask
 
 
 def butterworth_filter(data,
@@ -35,10 +72,17 @@ def butterworth_filter(data,
     data = copy.deepcopy(data)
 
     if data_std is None:
-        data_std = sigma_clipped_stats(data)[2]
+        data_std = sigma_clipped_stats(data,
+                                       mask=dq_mask,
+                                       )[2]
 
     # Make a high signal-to-noise mask, because these guys will cause bad ol' negative bowls
-    high_sn_mask = data > 10 * data_std
+    high_sn_mask = make_source_mask(data,
+                                    nsigma=10,
+                                    npixels=1,
+                                    dilate_size=None,
+                                    )
+    # high_sn_mask = data > 10 * data_std
     high_sn_mask = binary_dilation(high_sn_mask, iterations=1)
 
     # Replace bad data with random noise
@@ -174,6 +218,8 @@ class NircamDestriper:
             self.full_noise_model = self.run_row_median()
         elif self.destriping_method == 'median_filter':
             self.full_noise_model = self.run_median_filter()
+        elif self.destriping_method == 'remstripe':
+            self.full_noise_model = self.run_remstriping()
         elif self.destriping_method == 'pca':
             self.full_noise_model = self.run_pca_denoise()
         else:
@@ -198,6 +244,141 @@ class NircamDestriper:
                              overwrite=True)
 
         self.hdu.close()
+
+    def run_remstriping(self,
+                        ):
+        """Destriping based on the CEERS remstripe routine
+
+        Mask out sources, then collapse a median along x and y to remove stripes.
+
+        """
+
+        zero_idx = np.where(self.hdu['SCI'].data == 0)
+        nan_idx = np.where(np.isnan(self.hdu['SCI'].data))
+
+        quadrant_size = self.hdu['SCI'].data.shape[1] // 4
+
+        self.hdu['SCI'].data[zero_idx] = np.nan
+
+        if self.quadrants:
+            self.hdu['SCI'].data = self.level_data(self.hdu['SCI'].data,
+                                                   use_sigma_clip=self.use_sigma_clip,
+                                                   )
+
+        mask = make_source_mask(self.hdu['SCI'].data,
+                                nsigma=self.sigma,
+                                npixels=self.npixels,
+                                dilate_size=self.dilate_size,
+                                sigclip_iters=self.max_iters,
+                                )
+
+        dq_mask = self.get_dq_mask()
+
+        mask = mask | dq_mask
+
+        # Cut out the reference edge pixels if we're not in subarray mode
+        if not self.is_subarray:
+            data = copy.deepcopy(self.hdu['SCI'].data[4:-4, 4:-4])
+            mask = mask[4:-4, 4:-4]
+            dq_mask = dq_mask[4:-4, 4:-4]
+        else:
+            data = copy.deepcopy(self.hdu['SCI'].data)
+
+        filter_diffuse = self.parse_filter_diffuse()
+        if filter_diffuse:
+            data, mask = self.get_filter_diffuse(mask=mask,
+                                                 dq_mask=dq_mask,
+                                                 data=data,
+                                                 )
+
+        full_noise_model = np.zeros_like(self.hdu['SCI'].data)
+        trimmed_noise_model = np.zeros_like(data)
+
+        if self.quadrants:
+
+            # Calculate medians and apply
+            for i in range(4):
+
+                if not self.is_subarray:
+                    if i == 0:
+                        idx_slice = slice(0, quadrant_size - 4)
+                    elif i == 3:
+                        idx_slice = slice(1532, 2040)
+                    else:
+                        idx_slice = slice(i * quadrant_size - 4, (i + 1) * quadrant_size - 4)
+                else:
+                    idx_slice = slice(i * quadrant_size, (i + 1) * quadrant_size)
+
+                data_quadrants = data[:, idx_slice]
+                mask_quadrants = mask[:, idx_slice]
+
+                # Collapse first along the y direction
+                median_quadrants = sigma_clipped_stats(data_quadrants,
+                                                       mask=mask_quadrants,
+                                                       sigma=self.sigma,
+                                                       maxiters=self.max_iters,
+                                                       axis=1,
+                                                       )[1]
+
+                # Subtract this off the data, then collapse along x direction
+
+                x_stripes = median_quadrants[:, np.newaxis] - np.nanmedian(median_quadrants)
+
+                trimmed_noise_model[:, idx_slice] += x_stripes
+                data_quadrants_1 = data_quadrants - x_stripes
+
+                median_quadrants = sigma_clipped_stats(data_quadrants_1,
+                                                       mask=mask_quadrants,
+                                                       sigma=self.sigma,
+                                                       maxiters=self.max_iters,
+                                                       axis=0,
+                                                       )[1]
+
+                y_stripes = median_quadrants[np.newaxis, :] - np.nanmedian(median_quadrants)
+
+                trimmed_noise_model[:, idx_slice] += y_stripes
+
+        else:
+
+            median_arr = sigma_clipped_stats(data,
+                                             mask=mask,
+                                             sigma=self.sigma,
+                                             maxiters=self.max_iters,
+                                             axis=1,
+                                             )[1]
+
+            trimmed_noise_model += median_arr[:, np.newaxis]
+
+            # Bring everything back up to the median level
+            trimmed_noise_model -= np.nanmedian(median_arr)
+
+        if self.plot_dir is not None and mask is not None:
+            self.make_mask_plot(data=data,
+                                mask=mask,
+                                filter_diffuse=filter_diffuse,
+                                )
+
+        if isinstance(self.final_large_scale_subtraction, list):
+            final_large_scale_subtraction = False
+            for final_large_scale_subtraction_val in self.final_large_scale_subtraction:
+                if final_large_scale_subtraction_val in self.hdu_name:
+                    final_large_scale_subtraction = True
+        else:
+            final_large_scale_subtraction = copy.deepcopy(self.final_large_scale_subtraction)
+
+        # Do a final median row subtraction to catch large-scale ripples
+        if final_large_scale_subtraction:
+            trimmed_noise_model = self.do_final_large_scale_subtraction(trimmed_noise_model)
+
+        if not self.is_subarray:
+            full_noise_model[4:-4, 4:-4] = copy.deepcopy(trimmed_noise_model)
+        else:
+            full_noise_model = copy.deepcopy(trimmed_noise_model)
+
+        self.hdu['SCI'].data[zero_idx] = 0
+        self.hdu['SCI'].data[nan_idx] = np.nan
+
+        return full_noise_model
 
     def run_pca_denoise(self,
                         ):
@@ -229,10 +410,8 @@ class NircamDestriper:
                                 sigclip_iters=self.max_iters,
                                 )
 
-        dq_mask = ~np.isfinite(self.hdu['SCI'].data) | \
-                  ~np.isfinite(self.hdu['ERR'].data) | \
-                  (self.hdu['SCI'].data == 0) | \
-                  (self.hdu['DQ'].data != 0)
+        dq_mask = self.get_dq_mask()
+
         mask = mask | dq_mask
 
         data = copy.deepcopy(self.hdu['SCI'].data)
@@ -255,48 +434,24 @@ class NircamDestriper:
 
         data -= data_med
 
-        if isinstance(self.filter_diffuse, list):
-            filter_diffuse = False
-            for filter_diffuse_val in self.filter_diffuse:
-                if filter_diffuse_val in self.hdu_name:
-                    filter_diffuse = True
-        else:
-            filter_diffuse = copy.deepcopy(self.filter_diffuse)
-
+        filter_diffuse = self.parse_filter_diffuse()
         if filter_diffuse:
 
-            data_filter, high_sn_mask = butterworth_filter(data,
-                                                           data_std=data_std,
-                                                           dq_mask=dq_mask,
-                                                           return_high_sn_mask=True)
-
-            data_train = copy.deepcopy(data_filter)
-
-            train_med = sigma_clipped_stats(data_train,
-                                            mask=high_sn_mask,
-                                            sigma=self.sigma,
-                                            maxiters=self.max_iters,
-                                            )[1]
-
-            # Make a mask from this filtered data. Use absolute values to catch negatives too
-            mask_train = make_source_mask(np.abs(data_train - train_med),
-                                          mask=high_sn_mask,
-                                          nsigma=self.sigma,
-                                          npixels=self.npixels,
-                                          dilate_size=self.dilate_size,
-                                          sigclip_iters=self.max_iters,
-                                          )
-            mask_train = mask_train | high_sn_mask
-
-            if self.plot_dir is not None:
-                self.make_mask_plot(data=data_train,
-                                    mask=mask,
-                                    )
+            data_train, mask_train = self.get_filter_diffuse(mask=mask,
+                                                             dq_mask=dq_mask,
+                                                             data=data,
+                                                             )
 
         else:
 
             data_train = copy.deepcopy(data)
             mask_train = copy.deepcopy(mask)
+
+        if self.plot_dir is not None:
+            self.make_mask_plot(data=data_train,
+                                mask=mask_train,
+                                filter_diffuse=filter_diffuse,
+                                )
 
         if self.quadrants:
 
@@ -335,6 +490,9 @@ class NircamDestriper:
                 for col in range(data_quadrant.shape[0]):
                     idx = np.where(np.isnan(data_quadrant[col, :]))
                     data_quadrant[col, idx[0]] = (data_med[col] - norm_median) / norm_factor + 1
+
+                # For places where this is all NaN, just 0 to avoid errors
+                data_quadrant[np.isnan(data_quadrant)] = 0
 
                 # data_quadrant[train_mask_quadrant] = 0
                 err_quadrant[train_mask_quadrant] = 0
@@ -390,6 +548,9 @@ class NircamDestriper:
                 idx = np.where(np.isnan(data_train[col, :]))
                 data_train[col, idx[0]] = (data_med[col] - norm_median) / norm_factor + 1
 
+            # For places where this is all NaN, just 0 to avoid errors
+            data_train[np.isnan(data_train)] = 0
+
             # data_train[mask_train] = 0
             err_train[mask_train] = 0
 
@@ -436,36 +597,7 @@ class NircamDestriper:
             final_large_scale_subtraction = copy.deepcopy(self.final_large_scale_subtraction)
 
         if final_large_scale_subtraction:
-
-            # Do a final, row-by-row clipped median subtraction
-
-            med = sigma_clipped_stats(data=self.hdu['SCI'].data - full_noise_model,
-                                      mask=original_mask,
-                                      sigma=self.sigma,
-                                      maxiters=self.max_iters,
-                                      axis=1
-                                      )[1]
-
-            nan_med = np.where(~np.isfinite(med))
-
-            # We expect there to be 8 NaNs here for FULL mode, 0 for subarray, if there's more it's an issue
-
-            if self.is_subarray:
-                allowed_nans = 0
-            else:
-                allowed_nans = 8
-            if len(nan_med[0]) > allowed_nans:
-                logging.warning('Median failing for %s -- likely too much masked data. '
-                                'Will interpolate but this may cause issues' % self.hdu_name)
-                xp = np.arange(len(med))
-                non_nan = np.isfinite(med)
-                med_interp = np.interp(nan_med, xp=xp[non_nan], fp=med[non_nan])
-                med[nan_med] = med_interp
-
-            med -= np.nanmedian(med)
-            med[~np.isfinite(med)] = 0
-
-            full_noise_model += med[:, np.newaxis]
+            full_noise_model = self.do_final_large_scale_subtraction(full_noise_model)
 
         self.hdu['SCI'].data[zero_idx] = 0
         self.hdu['SCI'].data[nan_idx] = np.nan
@@ -556,25 +688,17 @@ class NircamDestriper:
                                 dilate_size=self.dilate_size,
                                 )
 
-        dq_mask = ~np.isfinite(self.hdu['SCI'].data) | (self.hdu['SCI'].data == 0) | (self.hdu['DQ'].data != 0)
+        dq_mask = self.get_dq_mask()
+
         mask = mask | dq_mask
 
         full_noise_model = np.zeros_like(self.hdu['SCI'].data)
 
-        if isinstance(self.filter_diffuse, list):
-            filter_diffuse = False
-            for filter_diffuse_val in self.filter_diffuse:
-                if filter_diffuse_val in self.hdu_name:
-                    filter_diffuse = True
-        else:
-            filter_diffuse = copy.deepcopy(self.filter_diffuse)
-
+        filter_diffuse = self.parse_filter_diffuse()
         if filter_diffuse:
-            data_filter, high_sn_mask = butterworth_filter(self.hdu['SCI'].data,
-                                                           dq_mask=dq_mask,
-                                                           return_high_sn_mask=True)
-            data = copy.deepcopy(data_filter)
-            mask = mask | high_sn_mask
+            data, mask = self.get_filter_diffuse(mask=mask,
+                                                 dq_mask=dq_mask,
+                                                 )
         else:
             data = copy.deepcopy(self.hdu['SCI'].data)
 
@@ -614,6 +738,7 @@ class NircamDestriper:
         if self.plot_dir is not None:
             self.make_mask_plot(data=data,
                                 mask=mask,
+                                filter_diffuse=filter_diffuse,
                                 )
 
         self.hdu['SCI'].data[zero_idx] = 0
@@ -644,25 +769,16 @@ class NircamDestriper:
                                     npixels=self.npixels,
                                     dilate_size=self.dilate_size,
                                     )
-            dq_mask = ~np.isfinite(self.hdu['SCI'].data) | (self.hdu['SCI'].data == 0) | (self.hdu['DQ'].data != 0)
+            dq_mask = self.get_dq_mask()
             mask = mask | dq_mask
 
         original_mask = copy.deepcopy(mask)
 
-        if isinstance(self.filter_diffuse, list):
-            filter_diffuse = False
-            for filter_diffuse_val in self.filter_diffuse:
-                if filter_diffuse_val in self.hdu_name:
-                    filter_diffuse = True
-        else:
-            filter_diffuse = copy.deepcopy(self.filter_diffuse)
-
+        filter_diffuse = self.parse_filter_diffuse()
         if filter_diffuse:
-            data_filter, high_sn_mask = butterworth_filter(self.hdu['SCI'].data,
-                                                           dq_mask=dq_mask,
-                                                           return_high_sn_mask=True)
-            data = copy.deepcopy(data_filter)
-            mask = copy.deepcopy(high_sn_mask)
+            data, mask = self.get_filter_diffuse(mask=mask,
+                                                 dq_mask=dq_mask,
+                                                 )
         else:
             data = copy.deepcopy(self.hdu['SCI'].data)
 
@@ -738,8 +854,6 @@ class NircamDestriper:
 
                 full_noise_model += noise[:, np.newaxis]
 
-        sub_data = self.hdu['SCI'].data - full_noise_model
-
         if isinstance(self.final_large_scale_subtraction, list):
             final_large_scale_subtraction = False
             for final_large_scale_subtraction_val in self.final_large_scale_subtraction:
@@ -750,42 +864,64 @@ class NircamDestriper:
 
         # Do a final median row subtraction to catch large-scale ripples
         if final_large_scale_subtraction:
-
-            med = sigma_clipped_stats(data=sub_data,
-                                      mask=original_mask,
-                                      sigma=self.sigma,
-                                      maxiters=self.max_iters,
-                                      axis=1
-                                      )[1]
-
-            nan_med = np.where(~np.isfinite(med))
-
-            # We expect there to be 8 NaNs here for FULL mode, 0 for subarray, if there's more it's an issue
-
-            if self.is_subarray:
-                allowed_nans = 0
-            else:
-                allowed_nans = 8
-            if len(nan_med[0]) > allowed_nans:
-                logging.warning('Median failing for %s -- likely too much masked data. '
-                                'Will interpolate but this may cause issues' % self.hdu_name)
-                xp = np.arange(len(med))
-                non_nan = np.isfinite(med)
-                med_interp = np.interp(nan_med, xp=xp[non_nan], fp=med[non_nan])
-                med[nan_med] = med_interp
-
-            med -= np.nanmedian(med)
-            med[~np.isfinite(med)] = 0
-
-            full_noise_model += med[:, np.newaxis]
+            full_noise_model = self.do_final_large_scale_subtraction(full_noise_model)
 
         if self.plot_dir is not None and mask is not None:
             self.make_mask_plot(data=data,
                                 mask=mask,
+                                filter_diffuse=filter_diffuse,
                                 )
 
         self.hdu['SCI'].data[zero_idx] = 0
         self.hdu['SCI'].data[nan_idx] = np.nan
+
+        return full_noise_model
+
+    def do_final_large_scale_subtraction(self,
+                                         full_noise_model
+                                         ):
+
+        data = copy.deepcopy(self.hdu['SCI'].data) - full_noise_model
+
+        mask = make_source_mask(data,
+                                nsigma=self.sigma,
+                                npixels=self.npixels,
+                                dilate_size=self.dilate_size,
+                                sigclip_iters=self.max_iters,
+                                )
+        dq_mask = self.get_dq_mask()
+
+        mask = mask | dq_mask
+
+        # Do a final, row-by-row clipped median subtraction
+
+        med = sigma_clipped_stats(data=data,
+                                  mask=mask,
+                                  sigma=self.sigma,
+                                  maxiters=self.max_iters,
+                                  axis=1
+                                  )[1]
+
+        nan_med = np.where(~np.isfinite(med))
+
+        # We expect there to be 8 NaNs here for FULL mode, 0 for subarray, if there's more it's an issue
+
+        if self.is_subarray:
+            allowed_nans = 0
+        else:
+            allowed_nans = 8
+        if len(nan_med[0]) > allowed_nans:
+            logging.warning('Median failing for %s -- likely too much masked data. '
+                            'Will interpolate but this may cause issues' % self.hdu_name)
+            xp = np.arange(len(med))
+            non_nan = np.isfinite(med)
+            med_interp = np.interp(nan_med, xp=xp[non_nan], fp=med[non_nan])
+            med[nan_med] = med_interp
+
+        med -= np.nanmedian(med)
+        med[~np.isfinite(med)] = 0
+
+        full_noise_model += med[:, np.newaxis]
 
         return full_noise_model
 
@@ -842,7 +978,9 @@ class NircamDestriper:
 
     def make_mask_plot(self,
                        data,
-                       mask):
+                       mask,
+                       filter_diffuse=False,
+                       ):
         """Create mask diagnostic plot"""
 
         plot_name = os.path.join(self.plot_dir,
@@ -856,7 +994,12 @@ class NircamDestriper:
 
         plt.axis('off')
 
-        plt.title('Filtered Data')
+        if filter_diffuse:
+            title = 'Filtered Data'
+        else:
+            title = 'Data'
+
+        plt.title(title)
 
         plt.subplot(1, 2, 2)
         plt.imshow(mask, origin='lower', interpolation='none')
@@ -867,6 +1010,7 @@ class NircamDestriper:
 
         plt.savefig(plot_name + '.png', bbox_inches='tight')
         plt.savefig(plot_name + '.pdf', bbox_inches='tight')
+        plt.close()
 
     def make_destripe_plot(self):
         """Create diagnostic plot for the destriping
@@ -939,3 +1083,75 @@ class NircamDestriper:
         plt.savefig(plot_name + '.png', bbox_inches='tight')
         plt.savefig(plot_name + '.pdf', bbox_inches='tight')
         plt.close()
+
+    def get_filter_diffuse(self,
+                           mask,
+                           dq_mask,
+                           data=None,
+                           ):
+
+        if data is None:
+            data = copy.deepcopy(self.hdu['SCI'].data)
+
+        data_mean, data_med, data_std = sigma_clipped_stats(data,
+                                                            mask=mask,
+                                                            sigma=self.sigma,
+                                                            maxiters=self.max_iters,
+                                                            )
+
+        data_filter, high_sn_mask = butterworth_filter(data,
+                                                       data_std=data_std,
+                                                       dq_mask=dq_mask,
+                                                       return_high_sn_mask=True)
+        data = copy.deepcopy(data_filter)
+
+        data_filter_med = sigma_clipped_stats(data_filter,
+                                              mask=high_sn_mask | dq_mask,
+                                              sigma=self.sigma,
+                                              maxiters=self.max_iters,
+                                              )[1]
+
+        # Make a mask from this data. Use about a beam worth of pixels
+        # to avoid just getting a whole bunch of noise
+        mask = make_source_mask(
+            # data,
+            np.abs(data_filter - data_filter_med),
+            mask=high_sn_mask | dq_mask,
+            nsigma=self.sigma,
+            npixels=10,
+            dilate_size=self.dilate_size,
+            sigclip_iters=self.max_iters,
+        )
+
+        mask = mask | high_sn_mask | dq_mask
+
+        return data, mask
+
+    def parse_filter_diffuse(self):
+
+        if isinstance(self.filter_diffuse, list):
+            filter_diffuse = False
+            for filter_diffuse_val in self.filter_diffuse:
+                if filter_diffuse_val in self.hdu_name:
+                    filter_diffuse = True
+        else:
+            filter_diffuse = copy.deepcopy(self.filter_diffuse)
+
+        return filter_diffuse
+
+    def get_dq_mask(self):
+
+        dq_bits = interpret_bit_flags('~DO_NOT_USE+NON_SCIENCE', flag_name_map=pixel)
+
+        dq_mask = bitfield_to_boolean_mask(
+            self.hdu['DQ'].data.astype(np.uint8),
+            dq_bits,
+            good_mask_value=0,
+        )
+
+        dq_mask = dq_mask | \
+                  ~np.isfinite(self.hdu['SCI'].data) | \
+                  ~np.isfinite(self.hdu['ERR'].data) | \
+                  (self.hdu['SCI'].data == 0)
+
+        return dq_mask
