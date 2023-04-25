@@ -1,5 +1,6 @@
 import copy
 import functools
+import gc
 import glob
 import inspect
 import json
@@ -17,14 +18,15 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.nddata.bitmask import interpret_bit_flags, bitfield_to_boolean_mask
-from astropy.stats import sigma_clipped_stats
+from astropy.stats import sigma_clipped_stats, SigmaClip
 from astropy.table import Table, QTable
 from astropy.wcs import WCS
 from drizzlepac import updatehdr
 from image_registration import cross_correlation_shifts
-from photutils.segmentation import make_source_mask
 from photutils.detection import DAOStarFinder
+from photutils.segmentation import detect_threshold, detect_sources
 from reproject import reproject_interp
+from spherical_geometry.polygon import SphericalPolygon
 from stwcs.wcsutil import HSTWCS
 from threadpoolctl import threadpool_limits
 from tqdm import tqdm
@@ -208,8 +210,11 @@ def parallel_destripe(hdu_name,
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        with threadpool_limits(limits=1, user_api='blas'):
+        with threadpool_limits(limits=1, user_api=None):
             nc_destripe.run_destriping()
+
+    del nc_destripe
+    gc.collect()
 
     return True
 
@@ -269,7 +274,38 @@ def parallel_tweakback(crf_file,
     crf_out_file = crf_file.replace('.fits', '_tweakback.fits')
     crf_input_im.save(crf_out_file)
 
+    del crf_im
+    del crf_input_im
+    gc.collect()
+
     return True
+
+
+def make_source_mask(data,
+                     mask=None,
+                     nsigma=3,
+                     npixels=3,
+                     dilate_size=11,
+                     sigclip_iters=5,
+                     ):
+    """Make a source mask from segmentation image"""
+
+    sc = SigmaClip(sigma=nsigma,
+                   maxiters=sigclip_iters,
+                   )
+    threshold = detect_threshold(data,
+                                 mask=mask,
+                                 nsigma=nsigma,
+                                 sigma_clip=sc,
+                                 )
+
+    segment_map = detect_sources(data,
+                                 threshold,
+                                 npixels=npixels,
+                                 )
+    mask = segment_map.make_source_mask(size=dilate_size)
+
+    return mask
 
 
 def sigma_clip(data,
@@ -290,14 +326,12 @@ def sigma_clip(data,
     return mean, median, std_dev
 
 
-def background_subtract(hdu_filename,
+def background_subtract(hdu,
                         sigma=1.5,
                         n_pixels=5,
                         max_iterations=20,
                         ):
     """Sigma-clipped background subtraction for fits HDU"""
-
-    hdu = fits.open(hdu_filename)
 
     dq_mask = hdu['DQ'].data != 0
 
@@ -312,33 +346,76 @@ def background_subtract(hdu_filename,
     return hdu
 
 
-def background_match_dithers(files1,
-                             files2):
+def calc_bounding_polygon(hdu):
+    """Compute image's bounding polygon. This is taken from the JWST pipeline"""
+
+    ny, nx = hdu.data.shape
+
+    nintx = 2
+    ninty = 2
+
+    xs = np.linspace(-0.5, nx - 0.5, nintx, dtype=float)
+    ys = np.linspace(-0.5, ny - 0.5, ninty, dtype=float)[1:-1]
+    nptx = xs.size
+    npty = ys.size
+
+    npts = 2 * (nptx + npty)
+
+    borderx = np.empty((npts + 1,), dtype=float)
+    bordery = np.empty((npts + 1,), dtype=float)
+
+    # "bottom" points:
+    borderx[:nptx] = xs
+    bordery[:nptx] = -0.5
+    # "right"
+    sl = np.s_[nptx:nptx + npty]
+    borderx[sl] = nx - 0.5
+    bordery[sl] = ys
+    # "top"
+    sl = np.s_[nptx + npty:2 * nptx + npty]
+    borderx[sl] = xs[::-1]
+    bordery[sl] = ny - 0.5
+    # "left"
+    sl = np.s_[2 * nptx + npty:-1]
+    borderx[sl] = -0.5
+    bordery[sl] = ys[::-1]
+
+    # close polygon:
+    borderx[-1] = borderx[0]
+    bordery[-1] = bordery[0]
+
+    ra, dec = hdu.meta.wcs(borderx, bordery, with_bounding_box=False)
+    # Force to be closed
+    ra[-1] = ra[0]
+    dec[-1] = dec[0]
+
+    polygon = SphericalPolygon.from_radec(ra, dec)
+
+    return polygon
+
+
+def background_match_dithers(hdus1,
+                             hdus2,
+                             polygons1,
+                             polygons2,
+                             ):
     """Calculate relative difference between groups of files (i.e. dithers)"""
 
     diffs = []
 
+    if not isinstance(hdus1, list):
+        hdus1 = [hdus1]
+    if not isinstance(hdus2, list):
+        hdus2 = [hdus2]
+
     dq_bits = interpret_bit_flags('~DO_NOT_USE+NON_SCIENCE', flag_name_map=pixel)
 
-    for file1 in files1:
-        for file2 in files2:
-            hdu1 = datamodels.open(file1)
-            hdu2 = datamodels.open(file2)
+    for file1_idx, hdu1 in enumerate(hdus1):
 
-            # Mask data and reproject hdu2 to hdu1
-
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
-                wcs1 = hdu1.meta.wcs.to_fits_sip()
-                wcs2 = hdu2.meta.wcs.to_fits_sip()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
 
             dq_bit_mask1 = bitfield_to_boolean_mask(
-                hdu1.dq.astype(np.uint8),
-                dq_bits,
-                good_mask_value=0,
-                dtype=np.uint8
-            )
-            dq_bit_mask2 = bitfield_to_boolean_mask(
                 hdu1.dq.astype(np.uint8),
                 dq_bits,
                 good_mask_value=0,
@@ -347,23 +424,36 @@ def background_match_dithers(files1,
 
             data1 = copy.deepcopy(hdu1.data)
             data1[dq_bit_mask1 == 1] = np.nan
+
+            wcs1 = hdu1.meta.wcs.to_fits_sip()
+
+        for file2_idx, hdu2 in enumerate(hdus2):
+
+            # Do a quick test to see if there's any hope of overlap
+            intersection = polygons1[file1_idx].intersection(polygons2[file2_idx])
+            intersect_area = np.fabs(intersection.area())
+
+            if intersect_area == 0:
+                continue
+
+            # Mask data and reproject hdu2 to hdu1
+
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                wcs2 = hdu2.meta.wcs.to_fits_sip()
+
+            dq_bit_mask2 = bitfield_to_boolean_mask(
+                hdu2.dq.astype(np.uint8),
+                dq_bits,
+                good_mask_value=0,
+                dtype=np.uint8
+            )
+
             data2 = copy.deepcopy(hdu2.data)
             data2[dq_bit_mask2 == 1] = np.nan
 
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
-
-                # Make some source masks
-                mask1 = make_source_mask(data1,
-                                         nsigma=1.5,
-                                         npixels=3)
-                data1[mask1] = np.nan
-
-                mask2 = make_source_mask(data2,
-                                         nsigma=1.5,
-                                         npixels=3,
-                                         )
-                data2[mask2] = np.nan
 
                 # Reproject
                 data_reproj = reproject_interp((data2, wcs2),
@@ -375,6 +465,8 @@ def background_match_dithers(files1,
             diff = data_reproj - data1
             diff = diff[np.isfinite(diff)]
             diffs.extend(diff)
+
+    gc.collect()
 
     n_pix = len(diffs)
 
@@ -389,50 +481,219 @@ def background_match_dithers(files1,
     return n_pix, delta
 
 
-def calculate_optimum_delta(in_files,
-                            delta_matrix,
-                            weight_matrix,
-                            ):
-    """Calculate optimum (relative) offset between a set of files"""
+def calculate_delta(files,
+                    procs=None,
+                    ):
+    """Match relative offsets between tiles"""
 
-    deltas = np.zeros(len(in_files))
+    # deltas = np.zeros(len(files))
+    deltas = np.zeros([len(files),
+                       len(files)])
+    weights = np.zeros_like(deltas)
 
-    for i in range(1, len(in_files)):
-        dither_vals = []
-        dither_weights = []
+    if procs is None:
+        # Use a serial method
 
-        # Loop over and get all the ways we can get to 0
-        all_combos = [[i, x] for x in range(i - 1, -1, -1)]
+        all_models = []
+        for file in files:
+            if isinstance(file, list):
+                all_models.append([datamodels.open(hdu) for hdu in file])
+            else:
+                all_models.append([datamodels.open(file)])
 
-        max_depth_reached = False
-        while not max_depth_reached:
-            for item in all_combos:
-                if item[-1] != 0:
-                    all_combos.remove(item)
-                    item = [[*item, x] for x in range(item[-1] - 1, -1, -1)]
-                    all_combos.extend(item)
-            if np.all([item[-1] == 0 for item in all_combos]):
-                max_depth_reached = True
+        # Calculate all the polygons
+        polygons = []
+        for model in all_models:
+            if isinstance(model, list):
+                polygons.append([calc_bounding_polygon(m) for m in model])
+            else:
+                polygons.append([calc_bounding_polygon(model)])
 
-        for combo in all_combos:
-            val = np.nansum([delta_matrix[combo[i + 1], combo[i]]
-                             for i in range(len(combo) - 1)])
-            weight = np.array([weight_matrix[combo[i + 1], combo[i]]
-                               for i in range(len(combo) - 1)])
+        for i in range(len(files)):
+            for j in range(i + 1, len(files)):
+                n_pix, delta = background_match_dithers(all_models[i],
+                                                        all_models[j],
+                                                        polygons[i],
+                                                        polygons[j],
+                                                        )
+                deltas[j, i] = delta
+                weights[j, i] = n_pix
 
-            # If any of these have no coverage, skip
-            if np.any(weight == 0):
-                continue
+                n_pix, delta = background_match_dithers(all_models[j],
+                                                        all_models[i],
+                                                        polygons[j],
+                                                        polygons[i],
+                                                        )
+                deltas[i, j] = delta
+                weights[i, j] = n_pix
 
-            dither_vals.append(val)
+        del all_models
+        del polygons
+        gc.collect()
 
-            # The final weight here is the mean of all the weights,
-            # since we want to down-weight pathways with fewer
-            # overlapping pixels
-            dither_weights.append(np.nanmean(weight))
+    else:
+        # We can multiprocess this, since each calculation runs independently
 
-        # deltas[i] = np.nanmean(dither_vals)
-        deltas[i] = np.average(dither_vals, weights=dither_weights)
+        all_ijs = [(i, j) for i in range(len(files)) for j in range(i + 1, len(files))]
+
+        n_procs = np.nanmin([procs, len(all_ijs)])
+
+        with mp.get_context('fork').Pool(n_procs) as pool:
+
+            ijs = []
+            delta_fwds = []
+            n_pix_fwds = []
+            delta_bkwds = []
+            n_pix_bkwds = []
+
+            for result in tqdm(pool.imap_unordered(partial(parallel_delta_matrix,
+                                                           files=files,
+                                                           ),
+                                                   all_ijs),
+                               total=len(all_ijs),
+                               desc='Calculating delta matrix',
+                               ascii=True):
+
+                ij, delta_fwd, n_pix_fwd, delta_bkwd, n_pix_bkwd = result
+
+                ijs.append(ij)
+                delta_fwds.append(delta_fwd)
+                n_pix_fwds.append(n_pix_fwd)
+                delta_bkwds.append(delta_bkwd)
+                n_pix_bkwds.append(n_pix_bkwd)
+
+        for idx, ij in enumerate(ijs):
+
+            i = ij[0]
+            j = ij[1]
+
+            deltas[j, i] = delta_fwds[idx]
+            weights[j, i] = n_pix_fwds[idx]
+
+            deltas[i, j] = delta_bkwds[idx]
+            weights[i, j] = n_pix_bkwds[idx]
+
+        gc.collect()
+
+    return deltas, weights
+
+
+def parallel_delta_matrix(ij,
+                          files,
+                          ):
+    """Function to parallelise up getting delta matrix values"""
+
+    i = ij[0]
+    j = ij[1]
+
+    with threadpool_limits(limits=1, user_api=None):
+
+        # Pull out data models and bounding polygons
+        if isinstance(files[i], list):
+            models1 = [datamodels.open(hdu) for hdu in files[i]]
+        else:
+            models1 = [datamodels.open(files[i])]
+        polygons1 = [calc_bounding_polygon(model) for model in models1]
+
+        # Pull out data models and bounding polygons
+        if isinstance(files[j], list):
+            models2 = [datamodels.open(hdu) for hdu in files[j]]
+        else:
+            models2 = [datamodels.open(files[j])]
+        polygons2 = [calc_bounding_polygon(model) for model in models2]
+
+        n_pix_fwd, delta_fwd = background_match_dithers(models1,
+                                                        models2,
+                                                        polygons1,
+                                                        polygons2,
+                                                        )
+
+        n_pix_bkwd, delta_bkwd = background_match_dithers(models2,
+                                                          models1,
+                                                          polygons2,
+                                                          polygons1,
+                                                          )
+
+    del models1
+    del models2
+    del polygons1
+    del polygons2
+    gc.collect()
+
+    return ij, delta_fwd, n_pix_fwd, delta_bkwd, n_pix_bkwd
+
+
+def parallel_match_dithers(dither,
+                           in_band_dir,
+                           step_ext,
+                           ):
+    """Function to parallelise up matching dithers"""
+
+    with threadpool_limits(limits=1, user_api=None):
+        dither_files = glob.glob(os.path.join(in_band_dir,
+                                              '%s*_%s.fits' % (dither, step_ext))
+                                 )
+
+        dither_files.sort()
+
+        delta_matrix, weight_matrix = calculate_delta(dither_files,
+                                                      )
+        deltas = find_optimum_deltas(delta_matrix, weight_matrix)
+
+    return deltas, dither_files
+
+
+def find_optimum_deltas(delta_mat,
+                        weight_mat,
+                        ):
+    """Get optimum deltas from a delta/weight matrix. Taken from the JWST skymatch step"""
+
+    ns = delta_mat.shape[0]
+
+    neq = 0
+    for i in range(ns):
+        for j in range(i + 1, ns):
+            if weight_mat[i, j] > 0 and weight_mat[j, i] > 0:
+                neq += 1
+
+    # average weights:
+    weight_avg = 0.5 * (weight_mat + weight_mat.T)
+
+    # create arrays for coefficients and free terms:
+    K = np.zeros((neq, ns), dtype=float)
+    F = np.zeros(neq, dtype=float)
+    invalid = ns * [True]
+
+    # now process intersections between the rest of the images:
+    ieq = 0
+    for i in range(0, ns):
+        for j in range(i + 1, ns):
+            if weight_mat[i, j] > 0 and weight_mat[j, i] > 0:
+                K[ieq, i] = weight_avg[i, j]
+                K[ieq, j] = -weight_avg[i, j]
+
+                # Calculate the average of the overlap values, taking into account the sign
+                delta_avg = (delta_mat[i, j] + np.sign(delta_mat[i, j]) * np.abs(delta_mat[j, i])) / 2
+
+                F[ieq] = weight_avg[i, j] * delta_avg
+                invalid[i] = False
+                invalid[j] = False
+                ieq += 1
+
+    rank = np.linalg.matrix_rank(K, 1.0e-12)
+
+    if rank < ns - 1:
+        logging.warning("There are more unknown sky values ({}) to be solved for"
+                        .format(ns))
+        logging.warning("than there are independent equations available "
+                        "(matrix rank={}).".format(rank))
+        logging.warning("Sky matching (delta) values will be computed only for")
+        logging.warning("a subset (or more independent subsets) of input images.")
+
+    invK = np.linalg.pinv(K, rcond=1.0e-12)
+
+    deltas = np.dot(invK, F)
+    deltas[np.asarray(invalid, dtype=bool)] = np.nan
 
     return deltas
 
@@ -465,15 +726,14 @@ def parse_fits_to_table(file,
                 f_type = 'bgr'
 
         elif check_type == 'check_in_name':
-            hdu = fits.open(file)
-            if background_name in hdu[0].header['TARGPROP'].lower():
-                f_type = 'bgr'
-            hdu.close()
+            with fits.open(file, memmap=False) as hdu:
+                if background_name in hdu[0].header['TARGPROP'].lower():
+                    f_type = 'bgr'
         else:
             raise Warning('check_type %s not known' % check_type)
     else:
         f_type = 'sci'
-    with fits.open(file) as hdu:
+    with fits.open(file, memmap=False) as hdu:
         return file, f_type, hdu[0].header['OBSERVTN'], hdu[0].header['filter'], \
             hdu[0].header['DATE-BEG'], hdu[0].header['DURATION'], \
             hdu[0].header['OBSLABEL'].lower().strip(), hdu[0].header['PROGRAM']
@@ -979,7 +1239,7 @@ class JWSTReprocess:
         self.correct_lv1_wcs = correct_lv1_wcs
 
         if procs is None:
-            procs = cpu_count() // 2
+            procs = cpu_count()
 
         self.procs = procs
 
@@ -1069,6 +1329,14 @@ class JWSTReprocess:
                 band_type = 'miri'
             else:
                 raise Warning('Unknown band %s' % band)
+
+            if band_type == 'nircam':
+                if int(band[1:4]) <= 212:
+                    band_type_short_long = 'nircam_short'
+                else:
+                    band_type_short_long = 'nircam_long'
+            else:
+                band_type_short_long = 'miri'
 
             band_ext = BAND_EXTS[band_type]
 
@@ -1175,7 +1443,7 @@ class JWSTReprocess:
                             if not os.path.exists(hdu_out_name) or overwrite:
 
                                 try:
-                                    hdu = fits.open(raw_file)
+                                    hdu = fits.open(raw_file, memmap=False)
                                 except OSError:
                                     raise Warning('Issue with %s!' % raw_file)
 
@@ -1215,22 +1483,26 @@ class JWSTReprocess:
 
                 elif step == 'lv2':
 
-                    # Run lv2 asn generation
-                    asn_file = self.run_asn2(directory=in_band_dir,
-                                             band=band,
-                                             parallel=True,
-                                             process_bgr_like_science=self.process_bgr_like_science,
-                                             overwrite=overwrite,
-                                             )
+                    out_files = glob.glob(os.path.join(out_band_dir,
+                                                       '*.fits')
+                                          )
+                    if len(out_files) == 0 or overwrite:
+                        # Run lv2 asn generation
+                        asn_file = self.run_asn2(directory=in_band_dir,
+                                                 band=band,
+                                                 parallel=True,
+                                                 process_bgr_like_science=self.process_bgr_like_science,
+                                                 overwrite=overwrite,
+                                                 )
 
-                    # Run pipeline
-                    self.run_pipeline(band=band,
-                                      input_dir=in_band_dir,
-                                      output_dir=out_band_dir,
-                                      asn_file=asn_file,
-                                      pipeline_stage='lv2',
-                                      overwrite=overwrite,
-                                      )
+                        # Run pipeline
+                        self.run_pipeline(band=band,
+                                          input_dir=in_band_dir,
+                                          output_dir=out_band_dir,
+                                          asn_file=asn_file,
+                                          pipeline_stage='lv2',
+                                          overwrite=overwrite,
+                                          )
 
                 elif step == 'destripe':
 
@@ -1331,80 +1603,83 @@ class JWSTReprocess:
 
                     out_files = glob.glob(os.path.join(out_band_dir,
                                                        '*.fits'))
+
                     if len(out_files) == 0 or overwrite:
 
-                        dithers = np.unique(['_'.join(os.path.split(cal_file)[-1].split('_')[:2])
-                                             for cal_file in cal_files])
+                        # Split these into dithers per particular chip
+                        dithers = []
+                        for cal_file in cal_files:
+                            cal_file_split = os.path.split(cal_file)[-1].split('_')
+                            dithers.append('_'.join(cal_file_split[:2]) + '*' + cal_file_split[-2])
+                        dithers = np.unique(dithers)
+                        dithers.sort()
 
-                        # First pass where we do this per-dither
+                        # First pass where we do this per-dither. Ensure we're not wasting processes
+                        procs = np.nanmin([self.procs, len(dithers)])
 
-                        for dither in tqdm(dithers, ascii=True, desc='Matching dithers within group'):
-                            dither_files = glob.glob(os.path.join(in_band_dir,
-                                                                  '%s*_%s.fits' % (dither, step_ext))
-                                                     )
+                        with mp.get_context('fork').Pool(procs) as pool:
 
-                            dither_files.sort()
+                            all_deltas = []
+                            all_dither_files = []
 
-                            delta_mat = np.zeros((len(dither_files), len(dither_files)), dtype=float)
-                            weight_mat = np.zeros((len(dither_files), len(dither_files)), dtype=float)
-
-                            for i in range(len(dither_files)):
-                                for j in range(i + 1, len(dither_files)):
-                                    n_pix, delta = background_match_dithers([dither_files[i]],
-                                                                            [dither_files[j]],
-                                                                            )
-
-                                    delta_mat[i, j] = delta
-                                    weight_mat[i, j] = n_pix
-
-                            deltas = calculate_optimum_delta(dither_files,
-                                                             delta_matrix=delta_mat,
-                                                             weight_matrix=weight_mat)
+                            for deltas, dither_files in tqdm(pool.imap_unordered(partial(parallel_match_dithers,
+                                                                                         in_band_dir=in_band_dir,
+                                                                                         step_ext=step_ext
+                                                                                         ),
+                                                                                 dithers),
+                                                             total=len(dithers),
+                                                             desc='Matching dithers within group',
+                                                             ascii=True):
+                                all_deltas.append(deltas)
+                                all_dither_files.append(dither_files)
 
                             # Apply this calculated value
-                            for i, dither_file in enumerate(dither_files):
-                                hdu = datamodels.open(dither_file)
-                                hdu.data -= deltas[i]
-                                hdu.save(dither_file.replace(in_band_dir, out_band_dir))
+                            for idx in range(len(all_deltas)):
+                                deltas = copy.deepcopy(all_deltas[idx])
+                                dither_files = copy.deepcopy(all_dither_files[idx])
+
+                                for i, dither_file in enumerate(dither_files):
+                                    with datamodels.open(dither_file) as hdu:
+                                        hdu.data -= deltas[i]
+                                        hdu.save(dither_file.replace(in_band_dir, out_band_dir))
+                                        hdu.close()
+                                    del hdu
+
+                            pool.close()
+                            pool.join()
+                            gc.collect()
 
                         # Now do a second pass where we find the offset between different dithers, but only for
                         # multiple dithers. We do this replacement in-place
 
                         if len(dithers) > 1:
-                            delta_mat = np.zeros((len(dithers), len(dithers)), dtype=float)
-                            weight_mat = np.zeros((len(dithers), len(dithers)), dtype=float)
 
-                            for i in tqdm(range(len(dithers)), ascii=True, desc='Matching between mosaic tiles'):
-                                for j in range(i + 1, len(dithers)):
-                                    dither1 = copy.deepcopy(dithers[i])
-                                    dither2 = copy.deepcopy(dithers[j])
-
-                                    dither_files1 = glob.glob(os.path.join(out_band_dir,
-                                                                           '%s*_cal.fits' % dither1)
-                                                              )
-                                    dither_files2 = glob.glob(os.path.join(out_band_dir,
-                                                                           '%s*_cal.fits' % dither2)
-                                                              )
-
-                                    n_pix, delta = background_match_dithers(dither_files1,
-                                                                            dither_files2)
-
-                                    delta_mat[i, j] = delta
-                                    weight_mat[i, j] = n_pix
-
-                            deltas = calculate_optimum_delta(dithers,
-                                                             delta_matrix=delta_mat,
-                                                             weight_matrix=weight_mat)
-
-                            # Finally, apply this calculated value
-                            for i in range(1, len(dithers)):
+                            all_dither_files = []
+                            for dither in dithers:
                                 dither_files = glob.glob(os.path.join(out_band_dir,
-                                                                      '%s*_cal.fits' % dithers[i])
+                                                                      '%s*_%s.fits' % (dither, step_ext))
                                                          )
+                                dither_files.sort()
+                                all_dither_files.append(dither_files)
+
+                            self.logger.info('Matching between mosaic tiles')
+
+                            delta_matrix, weight_matrix = calculate_delta(all_dither_files,
+                                                                          procs=self.procs,
+                                                                          )
+                            deltas = find_optimum_deltas(delta_matrix, weight_matrix)
+
+                            for idx, delta in enumerate(deltas):
+                                dither_files = copy.deepcopy(all_dither_files[idx])
+
                                 for dither_file in dither_files:
-                                    hdu = datamodels.open(dither_file)
-                                    hdu.data -= deltas[i]
-                                    hdu.save(dither_file)
+                                    with datamodels.open(dither_file) as hdu:
+                                        hdu.data -= delta
+                                        hdu.save(dither_file)
+                                        hdu.close()
+                                    del hdu
+
+                        gc.collect()
 
                 elif step == 'bg_sub':
                     # Subtract a sigma-clipped background from each image
@@ -1447,12 +1722,10 @@ class JWSTReprocess:
 
                                 bg_sub_kws[bg_sub_arg] = arg_val
 
-                            hdu = background_subtract(hdu_in_name,
-                                                      **bg_sub_kws)
-
-                            hdu.writeto(hdu_out_name, overwrite=True)
-
-                            hdu.close()
+                            with fits.open(hdu_in_name, memmap=False) as hdu:
+                                hdu = background_subtract(hdu,
+                                                          **bg_sub_kws)
+                                hdu.writeto(hdu_out_name, overwrite=True)
 
                 elif step == 'psf_model':
 
@@ -1589,21 +1862,28 @@ class JWSTReprocess:
                 if not os.path.exists(pca_dir):
                     os.makedirs(pca_dir)
 
-        with mp.get_context('fork').Pool(self.procs) as pool:
+        # Ensure we're not wasting processes
+        procs = np.nanmin([self.procs, len(files)])
+
+        with mp.get_context('fork').Pool(procs) as pool:
 
             results = []
 
-            for result in tqdm(pool.imap(partial(parallel_destripe,
-                                                 band=band,
-                                                 target=self.target,
-                                                 destripe_parameter_dict=self.destripe_parameter_dict,
-                                                 pca_dir=pca_dir,
-                                                 out_dir=out_dir,
-                                                 plot_dir=plot_dir,
-                                                 ),
-                                         files),
+            for result in tqdm(pool.imap_unordered(partial(parallel_destripe,
+                                                           band=band,
+                                                           target=self.target,
+                                                           destripe_parameter_dict=self.destripe_parameter_dict,
+                                                           pca_dir=pca_dir,
+                                                           out_dir=out_dir,
+                                                           plot_dir=plot_dir,
+                                                           ),
+                                                   files),
                                total=len(files), ascii=True):
                 results.append(result)
+
+            pool.close()
+            pool.join()
+            gc.collect()
 
     def run_psf_model(self,
                       files,
@@ -1681,50 +1961,48 @@ class JWSTReprocess:
             os.makedirs(out_dir)
 
         for hdu_name in tqdm(in_files, ascii=True):
-            hdu = fits.open(hdu_name)
+            with fits.open(hdu_name, memmap=False) as hdu:
 
-            out_name = os.path.join(out_dir,
-                                    os.path.split(hdu_name)[-1])
+                out_name = os.path.join(out_dir,
+                                        os.path.split(hdu_name)[-1])
 
-            if os.path.exists(out_name):
-                return True
+                if os.path.exists(out_name):
+                    return True
 
-            zero_idx = np.where(hdu['SCI'].data == 0)
+                zero_idx = np.where(hdu['SCI'].data == 0)
 
-            # Pull out coronagraph, mask 0s and bad data quality
-            lyot = copy.deepcopy(hdu['SCI'].data[735:, :290])
-            lyot_dq = copy.deepcopy(hdu['DQ'].data[735:, :290])
-            lyot[lyot == 0] = np.nan
-            lyot[lyot_dq != 0] = np.nan
+                # Pull out coronagraph, mask 0s and bad data quality
+                lyot = copy.deepcopy(hdu['SCI'].data[735:, :290])
+                lyot_dq = copy.deepcopy(hdu['DQ'].data[735:, :290])
+                lyot[lyot == 0] = np.nan
+                lyot[lyot_dq != 0] = np.nan
 
-            # Pull out image, mask 0s and bad data quality
-            image = copy.deepcopy(hdu['SCI'].data[:, 360:])
-            image_dq = copy.deepcopy(hdu['DQ'].data[:, 360:])
-            image[image == 0] = np.nan
-            image[image_dq != 0] = np.nan
+                # Pull out image, mask 0s and bad data quality
+                image = copy.deepcopy(hdu['SCI'].data[:, 360:])
+                image_dq = copy.deepcopy(hdu['DQ'].data[:, 360:])
+                image[image == 0] = np.nan
+                image[image_dq != 0] = np.nan
 
-            # Create a mask, and do the sigma-clipped stats
+                # Create a mask, and do the sigma-clipped stats
 
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
-                lyot_mask = make_source_mask(lyot,
-                                             nsigma=3,
-                                             npixels=3,
-                                             )
-                image_mask = make_source_mask(image,
-                                              nsigma=3,
-                                              npixels=3,
-                                              )
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    lyot_mask = make_source_mask(lyot,
+                                                 nsigma=3,
+                                                 npixels=3,
+                                                 )
+                    image_mask = make_source_mask(image,
+                                                  nsigma=3,
+                                                  npixels=3,
+                                                  )
 
-                bgr_lyot = sigma_clipped_stats(lyot, mask=lyot_mask)[1]
-                bgr_image = sigma_clipped_stats(image, mask=image_mask)[1]
+                    bgr_lyot = sigma_clipped_stats(lyot, mask=lyot_mask)[1]
+                    bgr_image = sigma_clipped_stats(image, mask=image_mask)[1]
 
-            hdu['SCI'].data[735:, :290] += (bgr_image - bgr_lyot)
-            hdu['SCI'].data[zero_idx] = 0
+                hdu['SCI'].data[735:, :290] += (bgr_image - bgr_lyot)
+                hdu['SCI'].data[zero_idx] = 0
 
-            hdu.writeto(out_name, overwrite=True)
-
-            hdu.close()
+                hdu.writeto(out_name, overwrite=True)
 
     def mask_lyot(self,
                   in_files,
@@ -1745,20 +2023,97 @@ class JWSTReprocess:
             os.makedirs(out_dir)
 
         for hdu_name in tqdm(in_files, ascii=True):
-            hdu = fits.open(hdu_name)
+            with fits.open(hdu_name, memmap=False) as hdu:
 
-            out_name = os.path.join(out_dir,
-                                    os.path.split(hdu_name)[-1])
+                out_name = os.path.join(out_dir,
+                                        os.path.split(hdu_name)[-1])
 
-            if os.path.exists(out_name):
-                return True
+                if os.path.exists(out_name):
+                    return True
 
-            hdu['SCI'].data[lyot_i, lyot_j] = np.nan
-            hdu['ERR'].data[lyot_i, lyot_j] = np.nan
-            hdu['DQ'].data[lyot_i, lyot_j] = 513  # Masks the coronagraph area like the other coronagraphs
-            hdu.writeto(out_name, overwrite=True)
+                hdu['SCI'].data[lyot_i, lyot_j] = np.nan
+                hdu['ERR'].data[lyot_i, lyot_j] = np.nan
+                hdu['DQ'].data[lyot_i, lyot_j] = 513  # Masks the coronagraph area like the other coronagraphs
+                hdu.writeto(out_name, overwrite=True)
 
-            hdu.close()
+    def parallel_wcs_adjust(self,
+                            input_file,
+                            output_dir,
+                            ):
+        """Function for parallelising WCS adjustments"""
+
+        output_file = os.path.join(output_dir,
+                                   os.path.split(input_file)[-1],
+                                   )
+
+        if os.path.exists(output_file):
+            return True
+
+        # Set up the WCSCorrector per tweakreg
+        input_im = datamodels.open(input_file)
+
+        model_name = os.path.splitext(input_im.meta.filename)[0].strip('_- ')
+        refang = input_im.meta.wcsinfo.instance
+
+        im = JWSTWCSCorrector(
+            wcs=input_im.meta.wcs,
+            wcsinfo={
+                'roll_ref': refang['roll_ref'],
+                'v2_ref': refang['v2_ref'],
+                'v3_ref': refang['v3_ref']
+            },
+            meta={
+                'image_model': input_im,
+                'name': model_name
+            }
+        )
+
+        # Pull out the info we need to shift
+        visit = os.path.split(input_file)[-1].split('_')[0]
+
+        try:
+            wcs_adjust_vals = self.wcs_adjust_dict[self.target][visit]
+
+            try:
+                matrix = wcs_adjust_vals['matrix']
+            except KeyError:
+                matrix = [[1, 0], [0, 1]]
+
+            try:
+                shift = wcs_adjust_vals['shift']
+            except KeyError:
+                shift = [0, 0]
+
+        except KeyError:
+            self.logger.info('No WCS adjust info found for %s. Defaulting to no shift' % visit)
+            matrix = [[1, 0], [0, 1]]
+            shift = [0, 0]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            im.set_correction(matrix=matrix, shift=shift)
+
+            input_im.meta.wcs = im.wcs
+
+            try:
+                update_fits_wcsinfo(
+                    input_im,
+                    max_pix_error=0.01,
+                    npoints=16,
+                )
+            except (ValueError, RuntimeError) as e:
+                self.logger.warning(
+                    "Failed to update 'meta.wcsinfo' with FITS SIP "
+                    f'approximation. Reported error is:\n"{e.args[0]}"'
+                )
+
+        input_im.save(output_file)
+
+        del input_im
+        del im
+        gc.collect()
+
+        return True
 
     def wcs_adjust(self,
                    input_dir,
@@ -1779,79 +2134,24 @@ class JWSTReprocess:
                                 )
         input_files.sort()
 
-        repeat_keys = []
+        procs = np.nanmin([self.procs, len(input_files)])
 
-        for input_file in tqdm(input_files,
-                               ascii=True):
+        with mp.get_context('fork').Pool(procs) as pool:
+            results = []
 
-            output_file = os.path.join(output_dir,
-                                       os.path.split(input_file)[-1],
-                                       )
+            for result in tqdm(pool.imap_unordered(partial(self.parallel_wcs_adjust,
+                                                           output_dir=output_dir,
+                                                           ),
+                                                   input_files),
+                               total=len(input_files),
+                               ascii=True,
+                               desc='wcs adjust',
+                               ):
+                results.append(result)
 
-            if os.path.exists(output_file):
-                continue
-
-            # Set up the WCSCorrector per tweakreg
-            input_im = datamodels.open(input_file)
-
-            model_name = os.path.splitext(input_im.meta.filename)[0].strip('_- ')
-            refang = input_im.meta.wcsinfo.instance
-
-            im = JWSTWCSCorrector(
-                wcs=input_im.meta.wcs,
-                wcsinfo={
-                    'roll_ref': refang['roll_ref'],
-                    'v2_ref': refang['v2_ref'],
-                    'v3_ref': refang['v3_ref']
-                },
-                meta={
-                    'image_model': input_im,
-                    'name': model_name
-                }
-            )
-
-            # Pull out the info we need to shift
-            visit = os.path.split(input_file)[-1].split('_')[0]
-
-            try:
-                wcs_adjust_vals = self.wcs_adjust_dict[self.target][visit]
-
-                try:
-                    matrix = wcs_adjust_vals['matrix']
-                except KeyError:
-                    matrix = [[1, 0], [0, 1]]
-
-                try:
-                    shift = wcs_adjust_vals['shift']
-                except KeyError:
-                    shift = [0, 0]
-
-            except KeyError:
-                if visit not in repeat_keys:
-                    self.logger.info('No WCS adjust info found for %s. Defaulting to no shift' % visit)
-                    repeat_keys.append(visit)
-                matrix = [[1, 0], [0, 1]]
-                shift = [0, 0]
-
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
-                im.set_correction(matrix=matrix, shift=shift)
-
-                input_im.meta.wcs = im.wcs
-
-                try:
-                    update_fits_wcsinfo(
-                        input_im,
-                        max_pix_error=0.01,
-                        npoints=16,
-                    )
-                except (ValueError, RuntimeError) as e:
-                    self.logger.warning(
-                        "Failed to update 'meta.wcsinfo' with FITS SIP "
-                        f'approximation. Reported error is:\n"{e.args[0]}"'
-                    )
-
-            input_im.save(output_file)
+            pool.close()
+            pool.join()
+            gc.collect()
 
     def run_asn2(self,
                  directory=None,
@@ -2205,16 +2505,23 @@ class JWSTReprocess:
                 dithers = np.unique(['_'.join(os.path.split(uncal_file)[-1].split('_')[:2])
                                      for uncal_file in uncal_files])
 
-                with mp.get_context('fork').Pool(self.procs) as pool:
+                # Ensure we're not wasting processes
+                procs = np.nanmin([self.procs, len(dithers)])
+
+                with mp.get_context('fork').Pool(procs) as pool:
 
                     results = []
 
-                    for result in pool.imap(partial(self.parallel_lv1,
-                                                    band=band,
-                                                    output_dir=output_dir,
-                                                    ),
-                                            dithers):
+                    for result in pool.imap_unordered(partial(self.parallel_lv1,
+                                                              band=band,
+                                                              output_dir=output_dir,
+                                                              ),
+                                                      dithers):
                         results.append(result)
+
+                    pool.close()
+                    pool.join()
+                    gc.collect()
 
         elif pipeline_stage == 'lv2':
 
@@ -2231,16 +2538,23 @@ class JWSTReprocess:
                 if isinstance(asn_file, str):
                     asn_file = [asn_file]
 
-                with mp.get_context('fork').Pool(self.procs) as pool:
+                # Ensure we're not wasting processes
+                procs = np.nanmin([self.procs, len(asn_file)])
+
+                with mp.get_context('fork').Pool(procs) as pool:
 
                     results = []
 
-                    for result in pool.imap(partial(self.parallel_lv2,
-                                                    band=band,
-                                                    output_dir=output_dir,
-                                                    ),
-                                            asn_file):
+                    for result in pool.imap_unordered(partial(self.parallel_lv2,
+                                                              band=band,
+                                                              output_dir=output_dir,
+                                                              ),
+                                                      asn_file):
                         results.append(result)
+
+                    pool.close()
+                    pool.join()
+                    gc.collect()
 
         elif pipeline_stage == 'lv3':
 
@@ -2399,6 +2713,9 @@ class JWSTReprocess:
                     warnings.simplefilter('ignore')
                     asn_file = tweakreg.run(asn_file)
 
+                del tweakreg
+                gc.collect()
+
                 # Make sure we skip tweakreg since we've already done it
                 im3.tweakreg.skip = True
 
@@ -2443,6 +2760,9 @@ class JWSTReprocess:
                     warnings.simplefilter('ignore')
                     asn_file = skymatch.run(asn_file)
 
+                del skymatch
+                gc.collect()
+
                 # Degroup again to avoid potential weirdness later
                 if band_type_short_long in self.group_skymatch_dithers:
                     for i, model in enumerate(asn_file._models):
@@ -2454,6 +2774,10 @@ class JWSTReprocess:
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore')
                     im3.run(asn_file)
+
+                del im3
+                del asn_file
+                gc.collect()
 
         else:
 
@@ -2520,6 +2844,11 @@ class JWSTReprocess:
                 # Run the level 1 pipeline
                 detector1.run(uncal_file)
 
+            del detector1
+            gc.collect()
+
+        return True
+
     def parallel_lv2(self,
                      asn_file,
                      band=None,
@@ -2546,6 +2875,11 @@ class JWSTReprocess:
             warnings.simplefilter('ignore')
             im2.run(asn_file)
 
+        del im2
+        gc.collect()
+
+        return True
+
     def generate_astrometric_catalog(self,
                                      input_dir,
                                      band,
@@ -2567,7 +2901,7 @@ class JWSTReprocess:
             cat_name = jwst_file.replace('i2d.fits', 'astro_cat.fits')
             if not os.path.exists(cat_name) or overwrite:
 
-                hdu = fits.open(jwst_file)
+                hdu = fits.open(jwst_file, memmap=False)
                 data_hdu = hdu['SCI']
                 w = WCS(data_hdu)
                 data = data_hdu.data
@@ -2632,7 +2966,7 @@ class JWSTReprocess:
             if not os.path.exists(self.astrometric_alignment_image):
                 raise Warning('Requested astrometric alignment image not found!')
 
-            ref_hdu = fits.open(self.astrometric_alignment_image)
+            ref_hdu = fits.open(self.astrometric_alignment_image, memmap=False)
 
             ref_data = copy.deepcopy(ref_hdu[0].data)
             ref_data[ref_data == 0] = np.nan
@@ -2702,7 +3036,7 @@ class JWSTReprocess:
             aligned_table = aligned_file.replace('.fits', '_table.fits')
 
             if not os.path.exists(aligned_file) or overwrite:
-                jwst_hdu = fits.open(jwst_file)
+                jwst_hdu = fits.open(jwst_file, memmap=False)
 
                 jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
                 jwst_data[jwst_data == 0] = np.nan
@@ -2826,21 +3160,28 @@ class JWSTReprocess:
 
                 crf_files.sort()
 
-                with mp.get_context('fork').Pool(self.procs) as pool:
+                # Ensure we're not wasting processes
+                procs = np.nanmin([self.procs, len(crf_files)])
+
+                with mp.get_context('fork').Pool(procs) as pool:
 
                     results = []
 
-                    for result in tqdm(pool.imap(partial(parallel_tweakback,
-                                                         matrix=matrix,
-                                                         shift=shift,
-                                                         ref_tpwcs=wcs_jwst_corrector_orig,
-                                                         ),
-                                                 crf_files),
+                    for result in tqdm(pool.imap_unordered(partial(parallel_tweakback,
+                                                                   matrix=matrix,
+                                                                   shift=shift,
+                                                                   ref_tpwcs=wcs_jwst_corrector_orig,
+                                                                   ),
+                                                           crf_files),
                                        total=len(crf_files),
                                        ascii=True,
                                        desc='tweakback',
                                        ):
                         results.append(result)
+
+                    pool.close()
+                    pool.join()
+                    gc.collect()
 
                 if not all(results):
                     self.logger.warning('Not all crf files tweakbacked. May cause issues!')
@@ -2932,14 +3273,14 @@ class JWSTReprocess:
 
             if not os.path.exists(aligned_file) or overwrite:
 
-                jwst_hdu = fits.open(jwst_file)
+                jwst_hdu = fits.open(jwst_file, memmap=False)
 
                 wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
                 wcs_jwst_corrector = FITSWCSCorrector(wcs_jwst)
                 wcs_jwst_corrector_orig = copy.deepcopy(wcs_jwst_corrector)
 
                 if mode == 'cross_corr':
-                    ref_hdu = fits.open(ref_hdu_name)
+                    ref_hdu = fits.open(ref_hdu_name, memmap=False)
 
                     ref_data = copy.deepcopy(ref_hdu['SCI'].data)
                     jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
@@ -3052,21 +3393,28 @@ class JWSTReprocess:
 
                 crf_files.sort()
 
-                with mp.get_context('fork').Pool(self.procs) as pool:
+                # Ensure we're not wasting processes
+                procs = np.nanmin([self.procs, len(crf_files)])
+
+                with mp.get_context('fork').Pool(procs) as pool:
 
                     results = []
 
-                    for result in tqdm(pool.imap(partial(parallel_tweakback,
-                                                         shift=shift,
-                                                         matrix=matrix,
-                                                         ref_tpwcs=wcs_jwst_corrector_orig,
-                                                         ),
-                                                 crf_files),
+                    for result in tqdm(pool.imap_unordered(partial(parallel_tweakback,
+                                                                   shift=shift,
+                                                                   matrix=matrix,
+                                                                   ref_tpwcs=wcs_jwst_corrector_orig,
+                                                                   ),
+                                                           crf_files),
                                        total=len(crf_files),
                                        ascii=True,
                                        desc='tweakback',
                                        ):
                         results.append(result)
+
+                    pool.close()
+                    pool.join()
+                    gc.collect()
 
                 if not all(results):
                     self.logger.warning('Not all crf files tweakbacked. May cause issues!')
