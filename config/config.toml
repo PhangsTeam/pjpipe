@@ -10,11 +10,29 @@ products = [
 calib_level = [
     1,
     2,
+    3,
 ]
 
 
 [projects.2107]
-targets = ['ngc3627']
+targets = [
+    'ic5332',
+    'ngc0628',
+    'ngc1087',
+    'ngc1300',
+    'ngc1365',
+    'ngc1385',
+    'ngc1433',
+    'ngc1512',
+    'ngc1566',
+    'ngc1672',
+    'ngc3627',
+    'ngc4303',
+    'ngc4321',
+    'ngc4535',
+    'ngc5068',
+    'ngc7496',
+]
 
 [pipeline]
 data_version = 'v0p7p3'
@@ -70,8 +88,8 @@ steps.nircam = [
     'destripe',
     'wcs_adjust',
 #    'psf_model',
-#    'lv3',
-#    'astrometric_align',
+    'lv3',
+    'astrometric_align',
 ]
 steps.miri = [
     'lv1',
@@ -80,9 +98,9 @@ steps.miri = [
     'wcs_adjust',
     'dither_match',
 #    'psf_model',
-#    'lv3',
-#    'astrometric_catalog',
-#    'astrometric_align',
+    'lv3',
+    'astrometric_catalog',
+    'astrometric_align',
 ]
 
 overwrites.nircam = [
