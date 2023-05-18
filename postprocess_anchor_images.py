@@ -20,7 +20,7 @@ from utils_jwst import *
 # Control flow
 # &%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%
 
-do_compare_all_bands = False
+do_compare_all_bands = True
 do_anchor_images = True
 
 # &%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%
@@ -39,7 +39,7 @@ my_plot_dir = '../working_data/processed_jwst/background_plots/'
 my_table_dir = '../working_data/processed_jwst/background_tables/'
 my_external_comp_dir = '../orig_data/background_comps/'
 
-my_orig_root = '../orig_data/v0p7/'
+my_orig_root = '../orig_data/v0p7p3/'
 my_output_root = '../working_data/processed_jwst/anchored/'
 
 just_targets = []
@@ -355,7 +355,7 @@ for this_gal in gal_names:
             (this_table['comp_filt'] == 'F300M')* \
             (this_table['ref_filt'] == 'w1')
     if np.sum(table_mask) != 0:        
-        offsets['F300M'] = (this_table[table_mask]['intercept'])[0]
+        offsets['F300M'] = -1.0*float((this_table[table_mask]['intercept'])[0])
 
         for other_nircam in ['F200W','F335M','F360M']:
 
