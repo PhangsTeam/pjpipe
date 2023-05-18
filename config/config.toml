@@ -35,7 +35,7 @@ targets = [
 ]
 
 [pipeline]
-data_version = 'v0p7p1'
+data_version = 'v0p7p3'
 flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
@@ -52,14 +52,26 @@ miri_bands = [
     'F2100W',
 ]
 
-degroup_short_nircam = true
-tweakreg_create_custom_catalogs = ['miri']
-group_tweakreg_dithers = ['miri']
-group_skymatch_dithers = []
+tweakreg_create_custom_catalogs = [
+#    'miri',
+]
+group_tweakreg_dithers = [
+    'nircam_short',
+    'nircam_long',
+    'miri',
+]
+group_skymatch_dithers = [
+    'miri',
+]
+degroup_skymatch_dithers = [
+    'nircam_short',
+]
 
 bgr_check_type = 'parallel_off'
 bgr_background_name = 'off'
-bgr_observation_types = ['miri']
+bgr_observation_types = [
+    'miri',
+]
 
 lev3_fields = [] # indicate numbers of particular field if you want
                   # to limit the level3
@@ -68,11 +80,14 @@ lev3_fields = [] # indicate numbers of particular field if you want
 lyot_method = 'mask'
 
 astrometric_alignment_type = 'table'
+alignment_mapping_mode = 'shift'
 
 steps.nircam = [
     'lv1',
     'lv2',
     'destripe',
+    'wcs_adjust',
+#    'psf_model',
     'lv3',
     'astrometric_align',
 ]
@@ -80,19 +95,25 @@ steps.miri = [
     'lv1',
     'lv2',
     'lyot_adjust',
+    'wcs_adjust',
     'dither_match',
+#    'psf_model',
     'lv3',
+    'astrometric_catalog',
     'astrometric_align',
 ]
 
 overwrites.nircam = [
+#    'wcs_adjust',
+#    'lv3',
+#    'astrometric_align',
 ]
 
 overwrites.miri = [
-#    'all',
-#    'lyot_adjust',
+#    'wcs_adjust',
 #    'dither_match',
 #    'lv3',
+#    'astrometric_catalog',
 #    'astrometric_align',
 ]
 
@@ -102,14 +123,20 @@ obs_to_skip = [
 
 # For IC5332, pull the backgrounds from NGC7496
 [extra_obs_to_include.ic5332]
-#ngc0628 = [
-#    'jw02107040001',
-#    'jw02107040002',
-#]
 ngc7496 = [
-    'jw02107041001',
+    'jw02107041001_0?2',
 ]
 
+[psf_model_parameters]
+mode = 'replace'
+fit_method = 'image'
+
+[psf_model]
+
+[psf_model.ngc7496]
+F2100W = [
+    [347.4471073, -43.4278438],
+]
 
 [alignment]
 ic5332 = 'ic5332_agb_cat.fits'
@@ -134,10 +161,13 @@ ngc7320 = 'Gaia_DR3_NGC7320.fits'
 ngc7496 = 'ngc7496_agb_cat.fits'
 
 [alignment_mapping]
-F770W = 'F335M'
+#F770W = 'F335M'
+#F1000W = 'F770W'
+#F1130W = 'F1000W'
+#F2100W = 'F1130W'
 F1000W = 'F770W'
-F1130W = 'F1000W'
-F2100W = 'F1130W'
+F1130W = 'F770W'
+F2100W = 'F770W'
 
 [lv1_parameters]
 save_results = true
@@ -158,9 +188,21 @@ save_results = true
 snr_threshold = 2
 npixels = 5
 bkg_boxsize = 25
-deblend = true
+deblend = false
+
+filter.is_extended = false
+#filter.roundness_lower = -0.5
+#filter.roundness_upper = 0.5
 
 [lv3_parameters.tweakreg]
+
+# Skip MIRI wavelengths, since we have already
+# solved for this
+skip.F770W = true
+skip.F1000W = true
+skip.F1130W = true
+skip.F2100W = true
+
 align_to_gaia = false
 brightest = 500
 snr_threshold = 3
@@ -168,15 +210,18 @@ expand_refcat = true
 fitgeometry = 'shift'
 minobj = 3
 peakmax.nircam = 20
-searchrad = '10pix'
-separation = '10pix'
-tolerance.nircam_short = '5pix'
-tolerance.nircam_long = '10pix'
-tolerance.miri = '10pix'
-use2dhist.nircam = false
-use2dhist.miri = true
 roundlo.nircam = -0.5
 roundhi.nircam = 0.5
+
+# Take relatively tight tolerances since we've already shifted
+# close to the correct solution
+separation.miri = 1
+separation.nircam = 2
+tolerance.nircam_short = 0.3
+tolerance.nircam_long = 0.3
+tolerance.miri = 1
+use2dhist = false
+
 # Tweak boxsize, so we detect objects in diffuse emission
 bkg_boxsize.nircam_short = 100
 bkg_boxsize.nircam_long = 100
@@ -184,13 +229,16 @@ bkg_boxsize.miri = 25
 enforce_user_order = true
 
 [lv3_parameters.skymatch]
-skymethod = 'global+match'
+
+# Turn off matching for MIRI since we've done it
+# already
+skymethod.nircam = 'global+match'
+skymethod.miri = 'global'
 subtract = true
-apply_sky.miri = true
 skystat = 'median'
 nclip.nircam = 20
 nclip.miri = 10
-lsigma.nircam =  3
+lsigma.nircam = 3
 lsigma.miri = 1.5
 usigma.nircam = 3
 usigma.miri = 1.5
@@ -218,6 +266,13 @@ destriping_method = 'pca'
 dilate_size = 7
 pca_reconstruct_components = 5
 pca_final_med_row_subtraction = false
+
+[astrometric_catalog_parameters]
+snr = 50
+sharplo = 0.2
+sharphi = 1.0
+roundlo = -0.5
+roundhi = 0.5
 
 [astrometry_parameters]
 searchrad = 15

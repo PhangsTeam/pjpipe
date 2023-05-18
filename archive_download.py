@@ -51,6 +51,7 @@ class ArchiveDownload:
                  telescope='JWST',
                  prop_id=None,
                  instrument_name=None,
+                 dataproduct_type=None,
                  calib_level=None,
                  extension=None,
                  do_filter=True,
@@ -63,8 +64,8 @@ class ArchiveDownload:
                  ):
         """Query and download data from MAST"""
 
-        if not target:
-            raise Warning('Target should be specified!')
+        if not target and not prop_id:
+            raise Warning('Either one of target, prop_id should be specified!')
 
         if calib_level is None:
             calib_level = [2, 3]
@@ -82,6 +83,7 @@ class ArchiveDownload:
         self.telescope = telescope
         self.prop_id = prop_id
         self.instrument_name = instrument_name
+        self.dataproduct_type = dataproduct_type
         self.calib_level = calib_level
         self.extension = extension
         self.do_filter = do_filter
@@ -121,11 +123,18 @@ class ArchiveDownload:
             print('[%s] -> Telescope: %s' % (get_time(), self.telescope))
             print('[%s] -> Proposal ID: %s' % (get_time(), self.prop_id))
             print('[%s] -> Instrument name: %s' % (get_time(), self.instrument_name))
+            print('[%s] -> Data product type: %s' % (get_time(), self.dataproduct_type))
 
-        if self.radius is None:
-            self.obs_list = self.observations.query_object(self.target)
+        if self.target is None:
+            # If we don't have a target, fall back to just querying the proposal ID
+            self.obs_list = self.observations.query_criteria(proposal_id=self.prop_id)
+
         else:
-            self.obs_list = self.observations.query_object(self.target, radius=self.radius)
+            # Query by target
+            if self.radius is None:
+                self.obs_list = self.observations.query_object(self.target)
+            else:
+                self.obs_list = self.observations.query_object(self.target, radius=self.radius)
 
         if np.all(self.obs_list['calib_level'] < 0):
             print('[%s] No available data' % get_time())
@@ -140,6 +149,8 @@ class ArchiveDownload:
             self.obs_list = self.obs_list[self.obs_list['proposal_id'] == self.prop_id]
         if self.instrument_name is not None:
             self.obs_list = self.obs_list[self.obs_list['instrument_name'] == self.instrument_name]
+        if self.dataproduct_type is not None:
+            self.obs_list = self.obs_list[self.obs_list['dataproduct_type'] == self.dataproduct_type]
 
         if len(self.obs_list) == 0:
             print('[%s] No available data' % get_time())
