@@ -16,39 +16,9 @@ import matplotlib.pyplot as plt
 
 from utils_jwst import *
 
-# &%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%
-# Control flow
-# &%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%
+# This module holds the control flow tags
 
-do_compare_all_bands = True
-do_anchor_images = True
-
-# &%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%
-# Directory structure
-# &%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%
-
-input_tab = Table.read('jwst_image_key.txt', format='ascii.csv',comment='#')
-
-# add a reference table giving the x-axis range of the comparison data
-
-gal_names = np.unique(np.array(input_tab['galaxy']))
-filters = np.unique(np.array(input_tab['filter']))
-
-my_input_root = '../working_data/processed_jwst/initial_matched_res/'
-my_plot_dir = '../working_data/processed_jwst/background_plots/'
-my_table_dir = '../working_data/processed_jwst/background_tables/'
-my_external_comp_dir = '../orig_data/background_comps/'
-
-my_orig_root = '../orig_data/v0p7p3/'
-my_output_root = '../working_data/processed_jwst/anchored/'
-
-just_targets = []
-
-ref_filt_miri = 'F770W'
-ref_filt_nircam = 'F300M'
-
-ext_comp_filt_miri = 'F770W'
-ext_comp_filt_nircam = 'F300M'
+from postprocess_control_flow import *
 
 # &%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%
 # Loop over all galaxies and do the comparison between bands
@@ -79,14 +49,16 @@ for this_gal in gal_names:
 
         # The reference file
         ref_filt = ref_filt_miri
-        ref_file_name = my_input_root + this_gal + '_'+ref_filt+'_atF2100W.fits'
+        ref_file_name = my_initial_matched_res_dir + \
+            this_gal + '_'+ref_filt+'_atF2100W.fits'
         
         if os.path.isfile(ref_file_name) == False:
             print("Reference file not found, skipping. ", ref_file_name)
             continue
         
         # The comparison file
-        comp_file_name = my_input_root + this_gal + '_'+comp_filt+'_atF2100W.fits'
+        comp_file_name = my_initial_matched_res_dir + \
+            this_gal + '_'+comp_filt+'_atF2100W.fits'
 
         if os.path.isfile(comp_file_name) == False:
             print("Comparison file not found, skipping. ", comp_file_name)
@@ -97,7 +69,8 @@ for this_gal in gal_names:
         comp_hdu = fits.open(comp_file_name)['SCI']            
             
         # Compare the two images
-        this_plot_fname = my_plot_dir+this_gal+'_'+comp_filt+'_vs_'+ref_filt+'.png'
+        this_plot_fname = my_plot_dir+this_gal+'_' + \
+            comp_filt+'_vs_'+ref_filt+'.png'
         slope, intercept = solve_for_offset(
             comp_hdu, ref_hdu, mask_hdu=None,
             xmin=0.25, xmax=2.0, binsize=0.1,
@@ -119,7 +92,8 @@ for this_gal in gal_names:
     for ref_filt in ['irac4']:
 
         # The reference file        
-        ref_file_name = my_external_comp_dir + this_gal + '_'+ref_filt+'_atGauss4.fits'
+        ref_file_name = my_external_comp_dir + \
+            this_gal + '_'+ref_filt+'_atGauss4.fits'
         
         if os.path.isfile(ref_file_name) == False:
             print("Reference file not found, skipping. ", ref_file_name)
@@ -127,7 +101,8 @@ for this_gal in gal_names:
 
         # Name of file to compare
         comp_filt = ext_comp_filt_miri
-        comp_file_name = my_input_root + this_gal + '_'+comp_filt+'_atGauss4.fits'
+        comp_file_name = my_initial_matched_res_dir + \
+            this_gal + '_'+comp_filt+'_atGauss4.fits'
         
         if os.path.isfile(comp_file_name) == False:
             print("Comparison file not found, skipping. ", comp_file_name)
@@ -160,7 +135,8 @@ for this_gal in gal_names:
     for ref_filt in ['w3']:
 
         # Comparison file
-        ref_file_name = my_external_comp_dir + this_gal + '_'+ref_filt+'_atGauss15.fits'
+        ref_file_name = my_external_comp_dir + \
+            this_gal + '_'+ref_filt+'_atGauss15.fits'
 
         if os.path.isfile(ref_file_name) == False:
             print("Reference file not found, skipping. ", ref_file_name)
@@ -168,7 +144,8 @@ for this_gal in gal_names:
 
         # Name of file to compare
         comp_filt = ext_comp_filt_miri
-        comp_file_name = my_input_root + this_gal + '_'+comp_filt+'_atGauss4.fits'
+        comp_file_name = my_initial_matched_res_dir + \
+            this_gal + '_'+comp_filt+'_atGauss4.fits'
         
         if os.path.isfile(comp_file_name) == False:
             print("Comparison file not found, skipping. ", comp_file_name)
@@ -207,14 +184,16 @@ for this_gal in gal_names:
 
         # Identify the reference image
         ref_filt = ref_filt_nircam
-        ref_file_name = my_input_root + this_gal + '_'+ref_filt+'_atF2100W.fits'
+        ref_file_name = my_initial_matched_res_dir + \
+            this_gal + '_'+ref_filt+'_atF2100W.fits'
 
         if os.path.isfile(ref_file_name) == False:
             print("Reference file not found, skipping. ", ref_file_name)
             continue
 
         # Identify the comparison image
-        comp_file_name = my_input_root + this_gal + '_'+comp_filt+'_atF2100W.fits'
+        comp_file_name = my_initial_matched_res_dir + \
+            this_gal + '_'+comp_filt+'_atF2100W.fits'
         
         if os.path.isfile(comp_file_name) == False:
             print("Comparison file not found, skipping. ", comp_file_name)
@@ -248,13 +227,15 @@ for this_gal in gal_names:
 
         # NIRCam band to compare
         comp_filt = ext_comp_filt_nircam
-        comp_file_name = my_input_root + this_gal + '_'+comp_filt+'_atGauss7p5.fits'
+        comp_file_name = my_initial_matched_res_dir + \
+            this_gal + '_'+comp_filt+'_atGauss7p5.fits'
         if os.path.isfile(comp_file_name) == False:
             print("Comparison file not found, skipping. ", comp_file_name)
             continue
 
         # External reference file
-        ref_file_name = my_external_comp_dir + this_gal + '_'+ref_filt+'_atGauss7p5.fits'        
+        ref_file_name = my_external_comp_dir + this_gal + \
+            '_'+ref_filt+'_atGauss7p5.fits'        
         if os.path.isfile(ref_file_name) == False:
             print("Reference file not found, skipping. ", ref_file_name)
             continue
@@ -404,5 +385,5 @@ for this_gal in gal_names:
         input_hdu.data = new_data
         
         # Write to disk
-        output_file_name = my_output_root + this_gal + '_'+this_filt+'_anchored.fits'    
+        output_file_name = my_anchored_dir + this_gal + '_'+this_filt+'_anchored.fits'    
         input_hdu.writeto(output_file_name, overwrite=True)
