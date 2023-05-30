@@ -54,12 +54,15 @@ The resulting images will be stored in the working directory stored in your `wor
   on data processed up to just before level 3, and will output a 'wcs_adjust.toml' file into the reprocess directory
 * `psf_subtraction` has routines for PSF modelling/subtraction for saturated data
 
-## Data homogenisation tools
+## PSF tools
 
-* `make_kernels` creates convolution kernels from JWST or Gaussian PSFs, using the Aniano method. For now at least, these kernels are circularised
-* `loop_kernel_creation` provides an example wrapper around `make_jwst_kernels` 
-* `generate_JWST_PSF_and_kernels` provides an example wrapper around `make_jwst_kernels`  which generates the PSF and kernels inside the `PSF/` directory
-*  `convolve_data` uses the kernels from `generate_JWST_PSF_and_kernels` to make convolved version of the fully reduced NIRCam and MIRI frames
+* the PSF/ directory includes routines related to PSF creation and validation.
+* 'make_kernels' in that directory creates circularized kernels from JWST or Gaussian PSFs, using the Aniano method.
+* `generate_JWST_PSF_and_kernels` in that directory is a wrapper around `make_kernels`
+*  `conv_with_kernel` in 'utils_jwst' can be used with the kernels 'make_kernels' (or they can be used by hand)
+
+(These may be out of date and to be deprecated - they live in the home directory)
+* `loop_kernel_creation` is an older version of material in the PSF directory
 * `jwst_pypherise` uses pypher to produce PSF kernels to convert from JWST to JWST or JWST to gaussian/moffat
 
 ## PCA tools

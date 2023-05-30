@@ -11,36 +11,23 @@ from astropy.io import fits
 
 from utils_jwst import *
 
-# -----------------------------------------------------------------------------------
-# Control flow
-# -----------------------------------------------------------------------------------
+# This module holds the control flow tags
 
-do_conv_to_f2100w = True
-do_conv_to_gauss = True
-
-# -----------------------------------------------------------------------------------
-# Directory structure
-# -----------------------------------------------------------------------------------
-
-# This could be replaced with TOML files and markup. It just defines
-# the relevant directory structure.
-
-input_tab = Table.read('jwst_image_key.txt', format='ascii.csv',comment='#')
-gal_names = np.unique(np.array(input_tab['galaxy']))
-filters = np.unique(np.array(input_tab['filter']))
-
-my_input_root = '../working_data/processed_jwst/anchored/'
-my_kern_dir = '../jwst_scripts_fork/PSF/kernels/'
-my_output_root = '../working_data/processed_jwst/anchored_matched_res/'
+from postprocess_control_flow import *
 
 # -----------------------------------------------------------------------------------
 # Loop over all galaxies and do the initial convolution 
 # -----------------------------------------------------------------------------------
 
 for this_gal in gal_names:
+
+    if len(just_targets) > 0:
+        if this_gal not in just_targets:
+            continue
     
     template_filter = 'F2100W'
-    template_file = my_input_root+this_gal+'_'+template_filter+'_anchored.fits'
+    template_file = my_anchored_dir+this_gal+ \
+        '_'+template_filter+'_anchored.fits'
     if os.path.isfile(template_file) == False:
         print("No valid template for ", template_file)
         continue
@@ -49,7 +36,7 @@ for this_gal in gal_names:
     for this_filt in filters:
 
         # Select the relevant table row
-        input_file = my_input_root+this_gal+'_'+this_filt+'_anchored.fits'
+        input_file = my_anchored_dir+this_gal+'_'+this_filt+'_anchored.fits'
         print(this_gal, this_filt, input_file)
         
         # Check that the input file is present
@@ -68,9 +55,10 @@ for this_gal in gal_names:
         # Convolve to F2100W
         # ---------------------        
 
-        if do_conv_to_f2100w:
+        if do_conv_to_f2100w_anchored:
         
-            output_file_name = my_output_root + this_gal + '_'+this_filt+'_atF2100W_anchored.fits'
+            output_file_name = my_anchored_matched_res_dir + \
+                this_gal + '_'+this_filt+'_atF2100W_anchored.fits'
             print("... building ", output_file_name)
             if this_filt != 'F2100W':
                 kernel_hdu = fits.open(kern_to_f2100w)[0]
@@ -91,9 +79,10 @@ for this_gal in gal_names:
         # Convolve to Gaussian
         # ---------------------        
 
-        if do_conv_to_gauss:
+        if do_conv_to_gauss_anchored:
         
-            output_file_name = my_output_root + this_gal + '_'+this_filt+'_atGauss1p15_anchored.fits'
+            output_file_name = my_anchored_matched_res_dir + \
+                this_gal + '_'+this_filt+'_'+label_first_gauss+'_anchored.fits'
             print("... building ", output_file_name)
             kernel_hdu = fits.open(kern_to_gauss)[0]
             convolved_hdu = conv_with_kernel(
@@ -101,29 +90,23 @@ for this_gal in gal_names:
                 outfile=output_file_name, overwrite=True)
             convolved_hdu.writeto(output_file_name, overwrite=True)
 
-            # also to 4 arcsec
-            output_file_name = my_output_root + this_gal + '_'+this_filt+'_atGauss4_anchored.fits'
-            print("... building ", output_file_name)
-            kernel_hdu = make_gaussian_psf(fwhm_arcsec = np.sqrt(4.**2-(1.15)**2), oversample_by=50., outfile=None)
-            convolved_more_hdu = conv_with_kernel(
-                convolved_hdu, kernel_hdu,
-                outfile=output_file_name, overwrite=True)
-            convolved_more_hdu.writeto(output_file_name, overwrite=True)
+            # Loop over key output Gaussians
+            for this_label in output_gauss_dict.keys():
+                
+                this_fwhm = output_gauss_dict[this_label]
+                this_oversamp = output_gauss_oversamp_dict[this_label]
 
-            # also to 7.5 arcsec
-            output_file_name = my_output_root + this_gal + '_'+this_filt+'_atGauss7p5_anchored.fits'
-            print("... building ", output_file_name)
-            kernel_hdu = make_gaussian_psf(fwhm_arcsec = np.sqrt(7.5**2-(1.15)**2), oversample_by=200., outfile=None)
-            convolved_more_hdu = conv_with_kernel(
-                convolved_hdu, kernel_hdu,
-                outfile=output_file_name, overwrite=True)
-            convolved_more_hdu.writeto(output_file_name, overwrite=True)
-            
-            # and to 15 arcsec
-            output_file_name = my_output_root + this_gal + '_'+this_filt+'_atGauss15_anchored.fits'
-            print("... building ", output_file_name)
-            kernel_hdu = make_gaussian_psf(fwhm_arcsec = np.sqrt(15.**2-(1.15)**2), oversample_by=200., outfile=None)
-            convolved_more_hdu = conv_with_kernel(
-                convolved_hdu, kernel_hdu,
-                outfile=output_file_name, overwrite=True)
-            convolved_more_hdu.writeto(output_file_name, overwrite=True)
+                output_file_name = my_anchored_matched_res_dir + \
+                    this_gal + '_'+this_filt+'_'+this_label+'_anchored.fits'
+
+                print("... building ", output_file_name)
+                print("... kernel ", this_label, this_fwhm)
+
+                kernel_hdu = make_gaussian_psf(
+                    fwhm_arcsec = np.sqrt(this_fwhm**2-(fwhm_first_gauss)**2),
+                    oversample_by=this_oversamp, outfile=None)
+                
+                convolved_more_hdu = conv_with_kernel(
+                    convolved_hdu, kernel_hdu,
+                    outfile=output_file_name, overwrite=True)
+                convolved_more_hdu.writeto(output_file_name, overwrite=True)

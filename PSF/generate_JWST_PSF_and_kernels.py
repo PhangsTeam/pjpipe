@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Nov 24 14:07:52 2022
+"""Created on Thu Nov 24 14:07:52 2022
 
 This script uses webbpsf to generate a fresh version of the JWST kernels
 Useful in the future if webbpsf is updated
 
+Updated to include all copt and a wider set of Gaussian options May 23
+2023 and moved that material to a separate set of files.
+
+Control the script through the psf_options_file.py in the same
+directory and then run it via python generate_JWST_PSF_and_kernels.py
+
 @author: belfiore
+
 """
+
+# --------------------------------------------------------
+# Setup
+# --------------------------------------------------------
+
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
@@ -18,30 +29,24 @@ import webbpsf
 from make_kernels import MakeConvolutionKernel, profile
 from astropy.convolution import convolve
 
-# #output directory where you want the JWST PSFs to be saved
-output_dir = '/Volumes/fbdata2/CODE/JWST/jwst_scripts/PSF/PSF/'
-output_dir_kernels = '/Volumes/fbdata2/CODE/JWST/jwst_scripts/PSF/kernels/'
+# AKL - moved this up but it's not clear that it's used
+nircam_pixel_scale_small = 0.0310
+nircam_pixel_scale_large = 0.0630
+miri_pixel_scale = 0.110    
 
-# list of the PHANGS-JWST filters, others can be added if necessary
-nircam_psfs = [
-    'F200W',
-    'F300M',
-    'F335M',
-    'F360M',
-]
+# AKL - import the PSFs, copt targets, etc. from a seaprate file that
+# doesn't have to go under version control
 
-miri_psfs = [
-    'F770W',
-    'F1000W',
-    'F1130W',
-    'F2100W',
-]
+from psf_options_file import *
+
+# --------------------------------------------------------
+# Routines
+# --------------------------------------------------------
 
 def makeGaussian_2D(X, M, S, normalise=False):
     gauss = np.exp(-np.power((X[0] - M[0])/S[0], 2.)/2)*np.exp(-np.power((X[1] - M[1])/S[1], 2.)/2)
     if normalise==True: gauss =gauss *1./(2.*np.pi*S[0]*S[1])
     return gauss
-
 
 def save_miri_PSF(miri_psfs, output_dir='', **kwargs):
     """Generates MIRI PSF using webbpsf and saves then in output dir
@@ -49,7 +54,7 @@ def save_miri_PSF(miri_psfs, output_dir='', **kwargs):
     
     Parameters
     ----------
-    nircam_psfs : list
+    miri_psfs : list
         list of NIRCam filters.
         
     output_dir: string
@@ -104,10 +109,6 @@ def save_nircam_PSF(nircam_psfs, output_dir='', **kwargs):
         psf_array.writeto(output_dir+'NIRCam_PSF_filter_'+nircam.filter+'.fits', 
                           overwrite=True)
 
-nircam_pixel_scale_small = 0.0310
-nircam_pixel_scale_large = 0.0630
-miri_pixel_scale = 0.110
-    
 
 def save_jwst_cross_kernel(input_filter, target_filter, psf_dir='', outdir=''):
     '''Genrates and saves the kernel necessary to convolve the image taken in a 
@@ -191,8 +192,6 @@ def save_jwst_cross_kernel(input_filter, target_filter, psf_dir='', outdir=''):
     kk.make_convolution_kernel()
     kk.write_out_kernel(outdir =outdir )
     return kk
-
-
      
 def save_kernels_to_Gauss(input_filter, target_gaussian, psf_dir='', outdir=''):
     '''
@@ -255,8 +254,7 @@ def get_copt_fwhm(gal_name):
     ii = t['name']==gal_name
     copt_fwhm = float(t[ii]['muse_copt_FWHM'])
     return copt_fwhm
-    
-    
+        
 def plot_kernel(kk, save_plot=False, save_dir ='' ):
     """Plots source and target PSF and the kernel
     
@@ -314,61 +312,111 @@ def plot_kernel(kk, save_plot=False, save_dir ='' ):
 
 # %%
 
+# ------------------------------------------------------------------------
+# Script that generates kernels
+# ------------------------------------------------------------------------
 
+# Depends on options an dlists inside the "psf_options_file"
 
-# Example script
-# loop everything to F2100W
-miri_psfs_n = copy.copy(miri_psfs)
-miri_psfs_n.remove('F2100W')
-all_PSFs = nircam_psfs+ miri_psfs_n
-all_cameras = ['NIRCam']*len(nircam_psfs) + ['MIRI']*len(miri_psfs_n)
+if do_kern_to_f2100w:
 
-for ii in range(len(all_PSFs)):
-    print( all_cameras[ii], all_PSFs[ii], ' to F2100W')
-    input_filter = {'camera':all_cameras[ii], 'filter':all_PSFs[ii]}
-    target_filter = {'camera':'MIRI', 'filter':'F2100W'}
+    # 
+    # (1) Loop over all PSFs and calculate a kernel to go to F2100W
+    #
     
-    kk = save_jwst_cross_kernel(input_filter, target_filter,
-                                psf_dir=output_dir, outdir=output_dir_kernels)
-    plot_kernel(kk,save_plot=True, save_dir=output_dir_kernels)
-# %%
+    miri_psfs_no_f2100w = copy.copy(miri_psf_list)
+    miri_psfs_no_f2100w.remove('F2100W')
+    all_PSFs = nircam_psf_list+ miri_psfs_no_f2100w
+    all_cameras = ['NIRCam']*len(nircam_psf_list) + ['MIRI']*len(miri_psfs_no_f2100w)
 
-# Example script
-# loop all NIRCam to F360W
-all_PSFs = copy.copy(nircam_psfs)
-all_PSFs.remove('F360M')
-all_cameras = ['NIRCam']*len(all_PSFs) 
-
-for ii in range(len(all_PSFs)):
-    print( all_cameras[ii], all_PSFs[ii], ' to F360M')
-    input_filter = {'camera':all_cameras[ii], 'filter':all_PSFs[ii]}
-    target_filter = {'camera':'NIRCam', 'filter':'F360M'}
-    
-    kk = save_jwst_cross_kernel(input_filter, target_filter,
-                                psf_dir=output_dir, outdir=output_dir_kernels)
-    plot_kernel(kk,save_plot=True, save_dir=output_dir_kernels)
-
-# %%
-
-#get the copt PSF of the JWST galaxies
-jwst_gals = ['NGC0628', 'NGC1365', 'NGC7496', "IC5332"]
-copt_fwhm = np.zeros(len(jwst_gals))
-for ii, gal in enumerate(jwst_gals):
-    copt_fwhm[ii] = get_copt_fwhm(gal)
-    print(gal,copt_fwhm[ii]  )
-
-#Example script, loops everything to each copt PSF from MUSE
-all_PSFs = nircam_psfs+ miri_psfs
-all_cameras = ['NIRCam']*len(nircam_psfs) + ['MIRI']*len(miri_psfs)
-
-for jj in copt_fwhm:
-    for ii in range(len(all_PSFs)):
-        print( all_cameras[ii], all_PSFs[ii], ' to Gauss ' + '{:.3f}'.format(jj))
+    for ii in range(len(all_PSFs)): 
+        print("")
+        print("---------------------------------------------")
+        print( all_cameras[ii], all_PSFs[ii], ' to F2100W')
+        print("---------------------------------------------")
         input_filter = {'camera':all_cameras[ii], 'filter':all_PSFs[ii]}
-        target_gaussian = {'fwhm':jj}
-        
-        kk = save_kernels_to_Gauss(input_filter, target_gaussian,
-                                    psf_dir=output_dir, outdir=output_dir_kernels)
-        plot_kernel(kk,save_plot=True, save_dir=output_dir_kernels)
+        target_filter = {'camera':'MIRI', 'filter':'F2100W'}
+    
+        this_kern = save_jwst_cross_kernel(
+            input_filter, target_filter,
+            psf_dir=output_dir_psf, outdir=output_dir_kernels)
+        plot_kernel(this_kern,save_plot=True, save_dir=output_dir_kernels)
 
+if do_kern_to_f360m:
+    #
+    # (2) Loop over all NIRCam PSFs and calculate a kernel to go to F360W
+    #
+
+    nircam_psfs_no_f360m = copy.copy(nircam_psf_list)
+    nircam_psfs_no_f360m.remove('F360M')
+    all_cameras = ['NIRCam']*len(all_PSFs) 
+    
+    for ii in range(len(nircam_psfs_no_f360m)):
+        print("")
+        print("---------------------------------------------")
+        print( all_cameras[ii], all_PSFs[ii], ' to F360M')
+        print("---------------------------------------------")
+        input_filter = {'camera':all_cameras[ii], 'filter':all_PSFs[ii]}
+        target_filter = {'camera':'NIRCam', 'filter':'F360M'}
+    
+        this_kern = save_jwst_cross_kernel(
+            input_filter, target_filter,
+            psf_dir=output_dir_psf, outdir=output_dir_kernels)
+        plot_kernel(this_kern,save_plot=True, save_dir=output_dir_kernels)
+
+
+if do_kern_to_copt:
+    #
+    # (3) Create kernels targeting the specific MUSE copt values (as Gaussians)
+    #
+
+    #get the copt PSF of the JWST galaxies
+    copt_fwhm = np.zeros(len(copt_targets))
+    for ii, this_gal in enumerate(copt_targets):
+        copt_fwhm[ii] = get_copt_fwhm(this_gal)
+        print(this_gal,copt_fwhm[ii]  )
+
+    # Try to move NIRCam and MIRI PSFs to the target res
+    all_PSFs = nircam_psf_list+ miri_psf_list
+    all_cameras = ['NIRCam']*len(nircam_psf_list) + ['MIRI']*len(miri_psf_list)
+
+    for jj in copt_fwhm:
+        for ii in range(len(all_PSFs)):
+            print("")
+            print("---------------------------------------------")
+            print( all_cameras[ii], all_PSFs[ii], ' to Gauss ' + '{:.3f}'.format(jj))
+            print("---------------------------------------------")
+            input_filter = {'camera':all_cameras[ii], 'filter':all_PSFs[ii]}
+            target_gaussian = {'fwhm':jj}
+        
+            this_kern = save_kernels_to_Gauss(
+                input_filter, target_gaussian,
+                psf_dir=output_dir_psf, outdir=output_dir_kernels)
+            plot_kernel(this_kern,save_plot=True, save_dir=output_dir_kernels)
+
+if do_kern_to_gauss:
+    #
+    # (4) Create kernels targeting the specific Gaussian FWHM values
+    #
+
+    # Try to move NIRCam and MIRI PSFs to the target res
+    all_PSFs = nircam_psf_list+ miri_psf_list
+    all_cameras = ['NIRCam']*len(nircam_psf_list) + ['MIRI']*len(miri_psf_list)
+    
+    for jj in gauss_res_list:
+        for ii in range(len(all_PSFs)):
+            print("")
+            print("---------------------------------------------")
+            print( all_cameras[ii], all_PSFs[ii], ' to Gauss ' + '{:.3f}'.format(jj))
+            print("---------------------------------------------")
+            input_filter = {'camera':all_cameras[ii], 'filter':all_PSFs[ii]}
+            target_gaussian = {'fwhm':jj}
+        
+            this_kern = save_kernels_to_Gauss(
+                input_filter, target_gaussian,
+                psf_dir=output_dir_psf, outdir=output_dir_kernels)
+            plot_kernel(this_kern,save_plot=True, save_dir=output_dir_kernels)
+    
+    
+            
 # %%
