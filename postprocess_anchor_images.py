@@ -363,11 +363,12 @@ for this_gal in gal_names:
     for this_filt in filters:
 
         # Select the relevant table row
-        if np.sum((input_tab['galaxy'] == this_gal)*(input_tab['filter'] == this_filt)) == 0:
+        if np.sum((image_key['galaxy'] == this_gal)*(image_key['filter'] == this_filt)) == 0:
             print("No match for: ", this_gal, this_filt)
             continue
-        tab_mask = (input_tab['galaxy'] == this_gal)*(input_tab['filter'] == this_filt)
-        input_file = my_orig_root+str(np.array(input_tab[tab_mask]['filename'])[0])
+        tab_mask = (image_key['galaxy'] == this_gal)*(image_key['filter'] == this_filt)
+        input_file = my_input_root+ \
+            str(np.array(image_key[tab_mask]['filename'])[0])
 
         # Check that the input file is present
         if os.path.isfile(input_file) == False:

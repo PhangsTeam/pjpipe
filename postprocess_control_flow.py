@@ -24,7 +24,7 @@ do_conv_to_gauss_anchored = True
 
 # Which targets to process ([] means all)
 
-just_targets = []
+just_targets = ['ngc4321']
 
 # Which bands to use as internal references
 
