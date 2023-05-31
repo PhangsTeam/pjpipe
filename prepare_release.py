@@ -120,15 +120,14 @@ for prop_id in tqdm(prop_ids, ascii=True, desc='prop ids'):
 
             for tweakback_file in tqdm(tweakback_files, ascii=True, leave=False, desc='tweakback'):
 
-                hdu_out_name = os.path.join(release_target_dir, os.path.split(tweakback_file)[-1])
+                band = tweakback_file.split(os.path.sep)[-3]
+                tweakback_dir = os.path.join(release_target_dir, '%s_tweakback' % band.lower())
+                if not os.path.exists(tweakback_dir):
+                    os.makedirs(tweakback_dir)
+
+                hdu_out_name = os.path.join(tweakback_dir, os.path.split(tweakback_file)[-1])
 
                 if not os.path.exists(hdu_out_name) or overwrite:
-
-                    band = tweakback_file.split(os.path.sep)[-3]
-
-                    tweakback_dir = os.path.join(release_target_dir, '%s_tweakback' % band.lower())
-                    if not os.path.exists(tweakback_dir):
-                        os.makedirs(tweakback_dir)
 
                     os.system('cp %s %s' % (tweakback_file, tweakback_dir))
 
