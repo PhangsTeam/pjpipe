@@ -1,11 +1,12 @@
-import numpy as np
+import glob
 import os
 import warnings
+from datetime import datetime
 
+import numpy as np
 from astropy.table import unique, vstack
 from astroquery.exceptions import NoResultsWarning
 from astroquery.mast import Observations
-from datetime import datetime
 from requests.exceptions import ConnectionError, ChunkedEncodingError
 from tqdm import tqdm
 
@@ -55,6 +56,7 @@ class ArchiveDownload:
                  calib_level=None,
                  extension=None,
                  do_filter=True,
+                 breakout_targets=False,
                  product_type=None,
                  filter_gs=True,
                  login=False,
@@ -87,6 +89,7 @@ class ArchiveDownload:
         self.calib_level = calib_level
         self.extension = extension
         self.do_filter = do_filter
+        self.breakout_targets = breakout_targets
         self.filter_gs = filter_gs
         self.product_type = product_type
         self.verbose = verbose
@@ -159,8 +162,111 @@ class ArchiveDownload:
 
         return True
 
-    def run_download(self):
+    def run_download(self,
+                     max_retries=5,
+                     ):
         """Download a list of observations"""
+
+        if self.target is None and self.breakout_targets:
+
+            # Break out by targets
+            targets = np.unique(self.obs_list['target_name'])
+
+            base_dir = os.getcwd()
+
+            for target in targets:
+
+                obs_list = self.obs_list[self.obs_list['target_name'] == target]
+
+                target = target.lower()
+                target = target.replace(' ', '_')
+
+                target_dir = os.path.join(base_dir, target)
+
+                if not os.path.exists(target_dir):
+                    os.makedirs(target_dir)
+                os.chdir(target_dir)
+
+                products = self.get_products(obs_list)
+
+                success = False
+                n_retries = 0
+
+                downloaded_files = glob.glob(os.path.join('*',
+                                                          '*',
+                                                          '*',
+                                                          '*')
+                                             )
+                n_files = len(downloaded_files)
+
+                if n_files == len(products):
+                    os.chdir(base_dir)
+                    continue
+
+                if self.verbose:
+                    print('[%s] Downloading %d files' % (get_time(), len(products)))
+
+                while not success and n_retries < max_retries:
+                    download(self.observations, products)
+
+                    n_retries += 1
+
+                    downloaded_files = glob.glob(os.path.join('*',
+                                                              '*',
+                                                              '*',
+                                                              '*')
+                                                 )
+                    n_files = len(downloaded_files)
+
+                    if n_files == len(products):
+                        success = True
+                        os.chdir(base_dir)
+
+                    if n_retries == max_retries:
+                        raise Warning('Max retries exceeded!')
+
+        else:
+
+            products = self.get_products(self.obs_list)
+
+            n_retries = 0
+
+            downloaded_files = glob.glob(os.path.join('*',
+                                                      '*',
+                                                      '*',
+                                                      '*')
+                                         )
+            n_files = len(downloaded_files)
+
+            if n_files == len(products):
+                return True
+
+            if self.verbose:
+                print('[%s] Downloading %d files' % (get_time(), len(products)))
+
+            while n_retries < max_retries:
+                download(self.observations, products)
+
+                n_retries += 1
+
+                downloaded_files = glob.glob(os.path.join('*',
+                                                          '*',
+                                                          '*',
+                                                          '*')
+                                             )
+                n_files = len(downloaded_files)
+
+                if n_files == len(products):
+                    return True
+
+            raise Warning('Max retries exceeded!')
+
+        return True
+
+    def get_products(self,
+                     obs_list,
+                     ):
+        """Get products from an observations list"""
 
         # Flatten down all the observations
         products = []
@@ -168,7 +274,7 @@ class ArchiveDownload:
         if self.verbose:
             print('[%s] Getting obs' % get_time())
 
-        for obs in tqdm(self.obs_list, ascii=True):
+        for obs in tqdm(obs_list, ascii=True):
             try:
                 product_list = self.observations.get_product_list(obs)
                 products.append(product_list)
@@ -199,9 +305,4 @@ class ArchiveDownload:
             products = unique(products, keys='dataURI')
             products.sort('dataURI')
 
-        if self.verbose:
-            print('[%s] Downloading %d files' % (get_time(), len(products)))
-
-        download(self.observations, products)
-
-        return True
+        return products

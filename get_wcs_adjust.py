@@ -103,6 +103,16 @@ for prop_id in prop_ids:
                 input_models = [datamodels.open(input_file) for input_file in input_files]
                 asn_file = datamodels.ModelContainer(input_models)
 
+                # Group up the dithers
+                if band_type in group_tweakreg_dithers:
+                    for model in asn_file._models:
+                        model.meta.observation.exposure_number = '1'
+
+                # If we only have one group, this won't do anything so just skip
+                if len(asn_file.models_grouped) == 1:
+                    os.chdir(reprocess_dir)
+                    continue
+
                 tweakreg_config = TweakRegStep.get_config_from_reference(asn_file)
                 tweakreg = TweakRegStep.from_config_section(tweakreg_config)
                 tweakreg.output_dir = os.getcwd()
@@ -126,16 +136,6 @@ for prop_id in prop_ids:
                         continue
 
                     recursive_setattr(tweakreg, tweakreg_key, value)
-
-                # Group up the dithers
-                if band_type in group_tweakreg_dithers:
-                    for model in asn_file._models:
-                        model.meta.observation.exposure_number = '1'
-
-                # If we only have one group, this won't do anything so just skip
-                if len(asn_file.models_grouped) == 1:
-                    os.chdir(reprocess_dir)
-                    continue
 
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore')

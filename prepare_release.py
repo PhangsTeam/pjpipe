@@ -38,7 +38,8 @@ file_exts = ['i2d.fits',
              'i2d_align_table.fits',
              'cat.ecsv',
              'astro_cat.fits',
-             'segm.fits']
+             'segm.fits',
+             ]
 
 tweakback_ext = 'tweakback.fits'
 
@@ -59,11 +60,11 @@ if not os.path.exists(release_dir):
     os.makedirs(release_dir)
 
 hdu_ext_to_delete = [
-    'CON',
-    'WHT',
+    # 'CON',
+    # 'WHT',
     'VAR_POISSON',
     'VAR_RNOISE',
-    'VAR_FLAT'
+    'VAR_FLAT',
 ]
 
 for prop_id in tqdm(prop_ids, ascii=True, desc='prop ids'):
