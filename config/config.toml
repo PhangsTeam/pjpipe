@@ -9,8 +9,8 @@ products = [
 
 calib_level = [
     1,
-    2,
-    3,
+#    2,
+#    3,
 ]
 
 
@@ -26,6 +26,8 @@ targets = [
     'ngc1512',
     'ngc1566',
     'ngc1672',
+    'ngc2835',
+    'ngc3351',
     'ngc3627',
     'ngc4303',
     'ngc4321',
@@ -35,15 +37,15 @@ targets = [
 ]
 
 [pipeline]
-data_version = 'v0p7p3'
+data_version = 'v0p8'
 flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
 nircam_bands = [
-    'F200W',
     'F300M',
     'F335M',
     'F360M',
+    'F200W',
 ]
 miri_bands = [
     'F770W',
@@ -62,6 +64,8 @@ group_tweakreg_dithers = [
 ]
 group_skymatch_dithers = [
     'miri',
+    'nircam_short',
+    'nircam_long',
 ]
 degroup_skymatch_dithers = [
     'nircam_short',
@@ -87,6 +91,9 @@ steps.nircam = [
     'lv2',
     'destripe',
     'wcs_adjust',
+    'dither_match',
+    'dither_stripe_sub',
+    'dither_match_2',
 #    'psf_model',
     'lv3',
     'astrometric_align',
@@ -104,7 +111,13 @@ steps.miri = [
 ]
 
 overwrites.nircam = [
+#    'lv1',
+#    'lv2',
+#    'destripe',
 #    'wcs_adjust',
+#    'dither_match',
+#    'dither_stripe_sub',
+#    'dither_match_2',
 #    'lv3',
 #    'astrometric_align',
 ]
@@ -204,7 +217,9 @@ skip.F1130W = true
 skip.F2100W = true
 
 align_to_gaia = false
-brightest = 500
+brightest.nircam_short = 125
+brightest.nircam_long = 500
+brightest.miri = 500
 snr_threshold = 3
 expand_refcat = true
 fitgeometry = 'shift'
@@ -230,10 +245,10 @@ enforce_user_order = true
 
 [lv3_parameters.skymatch]
 
-# Turn off matching for MIRI since we've done it
-# already
-skymethod.nircam = 'global+match'
-skymethod.miri = 'global'
+# Turn off matching since we've done it already
+#skymethod.nircam = 'global+match'
+#skymethod.miri = 'global'
+skymethod = 'global'
 subtract = true
 skystat = 'median'
 nclip.nircam = 20
@@ -261,11 +276,18 @@ sigma = 3
 
 [destripe_parameters]
 quadrants = true
+do_vertical_subtraction = true
 filter_diffuse = true
-destriping_method = 'pca'
 dilate_size = 7
-pca_reconstruct_components = 5
-pca_final_med_row_subtraction = false
+destriping_method = 'median_filter'
+median_filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
+#destriping_method = 'pca'
+#pca_reconstruct_components = 5
+#large_scale_subtraction = true
+
+[dither_stripe_sub_parameters]
+quadrants = true
+sigma = 3
 
 [astrometric_catalog_parameters]
 snr = 50
@@ -286,5 +308,5 @@ sigma = 3
 
 [prepare_release]
 remove_bloat = true
-move_tweakback = false
+move_tweakback = true
 overwrite = false

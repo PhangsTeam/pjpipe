@@ -1,7 +1,7 @@
 [local]
 api_key = ''
 crds_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/crds/'
-raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw/archive_20230302/'
+raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw/archive_20230513/'
 working_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_phangs_reprocessed/'
 webb_psf_data = '/data/beegfs/astro-storage/groups/schinnerer/williams/webbpsf-data'
 updated_flats_dir = ''

@@ -38,7 +38,8 @@ file_exts = ['i2d.fits',
              'i2d_align_table.fits',
              'cat.ecsv',
              'astro_cat.fits',
-             'segm.fits']
+             'segm.fits',
+             ]
 
 tweakback_ext = 'tweakback.fits'
 
@@ -59,11 +60,11 @@ if not os.path.exists(release_dir):
     os.makedirs(release_dir)
 
 hdu_ext_to_delete = [
-    'CON',
-    'WHT',
+    # 'CON',
+    # 'WHT',
     'VAR_POISSON',
     'VAR_RNOISE',
-    'VAR_FLAT'
+    'VAR_FLAT',
 ]
 
 for prop_id in tqdm(prop_ids, ascii=True, desc='prop ids'):
@@ -119,15 +120,14 @@ for prop_id in tqdm(prop_ids, ascii=True, desc='prop ids'):
 
             for tweakback_file in tqdm(tweakback_files, ascii=True, leave=False, desc='tweakback'):
 
-                hdu_out_name = os.path.join(release_target_dir, os.path.split(tweakback_file)[-1])
+                band = tweakback_file.split(os.path.sep)[-3]
+                tweakback_dir = os.path.join(release_target_dir, '%s_tweakback' % band.lower())
+                if not os.path.exists(tweakback_dir):
+                    os.makedirs(tweakback_dir)
+
+                hdu_out_name = os.path.join(tweakback_dir, os.path.split(tweakback_file)[-1])
 
                 if not os.path.exists(hdu_out_name) or overwrite:
-
-                    band = tweakback_file.split(os.path.sep)[-3]
-
-                    tweakback_dir = os.path.join(release_target_dir, '%s_tweakback' % band.lower())
-                    if not os.path.exists(tweakback_dir):
-                        os.makedirs(tweakback_dir)
 
                     os.system('cp %s %s' % (tweakback_file, tweakback_dir))
 

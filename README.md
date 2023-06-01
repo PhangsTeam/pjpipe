@@ -50,9 +50,15 @@ The resulting images will be stored in the working directory stored in your `wor
 
 ## General tools
 
+* `check_archive_files` will check through downloaded files, to see if there are any issues and things need to be 
+  redownloaded
+* `compare_different_reprocess` will put out difference maps for two different reprocess versions, for regression 
+  testing
 * `get_wcs_adjust` will get WCS shifts and output in a format you can paste straight into a config file. It needs to run
   on data processed up to just before level 3, and will output a 'wcs_adjust.toml' file into the reprocess directory
 * `psf_subtraction` has routines for PSF modelling/subtraction for saturated data
+* `convert_con_to_coverage` will convert the CON file present in the release to a simpler map of the number of pixels
+  contributing to the final mosaic
 
 ## PSF tools
 
