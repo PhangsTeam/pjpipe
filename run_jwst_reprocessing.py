@@ -125,6 +125,7 @@ for prop_id in prop_ids:
                                lv3_parameter_dict=config['lv3_parameters'],
                                bg_sub_parameter_dict=config['bg_sub_parameters'],
                                destripe_parameter_dict=config['destripe_parameters'],
+                               dither_stripe_sub_parameter_dict=config['dither_stripe_sub_parameters'],
                                astrometric_catalog_parameter_dict=config['astrometric_catalog_parameters'],
                                astrometry_parameter_dict=config['astrometry_parameters'],
                                psf_model_parameter_dict=config['psf_model_parameters'],

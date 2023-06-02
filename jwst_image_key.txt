@@ -122,6 +122,15 @@ ngc4535,F1000W,ngc4535/ngc4535_miri_lv3_f1000w_i2d_align.fits
 ngc4535,F1130W,ngc4535/ngc4535_miri_lv3_f1130w_i2d_align.fits
 ngc4535,F2100W,ngc4535/ngc4535_miri_lv3_f2100w_i2d_align.fits
 #
+ngc5068,F200W,ngc5068/ngc5068_nircam_lv3_f200w_i2d_align.fits
+ngc5068,F300M,ngc5068/ngc5068_nircam_lv3_f300m_i2d_align.fits
+ngc5068,F335M,ngc5068/ngc5068_nircam_lv3_f335m_i2d_align.fits
+ngc5068,F360M,ngc5068/ngc5068_nircam_lv3_f360m_i2d_align.fits
+ngc5068,F770W,ngc5068/ngc5068_miri_lv3_f770w_i2d_align.fits
+ngc5068,F1000W,ngc5068/ngc5068_miri_lv3_f1000w_i2d_align.fits
+ngc5068,F1130W,ngc5068/ngc5068_miri_lv3_f1130w_i2d_align.fits
+ngc5068,F2100W,ngc5068/ngc5068_miri_lv3_f2100w_i2d_align.fits
+#
 ngc7496,F200W,ngc7496/ngc7496_nircam_lv3_f200w_i2d_align.fits
 ngc7496,F300M,ngc7496/ngc7496_nircam_lv3_f300m_i2d_align.fits
 ngc7496,F335M,ngc7496/ngc7496_nircam_lv3_f335m_i2d_align.fits

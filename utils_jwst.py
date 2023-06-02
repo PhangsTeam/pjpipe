@@ -171,24 +171,40 @@ def align_image(hdu_to_align, target_header, hdu_in=0,
     Aligns an image to a target header and handles reattaching the
     header to the file with updated WCS keywords.
     """
-    
+
+    # Run the reprojection
     reprojected_image, footprint = reproject_interp(
         hdu_to_align, target_header, hdu_in=hdu_in,
         order=order, return_footprint=True)
 
-    target_wcs = WCS(target_header)
-    
+    # Blank missing locations outside the footprint    
     missing_mask = (footprint == 0)
     reprojected_image[missing_mask] = missing_value
+    
+    # Get the WCS of the target header
+    target_wcs = WCS(target_header)
+    target_wcs_keywords = target_wcs.to_header()
+    
+    # Get the WCS of the original header
+    orig_header = hdu_to_align.header
+    orig_wcs = WCS(orig_header)
+    orig_wcs_keywords = orig_wcs.to_header()
 
+    # Create a reprojected header using the target WCS but keeping
+    # other keywords the same.
     reprojected_header = hdu_to_align.header
-    wcs_keywords = target_wcs.to_header()
-    for this_keyword in wcs_keywords:
-        reprojected_header[this_keyword] = wcs_keywords[this_keyword]
-        
+    for this_keyword in orig_wcs_keywords:
+        if this_keyword in reprojected_header:
+            del reprojected_header[this_keyword]
+
+    for this_keyword in target_wcs_keywords:
+        reprojected_header[this_keyword] = target_wcs_keywords[this_keyword]
+
+    # Make a combined HDU merging the image and new header 
     reprojected_hdu = fits.PrimaryHDU(
         reprojected_image, reprojected_header)
 
+    # Write or return
     if outfile is not None:
         reprojected_hdu.writeto(outfile, overwrite=overwrite)
     
