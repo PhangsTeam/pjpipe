@@ -13,8 +13,28 @@ calib_level = [
 #    3,
 ]
 
-[projects.2729]
-targets = ['NGC-2070']
+
+[projects.2107]
+targets = [
+    'ic5332',
+    'ngc0628',
+    'ngc1087',
+    'ngc1300',
+    'ngc1365',
+    'ngc1385',
+    'ngc1433',
+    'ngc1512',
+    'ngc1566',
+    'ngc1672',
+    'ngc2835',
+    'ngc3351',
+    'ngc3627',
+    'ngc4303',
+    'ngc4321',
+    'ngc4535',
+    'ngc5068',
+    'ngc7496',
+]
 
 [pipeline]
 data_version = 'v0p8'
@@ -22,19 +42,16 @@ flush_crds = false  # Set to flush out calibration files and download new
 # crds_context = 'jwst_0956.pmap' # Set to a specific context if needed
 crds_context = ''
 nircam_bands = [
-#    'F187N',
-    'F444W',
+    'F300M',
     'F335M',
-    'F470N',
-#    'F090W',
-#    'F200W',
+    'F360M',
+    'F200W',
 ]
 miri_bands = [
     'F770W',
     'F1000W',
     'F1130W',
-    'F1800W',
-    'F560W'
+    'F2100W',
 ]
 
 tweakreg_create_custom_catalogs = [
@@ -96,21 +113,21 @@ steps.miri = [
 overwrites.nircam = [
 #    'lv1',
 #    'lv2',
-    'destripe',
-    'wcs_adjust',
-    'dither_match',
-    'dither_stripe_sub',
-    'dither_match_2',
-    'lv3',
-    'astrometric_align',
+#    'destripe',
+#    'wcs_adjust',
+#    'dither_match',
+#    'dither_stripe_sub',
+#    'dither_match_2',
+#    'lv3',
+#    'astrometric_align',
 ]
 
 overwrites.miri = [
-    'wcs_adjust',
-    'dither_match',
-    'lv3',
-    'astrometric_catalog',
-    'astrometric_align',
+#    'wcs_adjust',
+#    'dither_match',
+#    'lv3',
+#    'astrometric_catalog',
+#    'astrometric_align',
 ]
 
 obs_to_skip = [
@@ -133,16 +150,37 @@ fit_method = 'image'
 F2100W = [
     [347.4471073, -43.4278438],
 ]
+
 [alignment]
-'NGC-2070' = 'Gaia_DR3_NGC-2070.fits'
+ic5332 = 'ic5332_agb_cat.fits'
+ngc0628 = 'ngc0628_agb_cat.fits'
+ngc1087 = 'ngc1087_agb_cat.fits'
+ngc1300 = 'ngc1300_agb_cat.fits'
+ngc1365 = 'ngc1365_agb_cat.fits'
+ngc1385 = 'ngc1385_agb_cat.fits'
+ngc1433 = 'ngc1433_agb_cat.fits'
+ngc1512 = 'ngc1512_agb_cat.fits'
+ngc1566 = 'ngc1566_agb_cat.fits'
+ngc1672 = 'ngc1672_agb_cat.fits'
+ngc2835 = 'ngc2835_agb_cat.fits'
+ngc3351 = 'ngc3351_agb_cat.fits'
+ngc3627 = 'ngc3627_agb_cat.fits'
+ngc4254 = 'ngc4254_agb_cat.fits'
+ngc4303 = 'ngc4303_agb_cat.fits'
+ngc4321 = 'ngc4321_agb_cat.fits'
+ngc4535 = 'ngc4535_agb_cat.fits'
+ngc5068 = 'ngc5068_agb_cat.fits'
+ngc7320 = 'Gaia_DR3_NGC7320.fits'
+ngc7496 = 'ngc7496_agb_cat.fits'
 
 [alignment_mapping]
-F770W = 'F335M'
+#F770W = 'F335M'
+#F1000W = 'F770W'
+#F1130W = 'F1000W'
+#F2100W = 'F1130W'
 F1000W = 'F770W'
 F1130W = 'F770W'
 F2100W = 'F770W'
-F1800W = 'F770W'
-F560W = 'F770W'
 
 [lv1_parameters]
 save_results = true
