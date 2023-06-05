@@ -2,5 +2,6 @@
 api_key = ''
 raw_dir = '/mnt/space/erosolow/phangs_jwst/'
 working_dir = '/mnt/space/erosolow/phangs_jwst/working/'
+crds_dir = '/mnt/space/erosolow/phangs_jwst/crds/'
 updated_flats_dir = ''
 processors = 8
