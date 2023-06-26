@@ -2046,7 +2046,8 @@ class JWSTReprocess:
                 catalog
             * astrometry_parameter_dict (dict): As `lv1_parameter_dict`, but for astrometric alignment
             * lyot_method (str): Method to account for mistmatch lyot coronagraph in MIRI imaging. Can either mask with
-                `mask`, or adjust to main chip with `adjust`. Defaults to `mask`
+                `mask`, mask only in overlapping region with `mask_overlap', do nothing with 'keep'
+                 or adjust to main chip with `adjust`. Defaults to `mask`
             * dither_match_short_nircam_chips (bool): In dither matching, whether to do a second step where all the
                 chips in a dither are matched before the final matching. Defaults to True, but should be turned off
                 for dither patterns where the chips don't end up overlapping
@@ -2675,6 +2676,18 @@ class JWSTReprocess:
                             self.mask_lyot(in_files=cal_files,
                                            out_dir=out_band_dir,
                                            )
+                        elif self.lyot_method == 'mask_overlap':
+                            self.mask_lyot(in_files=cal_files,
+                                           out_dir=out_band_dir,
+                                           check_overlap=True
+                                           )
+                        elif self.lyot_method == 'keep':
+                            logging.info(f"Coronograph area is untouched")
+                            if not os.path.exists(out_band_dir):
+                                os.makedirs(out_band_dir)
+                            for f in cal_files:
+                                out_name = os.path.join(out_band_dir, os.path.split(f)[-1])
+                                shutil.copy(f, out_name)
 
                     else:
 
@@ -3347,12 +3360,14 @@ class JWSTReprocess:
     def mask_lyot(self,
                   in_files,
                   out_dir,
+                  check_overlap=False
                   ):
         """Mask lyot coronagraph by editing DQ values
 
         Args:
             * in_files (list): List of files to loop over
             * out_dir (str): Where to save files to
+            * check_overlap (bool): if True, then mask lyot only in the regions overlaping with anything else
 
         """
 
@@ -3362,6 +3377,16 @@ class JWSTReprocess:
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
 
+        if check_overlap:
+            # lyot_i = slice(750, None)
+            # lyot_j = slice(None, 280)
+
+            to_check = []
+            for hdu_name in in_files:
+                with fits.open(hdu_name, memmap=False) as hdu:
+                    to_check.append((WCS(hdu['SCI'].header), hdu['SCI'].data, hdu['DQ'].data, os.path.basename(hdu_name)))
+        n_mask = 0
+        n_lyot = 0
         for hdu_name in tqdm(in_files, ascii=True):
             with fits.open(hdu_name, memmap=False) as hdu:
 
@@ -3371,10 +3396,38 @@ class JWSTReprocess:
                 if os.path.exists(out_name):
                     return True
 
-                hdu['SCI'].data[lyot_i, lyot_j] = np.nan
-                hdu['ERR'].data[lyot_i, lyot_j] = np.nan
-                hdu['DQ'].data[lyot_i, lyot_j] = 513  # Masks the coronagraph area like the other coronagraphs
+                if check_overlap:
+
+                    cur_shape = hdu['SCI'].data.shape
+                    cur_wcs = WCS(hdu['SCI'].header)
+                    cur_lyot = np.zeros(shape=cur_shape, dtype=bool)
+                    cur_lyot[lyot_i, lyot_j] = True
+                    cumulative_mask = np.zeros(shape=cur_shape, dtype=bool)
+
+                    for cur_wcs_check in to_check:
+                        if cur_wcs_check[-1] == os.path.basename(hdu_name):
+                            continue
+                        fake_data = cur_wcs_check[2].copy()
+                        fake_data[(cur_wcs_check[2] != 0) | ~np.isfinite(cur_wcs_check[1]) |
+                                  (cur_wcs_check[1] == 0)] = 100
+                        fake_data[lyot_i, lyot_j] = 100
+                        rd = reproject_interp((fake_data.astype(float), cur_wcs_check[0]), cur_wcs, cur_shape,
+                                              return_footprint=False)
+                        cumulative_mask[cur_lyot & (rd == 0)] = True
+                    hdu['SCI'].data[cumulative_mask] = np.nan
+                    hdu['ERR'].data[cumulative_mask] = np.nan
+                    hdu['DQ'].data[cumulative_mask] = 513
+                    n_mask += np.sum(cumulative_mask)
+                    n_lyot += np.sum(cur_lyot)
+                else:
+                    hdu['SCI'].data[lyot_i, lyot_j] = np.nan
+                    hdu['ERR'].data[lyot_i, lyot_j] = np.nan
+                    hdu['DQ'].data[lyot_i, lyot_j] = 513  # Masks the coronagraph area like the other coronagraphs
                 hdu.writeto(out_name, overwrite=True)
+
+        if check_overlap:
+            logging.info(f"{n_mask}, {n_lyot}, "
+                         f"{np.round(n_mask/n_lyot*100., 2)}% pixels in the lyot area have been masked")
 
     def parallel_wcs_adjust(self,
                             input_file,
