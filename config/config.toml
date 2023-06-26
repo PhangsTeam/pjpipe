@@ -77,7 +77,7 @@ lev3_fields = [] # indicate numbers of particular field if you want
                   # to limit the level3
 		  # and further reduction by only selected
 		  # pointings (e.g. [1], or [1,2], or 1)
-lyot_method = 'mask'
+lyot_method = 'mask' # possible: 'mask', 'mask_overlap', 'adjust', 'keep'
 
 astrometric_alignment_type = 'table'
 alignment_mapping_mode = 'shift'
