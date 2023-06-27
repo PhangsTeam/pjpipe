@@ -266,7 +266,7 @@ class NircamDestriper:
 
     def run_vertical_subtraction(self,
                                  ):
-        """Sigma-clipped median subtraction of columns (optional diffuse emission filtering)"""
+        """Median filter subtraction of columns (optional diffuse emission filtering)"""
 
         hdu_data = copy.deepcopy(self.hdu['SCI'].data)
 
@@ -305,17 +305,36 @@ class NircamDestriper:
         full_noise_model = np.zeros_like(hdu_data)
         trimmed_noise_model = np.zeros_like(data)
 
-        median_arr = sigma_clipped_stats(data,
-                                         mask=mask,
-                                         sigma=self.sigma,
-                                         maxiters=self.max_iters,
-                                         axis=0,
-                                         )[1]
+        # Use median filtering to avoid noise and boundary issues
+        data = np.ma.array(
+            copy.deepcopy(data),
+            mask=copy.deepcopy(mask)
+        )
 
-        trimmed_noise_model += median_arr[np.newaxis, :]
+        for scale in self.median_filter_scales:
 
+            med = np.ma.median(data, axis=0)
+            mask_idx = np.where(med.mask)
+            med = med.data
+            med[mask_idx] = np.nan
+            med[~np.isfinite(med)] = 0
+            noise = med - median_filter(med, scale, mode='reflect')
+
+            data -= noise[np.newaxis, :]
+
+            trimmed_noise_model += noise[np.newaxis, :]
+
+        # median_arr = sigma_clipped_stats(data,
+        #                                  mask=mask,
+        #                                  sigma=self.sigma,
+        #                                  maxiters=self.max_iters,
+        #                                  axis=0,
+        #                                  )[1]
+        #
+        # trimmed_noise_model += median_arr[np.newaxis, :]
+        #
         # Bring everything back up to the median level
-        trimmed_noise_model -= np.nanmedian(median_arr)
+        trimmed_noise_model -= np.nanmedian(trimmed_noise_model)
 
         if not self.is_subarray:
             full_noise_model[4:-4, 4:-4] = copy.deepcopy(trimmed_noise_model)

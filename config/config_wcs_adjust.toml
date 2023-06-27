@@ -13,6 +13,7 @@ targets = [
     'ngc2835',
     'ngc3351',
     'ngc3627',
+    'ngc4254',
     'ngc4303',
     'ngc4321',
     'ngc4535',
@@ -22,7 +23,7 @@ targets = [
 
 [pipeline]
 
-data_version = 'v0p8'
+data_version = 'v0p8p1'
 nircam_bands = [
     'F300M',
 ]
