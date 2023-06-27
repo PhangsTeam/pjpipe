@@ -16,6 +16,7 @@ from functools import partial
 from multiprocessing import cpu_count
 
 import astropy.units as u
+import gwcs
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.coordinates import SkyCoord
@@ -24,7 +25,6 @@ from astropy.nddata.bitmask import interpret_bit_flags, bitfield_to_boolean_mask
 from astropy.stats import sigma_clipped_stats, SigmaClip
 from astropy.table import Table, QTable
 from astropy.wcs import WCS
-from drizzlepac import updatehdr
 from image_registration import cross_correlation_shifts
 from jwst import datamodels
 from jwst.assign_wcs.util import update_fits_wcsinfo
@@ -32,10 +32,9 @@ from jwst.datamodels.dqflags import pixel
 from photutils.detection import DAOStarFinder
 from photutils.segmentation import detect_threshold, detect_sources
 from reproject import reproject_interp
-from reproject.mosaicking import find_optimal_celestial_wcs
+from reproject.mosaicking import find_optimal_celestial_wcs, reproject_and_coadd
 from reproject.mosaicking.subset_array import ReprojectedArraySubset
 from scipy.ndimage import uniform_filter1d
-from spherical_geometry.polygon import SphericalPolygon
 from stwcs.wcsutil import HSTWCS
 from threadpoolctl import threadpool_limits
 from tqdm import tqdm
@@ -53,6 +52,10 @@ SkyMatchStep = None
 SourceCatalogStep = None
 webbpsf = None
 PSFSubtraction = None
+
+files_reproj = None
+data_reproj = None
+weight_reproj = None
 
 # Pipeline steps
 ALLOWED_STEPS = [
@@ -169,6 +172,12 @@ FWHM_PIX = {
     'F2550W': 7.312,
 }
 
+PIXEL_SCALES = {
+    'miri': 0.11,
+    'nircam_long': 0.063,
+    'nircam_short': 0.031,
+}
+
 RAD2ARCSEC = 3600.0 * np.rad2deg(1.0)
 
 
@@ -226,15 +235,131 @@ def parallel_destripe(hdu_name,
     return True
 
 
-def parallel_dither_stripe_sub(dither,
-                               in_dir,
-                               out_dir,
-                               step_ext,
-                               plot_dir,
-                               weight_type='exptime',
-                               **dither_stripe_kws,
+def create_subset_reproj_image(data_array,
+                               weight_array,
+                               subset_idx,
+                               min_area_frac=0.5,
                                ):
-    """Wrapper to parallelise up dither stripe subtraction"""
+    """Create a subset average image from a bunch of reprojected ones
+
+    Args:
+        data_array: list of reprojected data files
+        weight_array: list of reprojected weight files
+        subset_idx: index of image to create the subset average image for
+        min_area_frac (float): Minimum fraction of overlapping pixels for image
+            to be included in the average. Defaults to 0.5 (50%)
+    """
+
+    file_data = copy.deepcopy(data_array[subset_idx])
+    file_weight = copy.deepcopy(weight_array[subset_idx])
+
+    data = np.zeros_like(file_data.array)
+    weights = np.zeros_like(file_weight.array)
+
+    # First, put the original image in
+    data += file_weight.array * file_data.array
+    weights += file_weight.array
+
+    # Get the number of pixels, so that we can remove any small overlaps
+    # later
+    valid_idx = np.where(np.logical_and(data != 0,
+                                        np.isfinite(data),
+                                        )
+                         )
+    npix_file = len(valid_idx[0])
+
+    file_imin, file_imax = file_data.imin, file_data.imax
+    file_jmin, file_jmax = file_data.jmin, file_data.jmax
+
+    for idx in range(len(data_array)):
+
+        if subset_idx == idx:
+            continue
+
+        if not data_array[subset_idx].overlaps(data_array[idx]):
+            continue
+
+        data_idx = copy.deepcopy(data_array[idx])
+        weight_idx = copy.deepcopy(weight_array[idx])
+
+        data_i = data_idx.array
+        weight_i = weight_idx.array
+
+        # Before putting these in, we need to make sure they're on the same level.
+        # Do this by subtracting the median of the difference for the first file
+        diff = data_idx - data_array[subset_idx]
+        diff_weight = weight_idx * weight_array[subset_idx]
+
+        diff = diff.array[diff_weight.array > 0]
+        diff[diff == 0] = np.nan
+        diff = diff[np.isfinite(diff)]
+
+        if len(diff) == 0:
+            continue
+
+        # Pull out indices we'll need later
+        idx_imin, idx_imax = data_idx.imin, data_idx.imax
+        idx_jmin, idx_jmax = data_idx.jmin, data_idx.jmax
+
+        _, diff_med, _ = sigma_clipped_stats(diff, maxiters=10)
+        data_i -= diff_med
+
+        imin = max(file_imin, idx_imin)
+        imax = min(file_imax, idx_imax)
+        jmin = max(file_jmin, idx_jmin)
+        jmax = min(file_jmax, idx_jmax)
+
+        if imax < imin:
+            imax = imin
+
+        if jmax < jmin:
+            jmax = jmin
+
+        final_slice = (slice(jmin - file_jmin, jmax - file_jmin), slice(imin - file_imin, imax - file_imin))
+        reproj_slice = (slice(jmin - idx_jmin, jmax - idx_jmin), slice(imin - idx_imin, imax - idx_imin))
+
+        # Put data and weights into array
+        new_data = np.zeros_like(data)
+        new_weights = np.zeros_like(weights)
+        new_data[final_slice] += weight_i[reproj_slice] * data_i[reproj_slice]
+        new_weights[final_slice] += weight_i[reproj_slice]
+
+        # Check we have the required amount of overlap
+        valid_i = new_data[valid_idx]
+        valid_i = valid_i[np.logical_and(valid_i != 0,
+                                         np.isfinite(valid_i)
+                                         )]
+
+        area_frac = len(valid_i) / npix_file
+
+        if area_frac < min_area_frac:
+            continue
+
+        data += new_data
+        weights += new_weights
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        data_avg = data / weights
+    data_avg[data_avg == 0] = np.nan
+
+    return data_avg, file_imin, file_imax, file_jmin, file_jmax
+
+
+def parallel_per_dither_stripe_sub(dither,
+                                   in_dir,
+                                   out_dir,
+                                   step_ext,
+                                   plot_dir,
+                                   weight_type='exptime',
+                                   **dither_stripe_kws,
+                                   ):
+    """Wrapper to parallelise up dither stripe subtraction, if we're grouping up dithers"""
+
+    allowed_weight_types = ['exptime', 'ivm']
+
+    if weight_type not in allowed_weight_types:
+        raise ValueError('weight_type should be one of %s' % allowed_weight_types)
 
     dither_files = glob.glob(os.path.join(in_dir,
                                           '%s*_%s.fits' % (dither, step_ext))
@@ -242,18 +367,27 @@ def parallel_dither_stripe_sub(dither,
 
     dither_files.sort()
 
-    # Create the average image
-    data_avg, optimal_wcs, optimal_shape = weighted_reproject_image(dither_files,
-                                                                    weight_type=weight_type,
-                                                                    )
-
     results = []
-    for file in dither_files:
+
+    _, data_reproj, weight_reproj, optimal_wcs = weighted_reproject_image(dither_files,
+                                                                          weight_type=weight_type,
+                                                                          )
+
+    for file_idx, file in enumerate(dither_files):
+        # Create the average image
+
+        data_avg, imin, imax, jmin, jmax = create_subset_reproj_image(data_reproj,
+                                                                      weight_reproj,
+                                                                      subset_idx=file_idx,
+                                                                      )
+
+        data_avg_wcs = optimal_wcs[jmin:jmax, imin:imax]
+
         result = dither_stripe_sub(file,
+                                   data_avg_array=data_avg,
+                                   data_avg_wcs=data_avg_wcs,
                                    out_dir=out_dir,
                                    plot_dir=plot_dir,
-                                   data_avg_full=data_avg,
-                                   data_avg_wcs=optimal_wcs,
                                    **dither_stripe_kws,
                                    )
         results.append(result)
@@ -261,12 +395,40 @@ def parallel_dither_stripe_sub(dither,
     return results
 
 
+def parallel_dither_stripe_sub(file_idx,
+                               optimal_wcs,
+                               out_dir,
+                               plot_dir,
+                               **dither_stripe_kws,
+                               ):
+    """Function to parallelise up dither subtraction with all info"""
+
+    file = files_reproj[file_idx]
+
+    data_avg, imin, imax, jmin, jmax = create_subset_reproj_image(data_reproj,
+                                                                  weight_reproj,
+                                                                  subset_idx=file_idx,
+                                                                  )
+
+    data_avg_wcs = optimal_wcs[jmin:jmax, imin:imax]
+
+    result = dither_stripe_sub(file,
+                               data_avg_array=data_avg,
+                               data_avg_wcs=data_avg_wcs,
+                               out_dir=out_dir,
+                               plot_dir=plot_dir,
+                               **dither_stripe_kws,
+                               )
+    return file_idx, result
+
+
 def dither_stripe_sub(file,
+                      data_avg_array,
+                      data_avg_wcs,
                       out_dir,
                       plot_dir,
-                      data_avg_full,
-                      data_avg_wcs,
                       quadrants=True,
+                      do_large_scale=True,
                       median_filter_factor=4,
                       sigma=3,
                       dilate_size=7,
@@ -280,12 +442,15 @@ def dither_stripe_sub(file,
 
     Args:
         file (str): File to correct
+        data_avg_array (np.ndarray): Pre-calculated average image
+        data_avg_wcs: WCS for the average image
         out_dir (output): Output directory for the files
         plot_dir (str): Directory to save plots to
-        data_avg_full (np.ndarray): Pre-calculated average image
-        data_avg_wcs: WCS for the average image
         quadrants (bool): Whether to split per-amplifier or not. Defaults to True, but
             will be forced off for subarray data
+        do_large_scale (bool): Whether to do boxcar-filtering to try and remove large,
+            consistent ripples between data. Defaults to True, but can probably be turned
+            off for observations with many overlaps
         median_filter_factor (int): Factor by which we smooth in terms of the array size.
             Defaults to 4, i.e. smoothing scale is 1/4th the array size
         sigma (float): sigma value for sigma-clipped statistics. Defaults to 3
@@ -302,31 +467,31 @@ def dither_stripe_sub(file,
 
             dq_bits = interpret_bit_flags('~DO_NOT_USE+NON_SCIENCE', flag_name_map=pixel)
 
-            model1 = datamodels.open(file)
-            file_name = model1.meta.filename
+            model = datamodels.open(file)
+            file_name = model.meta.filename
 
             if os.path.exists(os.path.join(out_dir, file_name)):
                 return
 
-            if 'sub' in model1.meta.subarray.name.lower():
+            if 'sub' in model.meta.subarray.name.lower():
                 quadrants = False
 
-            dq_bit_mask1 = bitfield_to_boolean_mask(
-                model1.dq.astype(np.uint8),
+            dq_bit_mask = bitfield_to_boolean_mask(
+                model.dq.astype(np.uint8),
                 dq_bits,
                 good_mask_value=0,
                 dtype=np.uint8
             )
 
             # Pull out data and DQ mask
-            data1 = copy.deepcopy(model1.data)
-            data1[dq_bit_mask1 != 0] = np.nan
+            data = copy.deepcopy(model.data)
+            data[dq_bit_mask != 0] = np.nan
 
-            wcs1 = model1.meta.wcs.to_fits_sip()
+            wcs = model.meta.wcs.to_fits_sip()
 
             # Reproject the average image
-            data_avg = reproject_interp((data_avg_full, data_avg_wcs),
-                                        wcs1,
+            data_avg = reproject_interp((data_avg_array, data_avg_wcs),
+                                        wcs,
                                         return_footprint=False,
                                         )
 
@@ -337,7 +502,7 @@ def dither_stripe_sub(file,
             col_idx = np.where(np.isnan(data_avg[col, :]))
             data_avg[col, col_idx[0]] = data_avg_col[col]
 
-        diff_unsmoothed = data1 - data_avg
+        diff_unsmoothed = data - data_avg
         diff_unsmoothed -= np.nanmedian(diff_unsmoothed)
 
         stripes_arr = np.zeros_like(diff_unsmoothed)
@@ -353,7 +518,7 @@ def dither_stripe_sub(file,
                                     dilate_size=dilate_size,
                                     sigclip_iters=maxiters,
                                     )
-        mask_unsmoothed = mask_pos | mask_neg | dq_bit_mask1
+        mask_unsmoothed = mask_pos | mask_neg  # | dq_bit_mask1
 
         # First, subtract the y
         stripes_y = sigma_clipped_stats(diff_unsmoothed - stripes_arr,
@@ -392,7 +557,6 @@ def dither_stripe_sub(file,
                 stripes_x -= np.nanmedian(stripes_x)
                 stripes_x[np.isnan(stripes_x)] = 0
 
-                # stripes_arr[:, idx_slice] += stripes_x[:, np.newaxis]
                 stripes_x_2d[:, idx_slice] += stripes_x[:, np.newaxis]
 
         else:
@@ -409,66 +573,69 @@ def dither_stripe_sub(file,
             stripes_x -= np.nanmedian(stripes_x)
             stripes_x[np.isnan(stripes_x)] = 0
 
-            # stripes_arr += stripes_x[:, np.newaxis]
             stripes_x_2d += stripes_x[:, np.newaxis]
 
         # Centre around 0 one last time
         stripes_x_2d -= np.nanmedian(stripes_x_2d)
+        stripes_x_2d[np.isnan(stripes_x_2d)] = 0
 
         stripes_arr += stripes_x_2d
         stripes_arr -= np.nanmedian(stripes_arr)
+        stripes_arr[np.isnan(stripes_arr)] = 0
 
-        # Filter along the y-axis (to preserve the stripe noise) with a large boxcar filter.
-        # This ideally flattens out the background, for any consistent large-scale ripples
-        # between images
-        boxcar = uniform_filter1d(data_avg,
-                                  size=data_avg.shape[0] // median_filter_factor,
-                                  axis=0,
-                                  mode='reflect',
-                                  )
-        diff_smoothed = data1 - stripes_arr - boxcar
-        diff_smoothed -= np.nanmedian(diff_smoothed)
+        if do_large_scale:
+            # Filter along the y-axis (to preserve the stripe noise) with a large boxcar filter.
+            # This ideally flattens out the background, for any consistent large-scale ripples
+            # between images
+            boxcar = uniform_filter1d(data_avg,
+                                      size=data_avg.shape[0] // median_filter_factor,
+                                      axis=0,
+                                      mode='reflect',
+                                      )
+            diff_smoothed = data - stripes_arr - boxcar
+            diff_smoothed -= np.nanmedian(diff_smoothed)
 
-        mask_pos = make_source_mask(diff_smoothed,
-                                    nsigma=sigma,
-                                    dilate_size=dilate_size,
-                                    sigclip_iters=maxiters,
-                                    )
-        mask_neg = make_source_mask(-diff_smoothed,
-                                    mask=mask_pos,
-                                    nsigma=sigma,
-                                    dilate_size=dilate_size,
-                                    sigclip_iters=maxiters,
-                                    )
-        mask_smoothed = mask_pos | mask_neg | dq_bit_mask1
+            mask_pos = make_source_mask(diff_smoothed,
+                                        nsigma=sigma,
+                                        dilate_size=dilate_size,
+                                        sigclip_iters=maxiters,
+                                        )
+            mask_neg = make_source_mask(-diff_smoothed,
+                                        mask=mask_pos,
+                                        nsigma=sigma,
+                                        dilate_size=dilate_size,
+                                        sigclip_iters=maxiters,
+                                        )
+            mask_smoothed = mask_pos | mask_neg  # | dq_bit_mask1
 
-        # Pass through the smoothed data, but across the whole image to avoid the bright noisy bits
-        stripes_x = sigma_clipped_stats(diff_smoothed,
-                                        mask=mask_smoothed,
-                                        sigma=sigma,
-                                        maxiters=maxiters,
-                                        axis=1
-                                        )[1]
+            # Pass through the smoothed data, but across the whole image to avoid the bright noisy bits
+            stripes_x = sigma_clipped_stats(diff_smoothed,
+                                            mask=mask_smoothed,
+                                            sigma=sigma,
+                                            maxiters=maxiters,
+                                            axis=1
+                                            )[1]
 
-        # Centre around 0, replace NaNs
-        stripes_x -= np.nanmedian(stripes_x)
-        stripes_x[np.isnan(stripes_x)] = 0
+            # Centre around 0, replace NaNs
+            stripes_x -= np.nanmedian(stripes_x)
+            stripes_x[np.isnan(stripes_x)] = 0
 
-        stripes_arr += stripes_x[:, np.newaxis]
+            stripes_arr += stripes_x[:, np.newaxis]
 
-        # Centre around 0 for luck
-        stripes_arr -= np.nanmedian(stripes_arr)
+            # Centre around 0 for luck
+            stripes_arr -= np.nanmedian(stripes_arr)
+            stripes_arr[np.isnan(stripes_arr)] = 0
 
         # Make diagnostic plot
         plot_name = os.path.join(plot_dir,
                                  file_name.replace('.fits', '_dither_stripe_sub'),
                                  )
-        plt.figure(figsize=(6, 6))
+        plt.figure(figsize=(9, 6))
 
         vmin_diff, vmax_diff = np.nanpercentile(diff_unsmoothed, [1, 99])
-        vmin_data, vmax_data = np.nanpercentile(model1.data, [5, 95])
+        vmin_data, vmax_data = np.nanpercentile(data, [5, 95])
 
-        plt.subplot(2, 2, 1)
+        plt.subplot(2, 3, 1)
         plt.imshow(diff_unsmoothed,
                    origin='lower',
                    interpolation='nearest',
@@ -478,7 +645,7 @@ def dither_stripe_sub(file,
         plt.axis('off')
         plt.title('Uncorr. diff')
 
-        plt.subplot(2, 2, 2)
+        plt.subplot(2, 3, 2)
         plt.imshow(diff_unsmoothed - stripes_arr,
                    origin='lower',
                    interpolation='nearest',
@@ -488,8 +655,18 @@ def dither_stripe_sub(file,
         plt.axis('off')
         plt.title('Corr. diff')
 
-        plt.subplot(2, 2, 3)
-        plt.imshow(model1.data,
+        plt.subplot(2, 3, 3)
+        plt.imshow(stripes_arr,
+                   origin='lower',
+                   interpolation='none',
+                   vmin=vmin_diff,
+                   vmax=vmax_diff,
+                   )
+        plt.axis('off')
+        plt.title('Stripe model')
+
+        plt.subplot(2, 3, 4)
+        plt.imshow(data,
                    origin='lower',
                    interpolation='nearest',
                    vmin=vmin_data,
@@ -498,8 +675,8 @@ def dither_stripe_sub(file,
         plt.axis('off')
         plt.title('Uncorr. data')
 
-        plt.subplot(2, 2, 4)
-        plt.imshow(model1.data - stripes_arr,
+        plt.subplot(2, 3, 5)
+        plt.imshow(data - stripes_arr,
                    origin='lower',
                    interpolation='nearest',
                    vmin=vmin_data,
@@ -507,6 +684,8 @@ def dither_stripe_sub(file,
                    )
         plt.axis('off')
         plt.title('Corr. data')
+
+        plt.subplots_adjust(wspace=0.01)
 
         plt.savefig('%s.png' % plot_name, bbox_inches='tight')
         plt.savefig('%s.pdf' % plot_name, bbox_inches='tight')
@@ -525,23 +704,23 @@ def parallel_tweakback(crf_file,
 
     """
 
-    if matrix is None:
-        matrix = [[1, 0], [0, 1]]
-    if shift is None:
-        shift = [0, 0]
-
-    crf_input_im = datamodels.open(crf_file)
-
-    crf_wcs = crf_input_im.meta.wcs
-    crf_wcsinfo = crf_input_im.meta.wcsinfo.instance
-
-    crf_im = JWSTWCSCorrector(
-        wcs=crf_wcs,
-        wcsinfo=crf_wcsinfo,
-    )
-
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
+
+        if matrix is None:
+            matrix = [[1, 0], [0, 1]]
+        if shift is None:
+            shift = [0, 0]
+
+        crf_input_im = datamodels.open(crf_file)
+
+        crf_wcs = crf_input_im.meta.wcs
+        crf_wcsinfo = crf_input_im.meta.wcsinfo.instance
+
+        crf_im = JWSTWCSCorrector(
+            wcs=crf_wcs,
+            wcsinfo=crf_wcsinfo,
+        )
         crf_im.set_correction(matrix=matrix,
                               shift=shift,
                               ref_tpwcs=ref_tpwcs,
@@ -643,59 +822,12 @@ def background_subtract(hdu,
     return hdu
 
 
-def calc_bounding_polygon(hdu):
-    """Compute image's bounding polygon. This is taken from the JWST pipeline"""
-
-    ny, nx = hdu.data.shape
-
-    nintx = 2
-    ninty = 2
-
-    xs = np.linspace(-0.5, nx - 0.5, nintx, dtype=float)
-    ys = np.linspace(-0.5, ny - 0.5, ninty, dtype=float)[1:-1]
-    nptx = xs.size
-    npty = ys.size
-
-    npts = 2 * (nptx + npty)
-
-    borderx = np.empty((npts + 1,), dtype=float)
-    bordery = np.empty((npts + 1,), dtype=float)
-
-    # "bottom" points:
-    borderx[:nptx] = xs
-    bordery[:nptx] = -0.5
-    # "right"
-    sl = np.s_[nptx:nptx + npty]
-    borderx[sl] = nx - 0.5
-    bordery[sl] = ys
-    # "top"
-    sl = np.s_[nptx + npty:2 * nptx + npty]
-    borderx[sl] = xs[::-1]
-    bordery[sl] = ny - 0.5
-    # "left"
-    sl = np.s_[2 * nptx + npty:-1]
-    borderx[sl] = -0.5
-    bordery[sl] = ys[::-1]
-
-    # close polygon:
-    borderx[-1] = borderx[0]
-    bordery[-1] = bordery[0]
-
-    ra, dec = hdu.meta.wcs(borderx, bordery, with_bounding_box=False)
-    # Force to be closed
-    ra[-1] = ra[0]
-    dec[-1] = dec[0]
-
-    polygon = SphericalPolygon.from_radec(ra, dec)
-
-    return polygon
-
-
 def background_match_dithers(dithers_reproj1,
                              dithers_reproj2,
                              plot_name=None,
                              max_points=None,
                              maxiters=10,
+                             min_linear_frac=0.25,
                              ):
     """Calculate relative difference between groups of files (i.e. dithers) on the same pixel grid"""
 
@@ -708,26 +840,92 @@ def background_match_dithers(dithers_reproj1,
 
     n_pix = 0
 
-    for dither_reproj1 in dithers_reproj1:
+    fig, axs = None, None
+    if plot_name is not None:
+        fig, axs = plt.subplots(nrows=len(dithers_reproj1),
+                                ncols=len(dithers_reproj2),
+                                figsize=(2.5 * len(dithers_reproj2), 2.5 * len(dithers_reproj1)),
+                                squeeze=False,
+                                )
 
-        for dither_reproj2 in dithers_reproj2:
+    lin_size = 0
+
+    for dither_idx1, dither_reproj1 in enumerate(dithers_reproj1):
+
+        # Get out coordinates where data is valid, so we can do a linear
+        # extent test
+        ii, jj = np.indices(dither_reproj1.array.shape, dtype=float)
+        ii[np.where(np.isnan(dither_reproj1.array))] = np.nan
+        jj[np.where(np.isnan(dither_reproj1.array))] = np.nan
+
+        dither1_iaxis = np.nanmax(ii) - np.nanmin(ii)
+        dither1_jaxis = np.nanmax(jj) - np.nanmin(jj)
+
+        for dither_idx2, dither_reproj2 in enumerate(dithers_reproj2):
 
             if dither_reproj2.overlaps(dither_reproj1):
                 # Get diffs, remove NaNs
                 diff = dither_reproj2 - dither_reproj1
-                diff = diff.array
-                diff[diff == 0] = np.nan
-                diff = diff[np.isfinite(diff)].tolist()
+                diff_arr = diff.array
+                diff_foot = diff.footprint
+                diff_arr[diff == 0] = np.nan
+                diff_arr[diff_foot == 0] = np.nan
+
+                # Get out coordinates where data is valid, so we can do a linear
+                # extent test
+                ii, jj = np.indices(dither_reproj2.array.shape, dtype=float)
+                ii[np.where(np.isnan(dither_reproj2.array))] = np.nan
+                jj[np.where(np.isnan(dither_reproj2.array))] = np.nan
+
+                dither2_iaxis = np.nanmax(ii) - np.nanmin(ii)
+                dither2_jaxis = np.nanmax(jj) - np.nanmin(jj)
+
+                ii, jj = np.indices(diff_arr.shape, dtype=float)
+                ii[np.where(np.isnan(diff_arr))] = np.nan
+                jj[np.where(np.isnan(diff_arr))] = np.nan
+
+                # If the slices are all NaNs, then we can just move on
+                if np.all(np.isnan(ii)):
+                    continue
+                diff_iaxis = np.nanmax(ii) - np.nanmin(ii)
+                diff_jaxis = np.nanmax(jj) - np.nanmin(jj)
+
+                # Include everything, but flag if we've hit the minimum linear extent
+                if diff_iaxis > dither1_iaxis * min_linear_frac \
+                        or diff_jaxis > dither1_jaxis * min_linear_frac \
+                        or diff_iaxis > dither2_iaxis * min_linear_frac \
+                        or diff_jaxis > dither2_jaxis * min_linear_frac:
+                    lin_size = 1
+
+                diff = diff_arr[np.isfinite(diff_arr)].tolist()
                 n_pix += len(diff)
 
                 diffs.extend(diff)
+
+                if plot_name is not None:
+                    if len(diff) > 0:
+                        vmin, vmax = np.nanpercentile(diff, [1, 99])
+                        axs[dither_idx1, dither_idx2].imshow(diff_arr,
+                                                             origin='lower',
+                                                             vmin=vmin,
+                                                             vmax=vmax,
+                                                             interpolation='nearest',
+                                                             )
+            if plot_name is not None:
+                axs[dither_idx1, dither_idx2].set_axis_off()
+
+    if plot_name is not None:
+        if n_pix > 0:
+            plt.savefig('%s_ims.png' % plot_name, bbox_inches='tight')
+            plt.savefig('%s_ims.pdf' % plot_name, bbox_inches='tight')
+        plt.close()
 
     if n_pix > 0:
 
         # Sigma-clip to remove outliers in the distribution
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            delta = sigma_clipped_stats(diffs, maxiters=maxiters)[1]
+            _, delta, rms = sigma_clipped_stats(diffs, maxiters=maxiters)
 
         if plot_name is not None:
             # Get histogram range
@@ -758,78 +956,119 @@ def background_match_dithers(dithers_reproj1,
 
             plt.tight_layout()
 
-            plt.savefig('%s.pdf' % plot_name, bbox_inches='tight')
-            plt.savefig('%s.png' % plot_name, bbox_inches='tight')
+            plt.savefig('%s_hist.pdf' % plot_name, bbox_inches='tight')
+            plt.savefig('%s_hist.png' % plot_name, bbox_inches='tight')
             plt.close()
 
     else:
         delta = None
+        rms = 0
 
     gc.collect()
 
-    return n_pix, delta
+    return n_pix, delta, rms, lin_size
 
 
 def reproject_dither(file,
                      optimal_wcs,
                      optimal_shape,
                      hdu_type='data',
+                     do_sigma_clip=False,
+                     stacked_image=False,
                      ):
     """Reproject an image to an optimal WCS"""
 
     dq_bits = interpret_bit_flags('~DO_NOT_USE+NON_SCIENCE', flag_name_map=pixel)
-    with datamodels.open(file) as hdu:
 
-        if hdu_type == 'data':
-            data = copy.deepcopy(hdu.data)
-        elif hdu_type == 'var_rnoise':
-            data = copy.deepcopy(hdu.var_rnoise)
-        else:
-            raise Warning('Unsure how to deal with hdu_type %s' % hdu_type)
+    if not stacked_image:
+        with datamodels.open(file) as hdu:
 
-        dq_bit_mask = bitfield_to_boolean_mask(
-            hdu.dq.astype(np.uint8),
-            dq_bits,
-            good_mask_value=0,
-            dtype=np.uint8
-        )
+            if hdu_type == 'data':
+                data = copy.deepcopy(hdu.data)
+            elif hdu_type == 'var_rnoise':
+                data = copy.deepcopy(hdu.var_rnoise)
+            else:
+                raise Warning('Unsure how to deal with hdu_type %s' % hdu_type)
 
-        data[dq_bit_mask == 1] = np.nan
-        data[data == 0] = np.nan
+            dq_bit_mask = bitfield_to_boolean_mask(
+                hdu.dq.astype(np.uint8),
+                dq_bits,
+                good_mask_value=0,
+                dtype=np.uint8
+            )
 
-        wcs = hdu.meta.wcs.to_fits_sip()
-        w_in = WCS(wcs)
+            wcs = hdu.meta.wcs.to_fits_sip()
+            w_in = WCS(wcs)
+    else:
+        with fits.open(file) as hdu:
+            data = copy.deepcopy(hdu['SCI'].data)
+            wcs = hdu['SCI'].header
+            w_in = WCS(wcs)
+        dq_bit_mask = None
 
-        # Find the minimal shape for the reprojection. This is from the astropy reproject routines
-        ny, nx = data.shape
-        xc = np.array([-0.5, nx - 0.5, nx - 0.5, -0.5])
-        yc = np.array([-0.5, -0.5, ny - 0.5, ny - 0.5])
-        xc_out, yc_out = optimal_wcs.world_to_pixel(w_in.pixel_to_world(xc, yc))
+    sig_mask = None
+    if do_sigma_clip:
+        sig_mask = make_source_mask(data,
+                                    mask=dq_bit_mask,
+                                    dilate_size=7,
+                                    )
+        sig_mask = sig_mask.astype(int)
 
-        if np.any(np.isnan(xc_out)) or np.any(np.isnan(yc_out)):
-            imin = 0
-            imax = optimal_shape[1]
-            jmin = 0
-            jmax = optimal_shape[0]
-        else:
-            imin = max(0, int(np.floor(xc_out.min() + 0.5)))
-            imax = min(optimal_shape[1], int(np.ceil(xc_out.max() + 0.5)))
-            jmin = max(0, int(np.floor(yc_out.min() + 0.5)))
-            jmax = min(optimal_shape[0], int(np.ceil(yc_out.max() + 0.5)))
+    data[data == 0] = np.nan
 
-        if imax < imin or jmax < jmin:
-            return
+    # Find the minimal shape for the reprojection. This is from the astropy reproject routines
+    ny, nx = data.shape
+    xc = np.array([-0.5, nx - 0.5, nx - 0.5, -0.5])
+    yc = np.array([-0.5, -0.5, ny - 0.5, ny - 0.5])
+    xc_out, yc_out = optimal_wcs.world_to_pixel(w_in.pixel_to_world(xc, yc))
 
-        wcs_out_indiv = optimal_wcs[jmin:jmax, imin:imax]
-        shape_out_indiv = (jmax - jmin, imax - imin)
+    if np.any(np.isnan(xc_out)) or np.any(np.isnan(yc_out)):
+        imin = 0
+        imax = optimal_shape[1]
+        jmin = 0
+        jmax = optimal_shape[0]
+    else:
+        imin = max(0, int(np.floor(xc_out.min() + 0.5)))
+        imax = min(optimal_shape[1], int(np.ceil(xc_out.max() + 0.5)))
+        jmin = max(0, int(np.floor(yc_out.min() + 0.5)))
+        jmax = min(optimal_shape[0], int(np.ceil(yc_out.max() + 0.5)))
 
-        data_reproj_small = reproject_interp((data, wcs),
-                                             output_projection=wcs_out_indiv,
-                                             shape_out=shape_out_indiv,
-                                             return_footprint=False,
-                                             )
-        footprint = np.ones_like(data_reproj_small)
-        data_array = ReprojectedArraySubset(data_reproj_small, footprint, imin, imax, jmin, jmax)
+    if imax < imin or jmax < jmin:
+        return
+
+    wcs_out_indiv = optimal_wcs[jmin:jmax, imin:imax]
+    shape_out_indiv = (jmax - jmin, imax - imin)
+
+    data_reproj_small = reproject_interp((data, wcs),
+                                         output_projection=wcs_out_indiv,
+                                         shape_out=shape_out_indiv,
+                                         return_footprint=False,
+                                         )
+
+    # Mask out bad DQ, but only for unstacked images
+    if not stacked_image:
+        dq_reproj_small = reproject_interp((dq_bit_mask, wcs),
+                                           output_projection=wcs_out_indiv,
+                                           shape_out=shape_out_indiv,
+                                           return_footprint=False,
+                                           order='nearest-neighbor'
+                                           )
+        data_reproj_small[dq_reproj_small == 1] = np.nan
+
+    if do_sigma_clip:
+        sig_mask_reproj_small = reproject_interp((sig_mask, wcs),
+                                                 output_projection=wcs_out_indiv,
+                                                 shape_out=shape_out_indiv,
+                                                 return_footprint=False,
+                                                 order='nearest-neighbor'
+                                                 )
+        data_reproj_small[sig_mask_reproj_small == 1] = np.nan
+
+    footprint = np.ones_like(data_reproj_small)
+    footprint[np.logical_or(data_reproj_small == 0,
+                            ~np.isfinite(data_reproj_small)
+                            )] = 0
+    data_array = ReprojectedArraySubset(data_reproj_small, footprint, imin, imax, jmin, jmax)
 
     del hdu
     gc.collect()
@@ -837,7 +1076,8 @@ def reproject_dither(file,
     return data_array
 
 
-def parallel_reproject_weight(file,
+def parallel_reproject_weight(idx,
+                              files,
                               optimal_wcs,
                               optimal_shape,
                               weight_type='exptime'
@@ -846,7 +1086,12 @@ def parallel_reproject_weight(file,
 
     allowed_weight_types = ['exptime', 'ivm']
 
-    data_array = reproject_dither(file, optimal_wcs=optimal_wcs, optimal_shape=optimal_shape)
+    file = files[idx]
+
+    data_array = reproject_dither(file,
+                                  optimal_wcs=optimal_wcs,
+                                  optimal_shape=optimal_shape,
+                                  )
     # Set any bad data to 0
     data_array.array[np.isnan(data_array.array)] = 0
 
@@ -874,12 +1119,12 @@ def parallel_reproject_weight(file,
     else:
         raise ValueError('weight_type should be one of %s' % allowed_weight_types)
 
-    return data_array, weight_array
+    return idx, (file, data_array, weight_array)
 
 
 def weighted_reproject_image(files,
                              weight_type='exptime',
-                             # procs=1,
+                             procs=1,
                              ):
     """Get weighted mean reprojected image
 
@@ -887,7 +1132,7 @@ def weighted_reproject_image(files,
         files (list): Files to reproject
         weight_type (str): How to weight for the mean image. Options are exposure time
             (exptime) and inverse readnoise (ivm). Default 'exptime'
-        # procs (int): Number of processes to use. Defaults to 1.
+        procs (int): Number of processes to use. Defaults to 1.
     """
 
     allowed_weight_types = ['exptime', 'ivm']
@@ -899,54 +1144,47 @@ def weighted_reproject_image(files,
         warnings.simplefilter('ignore')
         optimal_wcs, optimal_shape = find_optimal_celestial_wcs(files, hdu_in='SCI')
 
-    data = np.zeros(optimal_shape)
-    weights = np.zeros(optimal_shape)
+    data_reproj = [None] * len(files)
+    weight_reproj = [None] * len(files)
+    files_reproj = [None] * len(files)
 
-    # n_procs = np.nanmin([procs, len(files)])
-    #
-    # with mp.get_context('fork').Pool(n_procs) as pool:
+    if procs == 1:
+        for idx in range(len(files)):
+            i, result = parallel_reproject_weight(idx,
+                                                  files,
+                                                  optimal_wcs=optimal_wcs,
+                                                  optimal_shape=optimal_shape,
+                                                  weight_type=weight_type,
+                                                  )
 
-    data_reproj = []
-    weight_reproj = []
+            files_reproj[i] = result[0]
+            data_reproj[i] = result[1]
+            weight_reproj[i] = result[2]
 
-    # for result in tqdm(pool.imap_unordered(partial(parallel_reproject_weight,
-    #                                                optimal_wcs=optimal_wcs,
-    #                                                optimal_shape=optimal_shape,
-    #                                                weight_type=weight_type,
-    #                                                ),
-    #                                        files),
-    #                    total=len(files),
-    #                    desc='Projecting for average image',
-    #                    ascii=True,
-    #                    leave=False,
-    #                    ):
-    for file in files:
-        file_data_reproj, file_weight_reproj = parallel_reproject_weight(file,
-                                                                         optimal_wcs=optimal_wcs,
-                                                                         optimal_shape=optimal_shape,
-                                                                         weight_type=weight_type,
-                                                                         )
+            gc.collect()
+    else:
 
-        data_reproj.append(file_data_reproj)
-        weight_reproj.append(file_weight_reproj)
+        with mp.get_context('fork').Pool(procs) as pool:
 
-        # pool.close()
-        # pool.join()
-        gc.collect()
+            for i, result in tqdm(pool.imap_unordered(partial(parallel_reproject_weight,
+                                                              files=files,
+                                                              optimal_wcs=optimal_wcs,
+                                                              optimal_shape=optimal_shape,
+                                                              weight_type=weight_type,
+                                                              ),
+                                                      range(len(files))),
+                                  total=len(files),
+                                  desc='Creating weighted reprojects',
+                                  ascii=True):
+                files_reproj[i] = result[0]
+                data_reproj[i] = result[1]
+                weight_reproj[i] = result[2]
 
-    for i in range(len(data_reproj)):
-        data_array = copy.deepcopy(data_reproj[i])
-        weight_array = copy.deepcopy(weight_reproj[i])
+            pool.close()
+            pool.join()
+            gc.collect()
 
-        data[data_array.view_in_original_array] += weight_array.array * data_array.array
-        weights[weight_array.view_in_original_array] += weight_array.array
-
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        data_avg = data / weights
-    data_avg[data_avg == 0] = np.nan
-
-    return data_avg, optimal_wcs, optimal_shape
+    return files_reproj, data_reproj, weight_reproj, optimal_wcs
 
 
 def get_dither_match_plot_name(files1,
@@ -956,21 +1194,21 @@ def get_dither_match_plot_name(files1,
     """Make a plot name from list of files for dither matching"""
     if isinstance(files1, list):
         files1_name_split = os.path.split(files1[0])[-1].split('_')
+
+        # Since these should be dither groups, blank out the dither
+        files1_name_split[2] = 'XXXXX'
     else:
         files1_name_split = os.path.split(files1)[-1].split('_')
-    if isinstance(files1, list):
-        plot_to_name = '_'.join(files1_name_split[:2])
-    else:
-        plot_to_name = '_'.join(files1_name_split[:-1])
+    plot_to_name = '_'.join(files1_name_split[:-1])
 
     if isinstance(files2, list):
         files2_name_split = os.path.split(files2[0])[-1].split('_')
+
+        # Since these should be dither groups, blank out the dither
+        files2_name_split[2] = 'XXXXX'
     else:
         files2_name_split = os.path.split(files2)[-1].split('_')
-    if isinstance(files2, list):
-        plot_from_name = '_'.join(files2_name_split[:2])
-    else:
-        plot_from_name = '_'.join(files2_name_split[:-1])
+    plot_from_name = '_'.join(files2_name_split[:-1])
 
     plot_name = os.path.join(plot_dir,
                              '%s_to_%s' % (plot_from_name, plot_to_name),
@@ -982,14 +1220,33 @@ def get_dither_match_plot_name(files1,
 def get_dither_reproject(file,
                          optimal_wcs,
                          optimal_shape,
+                         do_sigma_clip=False,
+                         stacked_image=False,
                          ):
-    """Reproject dithers, maintaining list structure"""
+    """Reproject dithers, maintaining list structure
+
+    Args:
+        file: List or single file to reproject
+        optimal_wcs: WCS to reproject to
+        optimal_shape: output array shape for the WCS
+        do_sigma_clip (bool): Whether to perform sigma-clipping on data or not. Defaults to False
+        stacked_image (bool): Whether this is a stacked image or not. Defaults to False
+    """
 
     if isinstance(file, list):
-        dither_reproj = [reproject_dither(i, optimal_wcs=optimal_wcs, optimal_shape=optimal_shape)
+        dither_reproj = [reproject_dither(i, optimal_wcs=optimal_wcs,
+                                          optimal_shape=optimal_shape,
+                                          do_sigma_clip=do_sigma_clip,
+                                          stacked_image=stacked_image,
+                                          )
                          for i in file]
     else:
-        dither_reproj = reproject_dither(file, optimal_wcs=optimal_wcs, optimal_shape=optimal_shape)
+        dither_reproj = reproject_dither(file,
+                                         optimal_wcs=optimal_wcs,
+                                         optimal_shape=optimal_shape,
+                                         do_sigma_clip=do_sigma_clip,
+                                         stacked_image=stacked_image,
+                                         )
 
     return dither_reproj
 
@@ -998,12 +1255,16 @@ def parallel_get_dither_reproject(idx,
                                   files,
                                   optimal_wcs,
                                   optimal_shape,
+                                  do_sigma_clip=False,
+                                  stacked_image=False,
                                   ):
     """Light function to parallelise get_dither_reproject"""
 
     dither_reproj = get_dither_reproject(files[idx],
                                          optimal_wcs=optimal_wcs,
                                          optimal_shape=optimal_shape,
+                                         do_sigma_clip=do_sigma_clip,
+                                         stacked_image=stacked_image,
                                          )
 
     return idx, dither_reproj
@@ -1013,15 +1274,21 @@ def calculate_delta(files,
                     procs=None,
                     plot_dir=None,
                     max_points=10000,
-                    parallel_delta=True,
+                    do_sigma_clip=False,
+                    stacked_image=False,
                     ):
     """Match relative offsets between tiles
 
     Args:
+        files (list): List of files to match
+        procs (int, optional): Number of processes to run in parallel. Defaults to None,
+            which is series
+        plot_dir (str): Where to save diagnostic plots to. Defaults to None, which will
+            not save anything
         max_points (int): Maximum points to include in histogram plots. This step can
-            be slow so this speeds it up
-        parallel_delta (bool): Whether to calculate delta values in parallel, if possible.
-            There can be a lot of overheads so having a switch here is useful
+            be slow so this speeds it up. Defaults to 10000
+        do_sigma_clip (bool): Whether to do sigma-clipping on data when reprojecting. Defaults to False
+        stacked_image (bool): Whether this is a stacked image or not. Defaults to False
     """
 
     files = files
@@ -1029,6 +1296,8 @@ def calculate_delta(files,
     deltas = np.zeros([len(files),
                        len(files)])
     weights = np.zeros_like(deltas)
+    rmses = np.zeros_like(deltas)
+    lin_sizes = np.ones_like(deltas)
 
     # Reproject all the HDUs. Start by building the optimal WCS
     if isinstance(files[0], list):
@@ -1050,6 +1319,8 @@ def calculate_delta(files,
             dither_reproj.append(get_dither_reproject(file,
                                                       optimal_wcs=optimal_wcs,
                                                       optimal_shape=optimal_shape,
+                                                      do_sigma_clip=do_sigma_clip,
+                                                      stacked_image=stacked_image,
                                                       )
                                  )
 
@@ -1063,11 +1334,11 @@ def calculate_delta(files,
                                                            plot_dir,
                                                            )
 
-                n_pix, delta = background_match_dithers(dither_reproj[i],
-                                                        dither_reproj[j],
-                                                        plot_name=plot_name,
-                                                        max_points=max_points,
-                                                        )
+                n_pix, delta, rms, lin_size = background_match_dithers(dither_reproj[i],
+                                                                       dither_reproj[j],
+                                                                       plot_name=plot_name,
+                                                                       max_points=max_points,
+                                                                       )
 
                 # These are symmetrical by design
 
@@ -1076,13 +1347,18 @@ def calculate_delta(files,
 
                 deltas[j, i] = delta
                 weights[j, i] = n_pix
+                rmses[j, i] = rms
+                lin_sizes[j, i] = lin_size
 
                 deltas[i, j] = -delta
                 weights[i, j] = n_pix
+                rmses[i, j] = rms
+                lin_sizes[i, j] = lin_size
 
         gc.collect()
 
     else:
+
         # We can multiprocess this, since each calculation runs independently
 
         n_procs = np.nanmin([procs, len(files)])
@@ -1095,6 +1371,8 @@ def calculate_delta(files,
                                                               files=files,
                                                               optimal_wcs=optimal_wcs,
                                                               optimal_shape=optimal_shape,
+                                                              do_sigma_clip=do_sigma_clip,
+                                                              stacked_image=stacked_image,
                                                               ),
                                                       range(len(files))),
                                   total=len(files),
@@ -1111,44 +1389,22 @@ def calculate_delta(files,
         ijs = []
         delta_vals = []
         n_pix_vals = []
+        rms_vals = []
+        lin_size_vals = []
 
-        if parallel_delta:
+        for ij in tqdm(all_ijs, ascii=True, desc='Calculating delta matrix'):
+            ij, delta, n_pix, rms, lin_size = parallel_delta_matrix(ij,
+                                                                    files=files,
+                                                                    dither_reproj=dither_reproj,
+                                                                    plot_dir=plot_dir,
+                                                                    max_points=max_points,
+                                                                    )
 
-            n_procs = np.nanmin([procs, len(all_ijs)])
-
-            with mp.get_context('fork').Pool(n_procs) as pool:
-
-                for result in tqdm(pool.imap_unordered(partial(parallel_delta_matrix,
-                                                               files=files,
-                                                               dithers_reproj=dither_reproj,
-                                                               plot_dir=plot_dir,
-                                                               max_points=max_points,
-                                                               parallel=parallel_delta,
-                                                               ),
-                                                       all_ijs),
-                                   total=len(all_ijs),
-                                   desc='Calculating delta matrix',
-                                   ascii=True):
-                    ij, delta, n_pix = result
-
-                    ijs.append(ij)
-                    delta_vals.append(delta)
-                    n_pix_vals.append(n_pix)
-
-        else:
-
-            for ij in tqdm(all_ijs, ascii=True, desc='Calculating delta matrix'):
-                ij, delta, n_pix = parallel_delta_matrix(ij,
-                                                         files=files,
-                                                         dithers_reproj=dither_reproj,
-                                                         plot_dir=plot_dir,
-                                                         max_points=max_points,
-                                                         parallel=parallel_delta,
-                                                         )
-
-                ijs.append(ij)
-                delta_vals.append(delta)
-                n_pix_vals.append(n_pix)
+            ijs.append(ij)
+            delta_vals.append(delta)
+            n_pix_vals.append(n_pix)
+            rms_vals.append(rms)
+            lin_size_vals.append(lin_size)
 
         for idx, ij in enumerate(ijs):
             i = ij[0]
@@ -1159,21 +1415,24 @@ def calculate_delta(files,
 
             deltas[j, i] = delta_vals[idx]
             weights[j, i] = n_pix_vals[idx]
+            rmses[j, i] = rms_vals[idx]
+            lin_sizes[j, i] = lin_size_vals[idx]
 
             deltas[i, j] = -delta_vals[idx]
             weights[i, j] = n_pix_vals[idx]
+            rmses[i, j] = rms_vals[idx]
+            lin_sizes[i, j] = lin_size_vals[idx]
 
         gc.collect()
 
-    return deltas, weights
+    return deltas, weights, rmses, lin_sizes
 
 
 def parallel_delta_matrix(ij,
+                          dither_reproj,
                           files,
-                          dithers_reproj,
                           plot_dir=None,
                           max_points=None,
-                          parallel=True,
                           ):
     """Function to parallelise up getting delta matrix values"""
 
@@ -1187,28 +1446,24 @@ def parallel_delta_matrix(ij,
                                                plot_dir,
                                                )
 
-    if parallel:
-        thread_limits = 1
-    else:
-        thread_limits = None
-
-    with threadpool_limits(limits=thread_limits, user_api=None):
-
-        n_pix, delta = background_match_dithers(dithers_reproj1=dithers_reproj[i],
-                                                dithers_reproj2=dithers_reproj[j],
-                                                plot_name=plot_name,
-                                                max_points=max_points,
-                                                )
+    with threadpool_limits(limits=1, user_api=None):
+        n_pix, delta, rms, lin_size = background_match_dithers(dithers_reproj1=dither_reproj[i],
+                                                               dithers_reproj2=dither_reproj[j],
+                                                               plot_name=plot_name,
+                                                               max_points=max_points,
+                                                               )
 
     gc.collect()
 
-    return ij, delta, n_pix
+    return ij, delta, n_pix, rms, lin_size
 
 
 def parallel_match_dithers(dither,
                            in_band_dir,
                            step_ext,
                            plot_dir=None,
+                           do_sigma_clip=False,
+                           weight_method='equal',
                            ):
     """Function to parallelise up matching dithers"""
 
@@ -1219,99 +1474,119 @@ def parallel_match_dithers(dither,
 
         dither_files.sort()
 
-        delta_matrix, weight_matrix = calculate_delta(dither_files,
-                                                      plot_dir=plot_dir,
-                                                      )
-        deltas = find_optimum_deltas(delta_matrix, weight_matrix)
+        delta_matrix, npix_matrix, rms_matrix, lin_size_matrix = calculate_delta(dither_files,
+                                                                                 plot_dir=plot_dir,
+                                                                                 do_sigma_clip=do_sigma_clip
+                                                                                 )
+        deltas = find_optimum_deltas(delta_matrix,
+                                     npix_matrix,
+                                     rms_matrix,
+                                     lin_size_matrix,
+                                     weight_method=weight_method,
+                                     )
 
     return deltas, dither_files
 
 
-def parallel_nircam_shorts(dither,
-                           in_band_dir,
-                           step_ext,
-                           plot_dir=None,
-                           ):
-    """Function to parallelise up matching the four NIRCam short chips"""
-
-    with threadpool_limits(limits=1, user_api=None):
-        all_dither_files = []
-        for chip_no in range(1, 5):
-            dither_files = glob.glob(os.path.join(in_band_dir,
-                                                  '%s*%s*_%s.fits' % (dither,
-                                                                      chip_no,
-                                                                      step_ext)
-                                                  )
-                                     )
-            if len(dither_files) == 0:
-                continue
-
-            dither_files.sort()
-            all_dither_files.append(dither_files)
-
-        delta_matrix, weight_matrix = calculate_delta(all_dither_files,
-                                                      plot_dir=plot_dir,
-                                                      )
-        deltas = find_optimum_deltas(delta_matrix, weight_matrix)
-
-    return deltas, all_dither_files
-
-
 def find_optimum_deltas(delta_mat,
-                        weight_mat,
+                        npix_mat,
+                        rms_mat,
+                        lin_size_mat,
                         min_area_percent=0.002,
-                        weight_by_npix=False,
+                        rms_sig_limit=2,
+                        weight_method='equal',
                         ):
     """Get optimum deltas from a delta/weight matrix.
 
     Taken from the JWST skymatch step, with some edits to remove potentially bad fits due
-    to small areal overlaps
+    to small areal overlaps, or noisy diffs, and various weighting schemes
 
     Args:
+        delta_mat (np.ndarray): Matrix of delta values
+        npix_mat (np.ndarray): Matrix of number of pixel values for calculating delta
+        rms_mat (np.ndarray): Matrix of RMS values
+        lin_size_mat (np.ndarray): 1/0 array for whether overlaps pass minimum linear extent
         min_area_percent (float): Minimum percentage of average areal overlap to remove tiles.
             Defaults to 0.002 (0.2%)
-        weight_by_npix (bool): Whether to weight the calculation by the number of pixels that
-            go into it (True), or evenly (False). Defaults to False
+        rms_sig_limit (float): Sigma limit for cutting off noisy fits. Defaults to 2
+        weight_method: How to weight in least-squares minimization. Options are 'equal' (equal weighting),
+            'npix' (weight by number of pixels), and 'rms' (weight by rms of the delta values).
+            Defaults to 'equal'
 
     """
+
+    delta_mat = copy.deepcopy(delta_mat)
+    npix_mat = copy.deepcopy(npix_mat)
+    rms_mat = copy.deepcopy(rms_mat)
+    lin_size_mat = copy.deepcopy(lin_size_mat)
 
     ns = delta_mat.shape[0]
 
     # Remove things with weights less than min_area_percent of the average weight
-    avg_weight_val = np.nanmean(weight_mat[weight_mat != 0])
-    small_area_idx = np.where(weight_mat < min_area_percent * avg_weight_val)
-    weight_mat[small_area_idx] = 0
+    avg_npix_val = np.nanmean(npix_mat[npix_mat != 0])
+    small_area_idx = np.where(np.logical_and(npix_mat < min_area_percent * avg_npix_val,
+                                             delta_mat != 0)
+                              )
     delta_mat[small_area_idx] = 0
+    npix_mat[small_area_idx] = 0
+    rms_mat[small_area_idx] = 0
+
+    # Remove things that haven't passed the small area test
+    delta_mat[lin_size_mat == 0] = 0
+    npix_mat[lin_size_mat == 0] = 0
+    rms_mat[lin_size_mat == 0] = 0
+
+    # Remove fits with RMS values twice that of the mean
+    avg_rms_val = np.nanmean(rms_mat[npix_mat != 0])
+    sig_rms_val = np.nanstd(rms_mat[npix_mat != 0])
+    rms_idx = np.where(rms_mat > avg_rms_val + rms_sig_limit * sig_rms_val)
+    delta_mat[rms_idx] = 0
+    npix_mat[rms_idx] = 0
+    rms_mat[rms_idx] = 0
+
+    # Make sure we've got rid of everything we need to
+    delta_mat[npix_mat == 0] = 0
+    delta_mat[rms_mat == 0] = 0
+
+    # Create weight matrix
+    if weight_method == 'equal':
+        # Weight evenly
+        weight = np.ones_like(delta_mat)
+        weight[delta_mat == 0] = 0
+    elif weight_method == 'npix':
+        # Weight by straight number of pixels
+        weight = 0.5 * (npix_mat + npix_mat.T)
+    elif weight_method == 'rms':
+        # Weight by inverse variance of the fit
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            weight = 0.5 * (rms_mat + rms_mat.T)
+            weight = weight ** -2
+            weight[~np.isfinite(weight)] = 0
+    else:
+        raise Warning('weight_method %s not known!' % weight_method)
 
     neq = 0
     for i in range(ns):
         for j in range(i + 1, ns):
-            if weight_mat[i, j] > 0 and weight_mat[j, i] > 0:
+            if delta_mat[i, j] != 0 and npix_mat[i, j] > 0 and weight[i, j] > 0:
                 neq += 1
 
-    # average weights:
-    weight_avg = 0.5 * (weight_mat + weight_mat.T)
-
-    # create arrays for coefficients and free terms:
+    # Create arrays for coefficients and free terms
     K = np.zeros((neq, ns), dtype=float)
     F = np.zeros(neq, dtype=float)
     invalid = ns * [True]
 
-    # now process intersections between the rest of the images:
+    # Process intersections between the rest of the images
     ieq = 0
     for i in range(0, ns):
         for j in range(i + 1, ns):
-            if weight_mat[i, j] > 0 and weight_mat[j, i] > 0:
+            # Only pull out valid intersections
+            if delta_mat[i, j] != 0 and weight[i, j] > 0 and npix_mat[i, j] > 0:
+                K[ieq, i] = weight[i, j]
+                K[ieq, j] = -weight[i, j]
 
-                if weight_by_npix:
-                    weight_avg_i = copy.deepcopy(weight_avg[i, j])
-                else:
-                    weight_avg_i = 1
-
-                K[ieq, i] = weight_avg_i
-                K[ieq, j] = -weight_avg_i
-
-                F[ieq] = weight_avg_i * delta_mat[i, j]
+                F[ieq] = weight[i, j] * delta_mat[i, j]
                 invalid[i] = False
                 invalid[j] = False
                 ieq += 1
@@ -1396,19 +1671,18 @@ def parse_parameter_dict(parameter_dict,
     if band in MIRI_BANDS:
         band_type = 'miri'
         short_long = 'miri'
-        pixel_scale = 0.11
     elif band in NIRCAM_BANDS:
         band_type = 'nircam'
 
         # Also pull out the distinction between short and long NIRCAM
         if int(band[1:4]) <= 212:
             short_long = 'nircam_short'
-            pixel_scale = 0.031
         else:
             short_long = 'nircam_long'
-            pixel_scale = 0.063
     else:
         raise Warning('Band type %s not known!' % band)
+
+    pixel_scale = PIXEL_SCALES[short_long]
 
     if isinstance(value, dict):
 
@@ -1522,6 +1796,161 @@ def get_default_args(func):
     }
 
 
+def get_kws(parameter_dict,
+            func,
+            band,
+            target,
+            ):
+    """Set up kwarg dict for a function"""
+
+    args = get_default_args(func)
+
+    func_kws = {}
+    for arg in args.keys():
+
+        if arg in parameter_dict.keys():
+            arg_val = parse_parameter_dict(parameter_dict,
+                                           arg,
+                                           band,
+                                           target,
+                                           )
+            if arg_val == 'VAL_NOT_FOUND':
+                arg_val = args[arg]
+        else:
+            arg_val = args[arg]
+
+        func_kws[arg] = arg_val
+
+    return func_kws
+
+
+def lv3_update_fits_wcsinfo(im,
+                            hdr):
+    """Quick wrapper to fix up level 3 datamodel wcsinfo"""
+
+    # update meta.wcsinfo with FITS keywords except for naxis*
+    del hdr['naxis*']
+
+    # maintain convention of lowercase keys
+    hdr_dict = {k.lower(): v for k, v in hdr.items()}
+
+    # delete naxis, cdelt, pc from wcsinfo
+    rm_keys = ['naxis', 'cdelt1', 'cdelt2',
+               'pc1_1', 'pc1_2', 'pc2_1', 'pc2_2',
+               'a_order', 'b_order', 'ap_order', 'bp_order']
+
+    rm_keys.extend(f"{s}_{i}_{j}" for i in range(10) for j in range(10)
+                   for s in ['a', 'b', 'ap', 'bp'])
+
+    for key in rm_keys:
+        if key in im.meta.wcsinfo.instance:
+            del im.meta.wcsinfo.instance[key]
+
+    # update meta.wcs_info with fit keywords
+    im.meta.wcsinfo.instance.update(hdr_dict)
+
+    return im
+
+
+def get_lv3_wcs(im):
+    """Get a useful WCS from a JWST mosaic"""
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+
+        fits_hdr = im.meta.wcs.to_fits()[0]
+        wcs_hdr = im.meta.wcsinfo.instance
+        naxis1, naxis2 = fits_hdr['NAXIS1'], fits_hdr['NAXIS2']
+        wcs_hdr['naxis1'] = naxis1
+        wcs_hdr['naxis2'] = naxis2
+
+        wcs_im = WCS(wcs_hdr)
+
+    return wcs_im
+
+
+def transform_wcs_gwcs(wcs):
+    """Convert WCS to gWCS"""
+
+    jwst_hdr = wcs.to_header()
+    tform = gwcs.wcs.utils.make_fitswcs_transform(jwst_hdr)
+    new_gwcs = gwcs.WCS(forward_transform=tform, output_frame='world')
+
+    return jwst_hdr, new_gwcs
+
+
+def make_stacked_image(files,
+                       out_name,
+                       ):
+    """Create a quick stacked image from a series of input images"""
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+
+        hdus = []
+
+        dq_bits = interpret_bit_flags('~DO_NOT_USE+NON_SCIENCE', flag_name_map=pixel)
+
+        for file in files:
+            hdu = fits.open(file)
+
+            # Mask bad data
+            dq_bit_mask = bitfield_to_boolean_mask(
+                hdu['DQ'].data.astype(np.uint8),
+                dq_bits,
+                good_mask_value=0,
+                dtype=np.uint8
+            )
+
+            hdu['SCI'].data[dq_bit_mask != 0] = np.nan
+
+            hdus.append(hdu)
+
+        output_projection, shape_out = find_optimal_celestial_wcs(hdus, hdu_in='SCI')
+        stacked_image, stacked_foot = reproject_and_coadd(hdus,
+                                                          output_projection=output_projection,
+                                                          shape_out=shape_out,
+                                                          hdu_in='SCI',
+                                                          reproject_function=reproject_interp,
+                                                          )
+
+        hdr = output_projection.to_header()
+
+        hdu = fits.ImageHDU(data=stacked_image, header=hdr, name='SCI')
+        hdu.writeto(out_name,
+                    overwrite=True,
+                    )
+
+        del hdus
+        gc.collect()
+
+    return True
+
+
+def parallel_make_stack_image(dither,
+                              in_dir,
+                              out_dir,
+                              step_ext,
+                              ):
+    """Parallelise up making a stacked image"""
+    dither_files = glob.glob(os.path.join(in_dir,
+                                          '%s*_%s.fits' % (dither, step_ext))
+                             )
+    dither_files.sort()
+
+    # Create output name
+    file_name_split = os.path.split(dither_files[0])[-1].split('_')
+    file_name_split[2] = '*'
+    out_name = '_'.join(file_name_split)
+    out_name = os.path.join(out_dir, out_name)
+
+    make_stacked_image(dither_files,
+                       out_name=out_name,
+                       )
+
+    return True
+
+
 class JWSTReprocess:
 
     def __init__(self,
@@ -1541,6 +1970,7 @@ class JWSTReprocess:
                  psf_model_parameter_dict=None,
                  destripe_parameter_dict='phangs',
                  dither_stripe_sub_parameter_dict=None,
+                 dither_match_parameter_dict=None,
                  astrometric_catalog_parameter_dict=None,
                  astrometry_parameter_dict='phangs',
                  lyot_method='mask',
@@ -1609,6 +2039,9 @@ class JWSTReprocess:
             * bg_sub_parameter_dict (dict): As `lv1_parameter_dict`, but for the background subtraction procedure
             * psf_model_parameter_dict (dict): As `lv1_parameter_dict`, but for PSF modelling
             * destripe_parameter_dict (dict): As `lv1_parameter_dict`, but for the destriping procedure
+            * dither_stripe_sub_parameter_dict (dict): As `lv1_parameter_dict`, but for the dither stripe subtraction
+                procedure
+            * dither_match_parameter_dict (dict): As `lv1_parameter_dict`, but for the dither matching procedure
             * astrometric_catalog_parameter_dict (dict): As `lv1_parameter_dict`, but for generating the astrometric
                 catalog
             * astrometry_parameter_dict (dict): As `lv1_parameter_dict`, but for astrometric alignment
@@ -1809,6 +2242,10 @@ class JWSTReprocess:
         if dither_stripe_sub_parameter_dict is None:
             dither_stripe_sub_parameter_dict = {}
         self.dither_stripe_sub_parameter_dict = dither_stripe_sub_parameter_dict
+
+        if dither_match_parameter_dict is None:
+            dither_match_parameter_dict = {}
+        self.dither_match_parameter_dict = dither_match_parameter_dict
 
         if astrometry_parameter_dict is None:
             astrometry_parameter_dict = {}
@@ -2199,14 +2636,16 @@ class JWSTReprocess:
                             shutil.rmtree(base_band_dir)
                             continue
 
-                        cal_files.sort()
-
-                        self.run_dither_stripe_sub(files=cal_files,
-                                                   in_dir=in_band_dir,
-                                                   out_dir=out_band_dir,
-                                                   step_ext=step_ext,
-                                                   band=band,
-                                                   )
+                        out_files = glob.glob(os.path.join(out_band_dir,
+                                                           '*_%s.fits' % step_ext)
+                                              )
+                        if len(out_files) == 0:
+                            self.run_dither_stripe_sub(files=cal_files,
+                                                       in_dir=in_band_dir,
+                                                       out_dir=out_band_dir,
+                                                       step_ext=step_ext,
+                                                       band=band,
+                                                       )
 
                     else:
 
@@ -2270,6 +2709,8 @@ class JWSTReprocess:
                     # Match the backgrounds for each set of dithers, and then
                     # for each tile in a mosaic (if applicable)
 
+                    # Match the relative backgrounds between tiles in a mosaic
+
                     cal_files = glob.glob(os.path.join(in_band_dir,
                                                        '*_%s.fits' % step_ext)
                                           )
@@ -2300,19 +2741,27 @@ class JWSTReprocess:
                         # First pass where we do this per-dither, per-chip. Ensure we're not wasting processes
                         procs = np.nanmin([self.procs, len(dithers)])
 
+                        all_deltas = []
+                        all_dither_files = []
+
+                        plot_dir = os.path.join(out_band_dir, 'plots')
+                        if not os.path.exists(plot_dir):
+                            os.makedirs(plot_dir)
+
                         with mp.get_context('fork').Pool(procs) as pool:
 
-                            all_deltas = []
-                            all_dither_files = []
-
-                            plot_dir = os.path.join(out_band_dir, 'plots')
-                            if not os.path.exists(plot_dir):
-                                os.makedirs(plot_dir)
+                            dither_match_kws = get_kws(parameter_dict=self.dither_match_parameter_dict,
+                                                       func=parallel_match_dithers,
+                                                       band=band,
+                                                       target=self.target,
+                                                       )
+                            del dither_match_kws['plot_dir']
 
                             for deltas, dither_files in tqdm(pool.imap_unordered(partial(parallel_match_dithers,
                                                                                          in_band_dir=in_band_dir,
-                                                                                         # plot_dir=plot_dir,
-                                                                                         step_ext=step_ext
+                                                                                         step_ext=step_ext,
+                                                                                         plot_dir=plot_dir,
+                                                                                         **dither_match_kws,
                                                                                          ),
                                                                                  dithers),
                                                              total=len(dithers),
@@ -2327,7 +2776,6 @@ class JWSTReprocess:
                                 dither_files = copy.deepcopy(all_dither_files[idx])
 
                                 for i, dither_file in enumerate(dither_files):
-
                                     delta = copy.deepcopy(deltas[i])
                                     self.logger.info('%s, delta=%.2f' % (os.path.split(dither_file)[-1], delta))
 
@@ -2341,33 +2789,98 @@ class JWSTReprocess:
                             pool.join()
                             gc.collect()
 
-                        # Now do a final pass where we find the offset between different dithers, but only for
-                        # multiple dithers. We do this replacement in-place
+                        # Do another pass where we now match between dithers
                         if len(dithers) > 1:
 
-                            all_dither_files = []
-                            for dither in dithers:
+                            stacked_dir = os.path.join(base_band_dir,
+                                                       'stacked_matched')
+
+                            # Flush out if it already exists, and then create
+                            if os.path.exists(stacked_dir):
+                                shutil.rmtree(stacked_dir)
+                            if not os.path.exists(stacked_dir):
+                                os.makedirs(stacked_dir)
+
+                            # We want to create stacked images for the dithers
+                            with mp.get_context('fork').Pool(procs) as pool:
+
+                                results = []
+
+                                for result in tqdm(pool.imap_unordered(partial(parallel_make_stack_image,
+                                                                               in_dir=out_band_dir,
+                                                                               out_dir=stacked_dir,
+                                                                               step_ext=step_ext,
+                                                                               ),
+                                                                       dithers),
+                                                   total=len(dithers),
+                                                   desc='Creating stacked dither images',
+                                                   ascii=True):
+                                    results.append(result)
+
+                                pool.close()
+                                pool.join()
+                                gc.collect()
+
+                            if not np.all(results):
+                                self.logger.warning('Some stacked images have failed!')
+
+                            # all_dither_files = []
+                            # for dither in dithers:
+                            #     dither_files = glob.glob(os.path.join(out_band_dir,
+                            #                                           '%s*_%s.fits' % (dither, step_ext))
+                            #                              )
+                            #     dither_files.sort()
+                            #     all_dither_files.append(dither_files)
+
+                            stacked_files = glob.glob(os.path.join(stacked_dir,
+                                                                   '*_%s.fits' % step_ext,
+                                                                   )
+                                                      )
+
+                            self.logger.info('Matching between (stacked) mosaic tiles')
+
+                            delta_kws = get_kws(parameter_dict=self.dither_match_parameter_dict,
+                                                func=calculate_delta,
+                                                band=band,
+                                                target=self.target,
+                                                )
+                            del delta_kws['procs'], delta_kws['plot_dir'], delta_kws['stacked_image']
+
+                            # delta_matrix, npix_matrix, rms_matrix = calculate_delta(all_dither_files,
+                            #                                                         plot_dir=plot_dir,
+                            #                                                         procs=self.procs,
+                            #                                                         stacked_image=True,
+                            #                                                         **delta_kws
+                            #                                                         )
+
+                            delta_matrix, npix_matrix, rms_matrix, lin_size_matrix = calculate_delta(stacked_files,
+                                                                                                     plot_dir=plot_dir,
+                                                                                                     procs=self.procs,
+                                                                                                     stacked_image=True,
+                                                                                                     **delta_kws
+                                                                                                     )
+
+                            delta_kws = get_kws(parameter_dict=self.dither_match_parameter_dict,
+                                                func=find_optimum_deltas,
+                                                band=band,
+                                                target=self.target,
+                                                )
+
+                            deltas = find_optimum_deltas(delta_matrix,
+                                                         npix_matrix,
+                                                         rms_matrix,
+                                                         lin_size_matrix,
+                                                         **delta_kws,
+                                                         )
+
+                            # Subtract the per-dither delta, do in place
+                            for idx, delta in enumerate(deltas):
+                                stacked_file = os.path.split(stacked_files[idx])[-1]
                                 dither_files = glob.glob(os.path.join(out_band_dir,
-                                                                      '%s*_%s.fits' % (dither, step_ext))
+                                                                      stacked_file,
+                                                                      )
                                                          )
                                 dither_files.sort()
-                                all_dither_files.append(dither_files)
-
-                            self.logger.info('Matching between mosaic tiles')
-
-                            plot_dir = os.path.join(out_band_dir, 'plots')
-                            if not os.path.exists(plot_dir):
-                                os.makedirs(plot_dir)
-
-                            delta_matrix, weight_matrix = calculate_delta(all_dither_files,
-                                                                          plot_dir=plot_dir,
-                                                                          procs=self.procs,
-                                                                          parallel_delta=False,
-                                                                          )
-                            deltas = find_optimum_deltas(delta_matrix, weight_matrix)
-
-                            for idx, delta in enumerate(deltas):
-                                dither_files = copy.deepcopy(all_dither_files[idx])
 
                                 for dither_file in dither_files:
                                     self.logger.info('%s, delta=%.2f' % (os.path.split(dither_file)[-1], delta))
@@ -2397,29 +2910,16 @@ class JWSTReprocess:
                         shutil.rmtree(base_band_dir)
                         continue
 
-                    bg_sub_args = get_default_args(background_subtract)
-
                     for hdu_in_name in tqdm(cal_files, ascii=True):
 
                         hdu_out_name = os.path.join(out_band_dir, hdu_in_name.split(os.path.sep)[-1])
 
                         if not os.path.exists(hdu_out_name) or overwrite:
-
-                            bg_sub_kws = {}
-                            for bg_sub_arg in bg_sub_args.keys():
-
-                                if bg_sub_arg in self.bg_sub_parameter_dict.keys():
-                                    arg_val = parse_parameter_dict(self.bg_sub_parameter_dict,
-                                                                   bg_sub_arg,
-                                                                   band,
-                                                                   self.target,
-                                                                   )
-                                    if arg_val == 'VAL_NOT_FOUND':
-                                        arg_val = bg_sub_args[bg_sub_arg]
-                                else:
-                                    arg_val = bg_sub_args[bg_sub_arg]
-
-                                bg_sub_kws[bg_sub_arg] = arg_val
+                            bg_sub_kws = get_kws(parameter_dict=self.bg_sub_parameter_dict,
+                                                 func=background_subtract,
+                                                 band=band,
+                                                 target=self.target,
+                                                 )
 
                             with fits.open(hdu_in_name, memmap=False) as hdu:
                                 hdu = background_subtract(hdu,
@@ -2590,7 +3090,8 @@ class JWSTReprocess:
                               out_dir,
                               step_ext,
                               band,
-                              weight_type='exptime',
+                              group_by_dither=False,
+                              default_weight_type='exptime'
                               ):
         """Run destriping, by comparing each file to overlapping dithers
 
@@ -2600,8 +3101,10 @@ class JWSTReprocess:
             * out_dir (str): Where to save destriped files to
             * step_ext (str): Extension for the step (e.g. cal)
             * band (str): JWST band
-            * weight_type (str): Weighting for mean image. Defaults to 'exptime',
-                the exposure time
+            * group_by_dither (bool): Whether to group by dither (True) or do
+                all files at once (False). Defaults to False
+            * default_weight_type (str): Default method for weighting average
+                image, if not set in config. Defaults to 'exptime'
         """
 
         plot_dir = os.path.join(out_dir, 'plots')
@@ -2609,70 +3112,117 @@ class JWSTReprocess:
         if not os.path.exists(plot_dir):
             os.makedirs(plot_dir)
 
-        # Parse arguments
-        dither_stripe_args = get_default_args(dither_stripe_sub)
+        dither_stripe_kws = get_kws(parameter_dict=self.dither_stripe_sub_parameter_dict,
+                                    func=dither_stripe_sub,
+                                    band=band,
+                                    target=self.target)
 
-        dither_stripe_kws = {}
-        for dither_stripe_arg in dither_stripe_args.keys():
-
-            if dither_stripe_arg in self.dither_stripe_sub_parameter_dict.keys():
-                arg_val = parse_parameter_dict(self.dither_stripe_sub_parameter_dict,
-                                               dither_stripe_arg,
-                                               band,
-                                               self.target,
+        try:
+            weight_type = parse_parameter_dict(self.dither_stripe_sub_parameter_dict,
+                                               'weight_type',
+                                               band=band,
+                                               target=self.target,
                                                )
-                if arg_val == 'VAL_NOT_FOUND':
-                    arg_val = dither_stripe_args[dither_stripe_arg]
-            else:
-                arg_val = dither_stripe_args[dither_stripe_arg]
-            dither_stripe_kws[dither_stripe_arg] = arg_val
+        except KeyError:
+            weight_type = copy.deepcopy(default_weight_type)
 
-        # Split these into dithers per-chip
-        dithers = []
-        for file in files:
-            file_split = os.path.split(file)[-1].split('_')
-            dithers.append('_'.join(file_split[:2]) + '*' + file_split[-2])
-        dithers = np.unique(dithers)
-        dithers.sort()
+        if group_by_dither:
 
-        # Ensure we're not wasting processes
-        procs = np.nanmin([self.procs, len(dithers)])
+            # Split these into dithers per-chip
+            dithers = []
+            for file in files:
+                file_split = os.path.split(file)[-1].split('_')
+                dithers.append('_'.join(file_split[:2]) + '*' + file_split[-2])
+            dithers = np.unique(dithers)
+            dithers.sort()
 
-        with mp.get_context('fork').Pool(procs) as pool:
+            # Ensure we're not wasting processes
+            procs = np.nanmin([self.procs, len(dithers)])
 
-            results = []
+            with mp.get_context('fork').Pool(procs) as pool:
 
-            for result in tqdm(pool.imap_unordered(partial(parallel_dither_stripe_sub,
-                                                           in_dir=in_dir,
-                                                           out_dir=out_dir,
-                                                           plot_dir=plot_dir,
-                                                           step_ext=step_ext,
-                                                           weight_type=weight_type,
-                                                           **dither_stripe_kws
-                                                           ),
-                                                   dithers),
-                               total=len(dithers),
-                               ascii=True,
-                               desc='Dither stripe subtraction',
-                               ):
-                results.append(result)
+                results = []
 
-            pool.close()
-            pool.join()
-            gc.collect()
+                for result in tqdm(pool.imap_unordered(partial(parallel_per_dither_stripe_sub,
+                                                               in_dir=in_dir,
+                                                               out_dir=out_dir,
+                                                               plot_dir=plot_dir,
+                                                               step_ext=step_ext,
+                                                               weight_type=weight_type,
+                                                               **dither_stripe_kws
+                                                               ),
+                                                       dithers),
+                                   total=len(dithers),
+                                   ascii=True,
+                                   desc='Dither stripe subtraction',
+                                   ):
+                    results.append(result)
 
-            for dither_result in results:
-                for result in dither_result:
-                    if result is not None:
-                        in_file = result[0]
-                        stripes = result[1]
-                        out_file = in_file.replace(in_dir, out_dir)
+                pool.close()
+                pool.join()
+                gc.collect()
 
-                        with fits.open(in_file, memmap=False) as hdu:
-                            hdu['SCI'].data -= stripes
-                            hdu.writeto(out_file, overwrite=True)
-                            hdu.close()
-                        del hdu
+                for dither_result in results:
+                    for result in dither_result:
+                        if result is not None:
+                            in_file = result[0]
+                            stripes = result[1]
+                            out_file = in_file.replace(in_dir, out_dir)
+
+                            with fits.open(in_file, memmap=False) as hdu:
+                                hdu['SCI'].data -= stripes
+                                hdu.writeto(out_file, overwrite=True)
+                                hdu.close()
+                            del hdu
+                gc.collect()
+
+        else:
+
+            # Ensure we're not wasting processes
+            procs = np.nanmin([self.procs, len(files)])
+
+            # Global up some variables, to speed up multiprocessing
+            global files_reproj
+            global data_reproj
+            global weight_reproj
+
+            files_reproj, data_reproj, weight_reproj, optimal_wcs = weighted_reproject_image(files,
+                                                                                             weight_type=weight_type,
+                                                                                             procs=procs,
+                                                                                             )
+
+            with mp.get_context('fork').Pool(procs) as pool:
+
+                results = [None] * len(files_reproj)
+
+                for i, result in tqdm(pool.imap_unordered(partial(parallel_dither_stripe_sub,
+                                                                  optimal_wcs=optimal_wcs,
+                                                                  out_dir=out_dir,
+                                                                  plot_dir=plot_dir,
+                                                                  **dither_stripe_kws
+                                                                  ),
+                                                          range(len(files_reproj))),
+                                      total=len(files_reproj),
+                                      ascii=True,
+                                      desc='Dither stripe subtraction',
+                                      ):
+                    results[i] = result
+
+                pool.close()
+                pool.join()
+                gc.collect()
+
+            for result in results:
+                if result is not None:
+                    in_file = result[0]
+                    stripes = result[1]
+                    out_file = in_file.replace(in_dir, out_dir)
+
+                    with fits.open(in_file, memmap=False) as hdu:
+                        hdu['SCI'].data -= stripes
+                        hdu.writeto(out_file, overwrite=True)
+                        hdu.close()
+                    del hdu
             gc.collect()
 
     def run_psf_model(self,
@@ -3820,10 +4370,6 @@ class JWSTReprocess:
             aligned_table = aligned_file.replace('.fits', '_table.fits')
 
             if not os.path.exists(aligned_file) or overwrite:
-                jwst_hdu = fits.open(jwst_file, memmap=False)
-
-                jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
-                jwst_data[jwst_data == 0] = np.nan
 
                 # Read in the source catalogue from the pipeline
 
@@ -3846,22 +4392,23 @@ class JWSTReprocess:
                 # sources = sources[np.logical_and(sources['roundness'] >= -1.0,
                 #                                  sources['roundness'] <= 1.0)]
 
-                # Apply these to the image
-                wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
+                # Load in the datamodel, and pull in WCS to correct
+                jwst_im = datamodels.open(jwst_file)
+                wcs_jwst = get_lv3_wcs(jwst_im)
                 wcs_jwst_corrector = FITSWCSCorrector(wcs_jwst)
+
+                # Make a copy since we'll be overwriting this along the way
                 wcs_jwst_corrector_orig = copy.deepcopy(wcs_jwst_corrector)
 
+                # Parse down the table and convert appropriately
                 jwst_tab = Table()
 
-                # Factors of 3600 to get into arcsec
-                jwst_tab['TPx'] = sources['sky_centroid'].ra.value * 3600
-                jwst_tab['TPy'] = sources['sky_centroid'].dec.value * 3600
-
-                # RA/Dec should be TPx/TPy
-                if 'TPx' not in ref_tab.colnames:
-                    ref_tab['TPx'] = ref_tab['RA'] * 3600
-                if 'TPy' not in ref_tab.colnames:
-                    ref_tab['TPy'] = ref_tab['DEC'] * 3600
+                # Get TPx/y out -- do everything in pixel space
+                jwst_tab['TPx'], jwst_tab['TPy'] = wcs_jwst_corrector.world_to_det(sources['sky_centroid'].ra,
+                                                                                   sources['sky_centroid'].dec,
+                                                                                   )
+                ref_tab['TPx'], ref_tab['TPy'] = wcs_jwst_corrector.world_to_det(ref_tab['RA'],
+                                                                                 ref_tab['DEC'])
 
                 # We'll also need x and y for later
                 jwst_tab['x'] = sources['xcentroid']
@@ -3870,72 +4417,111 @@ class JWSTReprocess:
                 jwst_tab['ra'] = sources['sky_centroid'].ra.value
                 jwst_tab['dec'] = sources['sky_centroid'].dec.value
 
-                # Run a match
-                match = XYXYMatch()
+                # Do the fit -- potentially take an iterative approach, using
+                # multiple homing-in iterations
+                multiple_iterations = False
+                n_iterations = 0
                 for key in self.astrometry_parameter_dict.keys():
+                    if 'iteration' in key:
+                        multiple_iterations = True
+                        n_iterations += 1
 
-                    value = parse_parameter_dict(self.astrometry_parameter_dict,
-                                                 key,
-                                                 band,
-                                                 self.target,
-                                                 )
-                    if value == 'VAL_NOT_FOUND':
-                        continue
+                if not multiple_iterations:
+                    n_iterations = 1
 
-                    recursive_setattr(match, key, value, protected=True)
+                wcs_aligned_fit = None
 
-                ref_idx, jwst_idx = match(ref_tab, jwst_tab, tp_units='arcsec')
+                xoffset = 0
+                yoffset = 0
 
-                fit_wcs_args = get_default_args(fit_wcs)
+                for iteration in range(n_iterations):
 
-                fit_wcs_kws = {}
-                for fit_wcs_arg in fit_wcs_args.keys():
+                    # Make sure we're not overwriting WCS
+                    wcs_jwst_corrector = copy.deepcopy(wcs_jwst_corrector_orig)
 
-                    if fit_wcs_arg in self.astrometry_parameter_dict.keys():
-                        arg_val = parse_parameter_dict(self.astrometry_parameter_dict,
-                                                       fit_wcs_arg,
-                                                       band,
-                                                       self.target,
-                                                       )
-                        if arg_val == 'VAL_NOT_FOUND':
-                            arg_val = fit_wcs_args[fit_wcs_arg]
+                    if not multiple_iterations:
+                        astrometry_parameter_dict = copy.deepcopy(
+                            self.astrometry_parameter_dict
+                        )
                     else:
-                        arg_val = fit_wcs_args[fit_wcs_arg]
+                        astrometry_parameter_dict = copy.deepcopy(
+                            self.astrometry_parameter_dict['iteration%d' % (iteration + 1)]
+                        )
 
-                    # sigma here is fiddly, test if it's a tuple and fix to rmse if not
-                    if fit_wcs_arg == 'sigma':
-                        if type(arg_val) != tuple:
-                            arg_val = (arg_val, 'rmse')
+                    # Run a match
+                    match = XYXYMatch(xoffset=xoffset,
+                                      yoffset=yoffset,
+                                      )
+                    for key in astrometry_parameter_dict.keys():
 
-                    fit_wcs_kws[fit_wcs_arg] = arg_val
+                        value = parse_parameter_dict(astrometry_parameter_dict,
+                                                     key,
+                                                     band,
+                                                     self.target,
+                                                     )
+                        if value == 'VAL_NOT_FOUND':
+                            continue
 
-                # Do alignment
-                wcs_aligned_fit = fit_wcs(refcat=ref_tab[ref_idx],
-                                          imcat=jwst_tab[jwst_idx],
-                                          corrector=wcs_jwst_corrector,
-                                          **fit_wcs_kws,
-                                          )
+                        recursive_setattr(match, key, value, protected=True)
 
-                # Pull out alignment properties and save to JWST metadata
-                shift, matrix = wcs_aligned_fit.meta['fit_info']['shift'], wcs_aligned_fit.meta['fit_info']['matrix']
+                    ref_idx, jwst_idx = match(ref_tab, jwst_tab, tp_units='pix')
 
-                # And properly update the header
-                updatehdr.update_wcs(jwst_hdu,
-                                     'SCI',
-                                     wcs_aligned_fit.wcs,
-                                     wcsname='TWEAK',
-                                     reusename=True,
-                                     )
-                jwst_hdu.writeto(aligned_file, overwrite=True)
-                jwst_hdu.close()
+                    fit_wcs_args = get_default_args(fit_wcs)
 
-                # Add in metadata
-                jwst_hdu = datamodels.open(aligned_file)
-                jwst_hdu.meta.abs_astro_alignment = {'shift': shift,
-                                                     'matrix': matrix,
-                                                     }
-                # Write out the datamodel
-                jwst_hdu.write(aligned_file)
+                    fit_wcs_kws = {}
+                    for fit_wcs_arg in fit_wcs_args.keys():
+
+                        if fit_wcs_arg in astrometry_parameter_dict.keys():
+                            arg_val = parse_parameter_dict(astrometry_parameter_dict,
+                                                           fit_wcs_arg,
+                                                           band,
+                                                           self.target,
+                                                           )
+                            if arg_val == 'VAL_NOT_FOUND':
+                                arg_val = fit_wcs_args[fit_wcs_arg]
+                        else:
+                            arg_val = fit_wcs_args[fit_wcs_arg]
+
+                        # sigma here is fiddly, test if it's a tuple and fix to rmse if not
+                        if fit_wcs_arg == 'sigma':
+                            if type(arg_val) != tuple:
+                                arg_val = (arg_val, 'rmse')
+
+                        fit_wcs_kws[fit_wcs_arg] = arg_val
+
+                    # Do alignment
+                    wcs_aligned_fit = fit_wcs(refcat=ref_tab[ref_idx],
+                                              imcat=jwst_tab[jwst_idx],
+                                              corrector=wcs_jwst_corrector,
+                                              **fit_wcs_kws,
+                                              )
+
+                    # Pull out offsets, remember there's a negative here to the shift
+                    xoffset, yoffset = -wcs_aligned_fit.meta['fit_info']['shift']
+
+                shift = wcs_aligned_fit.meta['fit_info']['shift']
+                matrix = wcs_aligned_fit.meta['fit_info']['matrix']
+
+                wcs_jwst_corrected = copy.deepcopy(wcs_jwst_corrector_orig)
+
+                # Put the correction in and properly update header.
+                wcs_jwst_corrected.set_correction(shift=shift,
+                                                  matrix=matrix,
+                                                  ref_tpwcs=wcs_jwst_corrector_orig,
+                                                  )
+
+                jwst_hdr, new_gwcs = transform_wcs_gwcs(wcs_jwst_corrected.wcs)
+                jwst_im.meta.wcs = new_gwcs
+
+                # Add in shift metadata
+                jwst_im.meta.abs_astro_alignment = {'shift': shift,
+                                                    'matrix': matrix,
+                                                    }
+
+                # Update WCS info
+                jwst_im = lv3_update_fits_wcsinfo(im=jwst_im, hdr=jwst_hdr)
+
+                jwst_im.write(aligned_file)
 
                 # Also apply this to each individual crf file
                 crf_files = glob.glob(os.path.join(input_dir,
@@ -3944,31 +4530,34 @@ class JWSTReprocess:
 
                 crf_files.sort()
 
-                # Ensure we're not wasting processes
-                procs = np.nanmin([self.procs, len(crf_files)])
+                # Move found CRF files, if they exist
+                if len(crf_files) > 0:
 
-                with mp.get_context('fork').Pool(procs) as pool:
+                    # Ensure we're not wasting processes
+                    procs = np.nanmin([self.procs, len(crf_files)])
 
-                    results = []
+                    with mp.get_context('fork').Pool(procs) as pool:
 
-                    for result in tqdm(pool.imap_unordered(partial(parallel_tweakback,
-                                                                   matrix=matrix,
-                                                                   shift=shift,
-                                                                   ref_tpwcs=wcs_jwst_corrector_orig,
-                                                                   ),
-                                                           crf_files),
-                                       total=len(crf_files),
-                                       ascii=True,
-                                       desc='tweakback',
-                                       ):
-                        results.append(result)
+                        results = []
 
-                    pool.close()
-                    pool.join()
-                    gc.collect()
+                        for result in tqdm(pool.imap_unordered(partial(parallel_tweakback,
+                                                                       matrix=matrix,
+                                                                       shift=shift,
+                                                                       ref_tpwcs=wcs_jwst_corrector_orig,
+                                                                       ),
+                                                               crf_files),
+                                           total=len(crf_files),
+                                           ascii=True,
+                                           desc='tweakback',
+                                           ):
+                            results.append(result)
 
-                if not all(results):
-                    self.logger.warning('Not all crf files tweakbacked. May cause issues!')
+                        pool.close()
+                        pool.join()
+                        gc.collect()
+
+                    if not all(results):
+                        self.logger.warning('Not all crf files tweakbacked. May cause issues!')
 
                 fit_info = wcs_aligned_fit.meta['fit_info']
                 fit_mask = fit_info['fitmask']
@@ -4057,26 +4646,24 @@ class JWSTReprocess:
 
             if not os.path.exists(aligned_file) or overwrite:
 
-                jwst_hdu = fits.open(jwst_file, memmap=False)
-
-                wcs_jwst = HSTWCS(jwst_hdu, 'SCI')
+                jwst_im = datamodels.open(jwst_file)
+                wcs_jwst = get_lv3_wcs(jwst_im)
                 wcs_jwst_corrector = FITSWCSCorrector(wcs_jwst)
                 wcs_jwst_corrector_orig = copy.deepcopy(wcs_jwst_corrector)
 
                 if mode == 'cross_corr':
-                    ref_hdu = fits.open(ref_hdu_name, memmap=False)
+                    # ref_hdu = fits.open(ref_hdu_name, memmap=False)
+                    ref_im = datamodels.open(jwst_file)
+                    ref_wcs = get_lv3_wcs(jwst_im)
 
-                    ref_data = copy.deepcopy(ref_hdu['SCI'].data)
-                    jwst_data = copy.deepcopy(jwst_hdu['SCI'].data)
+                    ref_data = copy.deepcopy(ref_im.data)
+                    jwst_data = copy.deepcopy(jwst_im.data)
 
-                    ref_err = copy.deepcopy(ref_hdu['ERR'].data)
-                    jwst_err = copy.deepcopy(jwst_hdu['ERR'].data)
+                    ref_err = copy.deepcopy(ref_im.err)
+                    jwst_err = copy.deepcopy(jwst_im.err)
 
                     ref_data[ref_data == 0] = np.nan
                     jwst_data[jwst_data == 0] = np.nan
-
-                    # Reproject the ref HDU to the image to align
-                    ref_wcs = HSTWCS(ref_hdu, 'SCI')
 
                     with warnings.catch_warnings():
                         warnings.simplefilter('ignore')
@@ -4130,17 +4717,21 @@ class JWSTReprocess:
 
                     # Apply correction
                     wcs_jwst_corrector.set_correction(shift=shift,
-                                                      ref_tpwcs=wcs_jwst_corrector,
+                                                      ref_tpwcs=wcs_jwst_corrector_orig,
                                                       )
 
-                    updatehdr.update_wcs(jwst_hdu,
-                                         'SCI',
-                                         wcs_jwst_corrector.wcs,
-                                         wcsname='TWEAK',
-                                         reusename=True)
+                    jwst_hdr, new_gwcs = transform_wcs_gwcs(wcs_jwst_corrector.wcs)
+                    jwst_im.meta.wcs = new_gwcs
 
-                    jwst_hdu.writeto(aligned_file, overwrite=True)
-                    jwst_hdu.close()
+                    # Add in shift metadata
+                    jwst_im.meta.abs_astro_alignment = {'shift': shift,
+                                                        'matrix': matrix,
+                                                        }
+
+                    # Update WCS info
+                    jwst_im = lv3_update_fits_wcsinfo(im=jwst_im, hdr=jwst_hdr)
+
+                    jwst_im.write(aligned_file)
 
                 elif mode == 'shift':
 
@@ -4149,27 +4740,26 @@ class JWSTReprocess:
                     shift = ref_hdu.meta.abs_astro_alignment.shift
                     matrix = ref_hdu.meta.abs_astro_alignment.matrix
 
-                    # Cast these to numpy so they can be pickled properly later
-                    shift = shift.astype(np.ndarray)
-                    matrix = matrix.astype(np.ndarray)
+                    # Cast these to numpy, so they can be pickled properly later
+                    shift = shift.astype(np.ndarray).astype(float)
+                    matrix = matrix.astype(np.ndarray).astype(float)
 
                     wcs_jwst_corrector.set_correction(matrix=matrix,
                                                       shift=shift,
-                                                      ref_tpwcs=wcs_jwst_corrector,
+                                                      ref_tpwcs=wcs_jwst_corrector_orig,
                                                       )
-                    updatehdr.update_wcs(jwst_hdu,
-                                         'SCI',
-                                         wcs_jwst_corrector.wcs,
-                                         wcsname='TWEAK',
-                                         reusename=True)
+                    jwst_hdr, new_gwcs = transform_wcs_gwcs(wcs_jwst_corrector.wcs)
+                    jwst_im.meta.wcs = new_gwcs
 
-                    jwst_hdu.writeto(aligned_file, overwrite=True)
-                    jwst_hdu.close()
+                    # Update WCS info
+                    jwst_im = lv3_update_fits_wcsinfo(im=jwst_im, hdr=jwst_hdr)
+
+                    jwst_im.write(aligned_file)
 
                 else:
                     raise ValueError('mode should be one of cross_corr, shift')
 
-                # Also apply this to each individual crf file
+                # Also apply this to each individual crf file, if they exist
 
                 crf_files = glob.glob(os.path.join(input_dir,
                                                    '*_crf.fits')
@@ -4177,28 +4767,30 @@ class JWSTReprocess:
 
                 crf_files.sort()
 
-                # Ensure we're not wasting processes
-                procs = np.nanmin([self.procs, len(crf_files)])
+                if len(crf_files) > 0:
 
-                with mp.get_context('fork').Pool(procs) as pool:
+                    # Ensure we're not wasting processes
+                    procs = np.nanmin([self.procs, len(crf_files)])
 
-                    results = []
+                    with mp.get_context('fork').Pool(procs) as pool:
 
-                    for result in tqdm(pool.imap_unordered(partial(parallel_tweakback,
-                                                                   shift=shift,
-                                                                   matrix=matrix,
-                                                                   ref_tpwcs=wcs_jwst_corrector_orig,
-                                                                   ),
-                                                           crf_files),
-                                       total=len(crf_files),
-                                       ascii=True,
-                                       desc='tweakback',
-                                       ):
-                        results.append(result)
+                        results = []
 
-                    pool.close()
-                    pool.join()
-                    gc.collect()
+                        for result in tqdm(pool.imap_unordered(partial(parallel_tweakback,
+                                                                       shift=shift,
+                                                                       matrix=matrix,
+                                                                       ref_tpwcs=wcs_jwst_corrector_orig,
+                                                                       ),
+                                                               crf_files),
+                                           total=len(crf_files),
+                                           ascii=True,
+                                           desc='tweakback',
+                                           ):
+                            results.append(result)
 
-                if not all(results):
-                    self.logger.warning('Not all crf files tweakbacked. May cause issues!')
+                        pool.close()
+                        pool.join()
+                        gc.collect()
+
+                    if not all(results):
+                        self.logger.warning('Not all crf files tweakbacked. May cause issues!')

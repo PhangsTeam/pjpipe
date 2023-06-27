@@ -83,8 +83,8 @@ with open(local_file, 'rb') as f:
     local = tomllib.load(f)
 
 # INPUT CURRENT AND PREVIOUS VERSIONS TO COMPARE HERE
-curr_version = 'v0p8'
-prev_version = 'v0p7p3'
+curr_version = 'v0p8p1'
+prev_version = 'v0p8'
 
 working_dir = local['local']['working_dir']
 curr_release_dir = os.path.join(working_dir, 'jwst_release', curr_version)

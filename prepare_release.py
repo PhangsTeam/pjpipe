@@ -60,6 +60,7 @@ if not os.path.exists(release_dir):
     os.makedirs(release_dir)
 
 hdu_ext_to_delete = [
+    # 'ERR',
     # 'CON',
     # 'WHT',
     'VAR_POISSON',

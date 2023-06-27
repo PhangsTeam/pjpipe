@@ -47,9 +47,11 @@ rad_to_arcsec = 3600 * np.rad2deg(1)
 # We'll start from calibrated files just before lv3. These are in different
 # places for NIRCam/MIRI
 
-input_dir_dict = {'nircam': 'destripe',
-                  'miri': 'lyot_adjust',
-                  }
+input_dir_dict = {
+    'nircam': 'destripe',
+    # 'nircam': 'cal',
+    'miri': 'lyot_adjust',
+}
 input_ext = 'cal'
 output_ext = 'wcs_adjust'
 
@@ -158,9 +160,10 @@ for prop_id in prop_ids:
                         visit_transforms[target][visit]['shift'] = np.vstack((visit_transforms[target][visit]['shift'],
                                                                               xy_shift)
                                                                              )
-                        visit_transforms[target][visit]['matrix'] = np.dstack((visit_transforms[target][visit]['matrix'],
-                                                                               matrix)
-                                                                              )
+                        visit_transforms[target][visit]['matrix'] = np.dstack(
+                            (visit_transforms[target][visit]['matrix'],
+                             matrix)
+                            )
                     else:
                         visit_transforms[target][visit] = {}
                         visit_transforms[target][visit]['shift'] = copy.deepcopy(xy_shift)
