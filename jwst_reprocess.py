@@ -2046,8 +2046,8 @@ class JWSTReprocess:
                 catalog
             * astrometry_parameter_dict (dict): As `lv1_parameter_dict`, but for astrometric alignment
             * lyot_method (str): Method to account for mistmatch lyot coronagraph in MIRI imaging. Can either mask with
-                `mask`, mask only in overlapping region with `mask_overlap', do nothing with 'keep'
-                 or adjust to main chip with `adjust`. Defaults to `mask`
+                `mask`, mask only in overlapping region with `mask_overlap',
+                or adjust to main chip with `adjust`. Defaults to `mask`
             * dither_match_short_nircam_chips (bool): In dither matching, whether to do a second step where all the
                 chips in a dither are matched before the final matching. Defaults to True, but should be turned off
                 for dither patterns where the chips don't end up overlapping
@@ -2681,13 +2681,6 @@ class JWSTReprocess:
                                            out_dir=out_band_dir,
                                            check_overlap=True
                                            )
-                        elif self.lyot_method == 'keep':
-                            logging.info(f"Coronograph area is untouched")
-                            if not os.path.exists(out_band_dir):
-                                os.makedirs(out_band_dir)
-                            for f in cal_files:
-                                out_name = os.path.join(out_band_dir, os.path.split(f)[-1])
-                                shutil.copy(f, out_name)
 
                     else:
 
