@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 set_start_method('fork')
 
-from nircam_destriping import NircamDestriper
+from LEGACY.nircam_destriping import NircamDestriper
 
 
 def parallel_destripe(hdu_name,

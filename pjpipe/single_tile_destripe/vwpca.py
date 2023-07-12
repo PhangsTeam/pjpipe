@@ -19,9 +19,9 @@ NOTES:
     rather than the initalise amount
 """
 
-
 import numpy as np
-import pca.vwpca_inc as vwpca
+from . import vwpca_inc as vwpca
+
 
 def mean_subtracted_data(data):
     """
@@ -48,6 +48,7 @@ def mean_subtracted_data(data):
 
     return centred_data, vector_mean
 
+
 def do_initial_SVD(data):
     """
     Runs SVD on a data array to calculate the eigen vectors transpose
@@ -70,8 +71,9 @@ def do_initial_SVD(data):
         Singular values of the SVD decomposition
 
     """
-    singular_values, eigen_vectors_T =  np.linalg.svd(data)[1:]
+    singular_values, eigen_vectors_T = np.linalg.svd(data)[1:]
     return eigen_vectors_T, singular_values
+
 
 def get_eigen_system(data):
     """
@@ -98,6 +100,7 @@ def get_eigen_system(data):
     # array.T performs a matrix transpose
     return eigen_vectors_T.T, eigen_values
 
+
 def initalise_eigensystem(data_centred):
     """
     Method wrapping around the data to calcuate the eigen vectors and values
@@ -118,11 +121,12 @@ def initalise_eigensystem(data_centred):
 
     """
     amount_of_data_vectors = data_centred.shape[0]
-    data_normed = data_centred /  np.sqrt(amount_of_data_vectors)
+    data_normed = data_centred / np.sqrt(amount_of_data_vectors)
 
     eigen_vectors, eigen_values = get_eigen_system(data=data_normed)
 
     return eigen_vectors, eigen_values
+
 
 def reconstruct_observation(eigen_by_transpose, observation_vector):
     """
@@ -150,7 +154,6 @@ def reconstruct_observation(eigen_by_transpose, observation_vector):
     return reconstructed_observation
 
 
-
 def get_residual(observation_vector, eigen_vector_matrix):
     """
     This function works out the residual between the observation
@@ -173,15 +176,18 @@ def get_residual(observation_vector, eigen_vector_matrix):
         The residuals from the observation and the model
 
     """
-    #multiplying the eigenvectors by its transpositons: E.E^T
+    # multiplying the eigenvectors by its transpositons: E.E^T
     eigen_by_transpose = np.matmul(eigen_vector_matrix, eigen_vector_matrix.T)
 
-    #reconstructing data using eigensysten: y(E.E^T),
-    reconstruct_observation_vector = reconstruct_observation(eigen_by_transpose, observation_vector)
+    # reconstructing data using eigensysten: y(E.E^T),
+    reconstruct_observation_vector = reconstruct_observation(
+        eigen_by_transpose, observation_vector
+    )
 
     residuals = observation_vector - reconstruct_observation_vector
 
     return residuals
+
 
 def mag_residual_sq(residuals, error_map=None):
     """
@@ -202,12 +208,13 @@ def mag_residual_sq(residuals, error_map=None):
 
     """
     if error_map is not None:
-        error_map = error_map[:residuals.shape[0]]
-        residuals[error_map==0] = np.nan
+        error_map = error_map[: residuals.shape[0]]
+        residuals[error_map == 0] = np.nan
 
     mag_residuals_sq = np.nansum(residuals**2, axis=1)
 
     return mag_residuals_sq
+
 
 def get_mag_residuals_sq(data, eigen_vectors, error_map=None):
     """
@@ -237,8 +244,13 @@ def get_mag_residuals_sq(data, eigen_vectors, error_map=None):
     return mag_residuals_squared
 
 
-def initalise_scale_using_residuals_sq(residuals_sq, breakdown_point=0.5, amount_of_eigen=10,
-                                       robust_function=vwpca.cauchy_like_function, c_sq=1):
+def initalise_scale_using_residuals_sq(
+    residuals_sq,
+    breakdown_point=0.5,
+    amount_of_eigen=10,
+    robust_function=vwpca.cauchy_like_function,
+    c_sq=1,
+):
     """
     A function that provides an inital guess of the scale squard (sigma squared)
     following the description in section 3.2 of Budavari et al. 2009
@@ -270,15 +282,19 @@ def initalise_scale_using_residuals_sq(residuals_sq, breakdown_point=0.5, amount
     scale_sq = np.nanmean(residuals_sq)
 
     for i in range(amount_of_eigen):
-
-        t = residuals_sq/scale_sq
+        t = residuals_sq / scale_sq
         robust_weighting = robust_function(t=t, c_sq=c_sq)
         scale_sq *= np.nanmean(robust_weighting) / breakdown_point
 
     return scale_sq
 
 
-def initalise_vqu(residuals_sq, scale_sq, robust_derivative=vwpca.derivate_of_cauchy_like_function, c_sq=1):
+def initalise_vqu(
+    residuals_sq,
+    scale_sq,
+    robust_derivative=vwpca.derivate_of_cauchy_like_function,
+    c_sq=1,
+):
     """
     Initalise coeficents for the running weights q, u, and v,
     given in Budavari et al 2009 (see equations (20), (21) and (22).
@@ -303,18 +319,19 @@ def initalise_vqu(residuals_sq, scale_sq, robust_derivative=vwpca.derivate_of_ca
         iterative statistics
 
     """
-    t = residuals_sq/scale_sq
+    t = residuals_sq / scale_sq
     weight1 = robust_derivative(t=t, c_sq=c_sq)
 
     weight_coefficants_3 = np.ones_like(weight1)
 
-    vqu_vectors = np.column_stack([weight1,
-                                   weight1*residuals_sq,
-                                   weight_coefficants_3])
+    vqu_vectors = np.column_stack(
+        [weight1, weight1 * residuals_sq, weight_coefficants_3]
+    )
 
     inital_quv = np.nanmean(vqu_vectors, axis=0)
 
     return inital_quv
+
 
 def input_for_pca(mean_array, eigen_values, eigen_vectors, scale_sq, vqu):
     """
@@ -342,11 +359,16 @@ def input_for_pca(mean_array, eigen_values, eigen_vectors, scale_sq, vqu):
         scale squared (sigma squared) and robust weights (vqu).
 
     """
-    eigen_system_dict = {'U':eigen_vectors, 'm':mean_array,
-                         'W':eigen_values,  'vqu':vqu,
-                         'sig2':scale_sq}
+    eigen_system_dict = {
+        "U": eigen_vectors,
+        "m": mean_array,
+        "W": eigen_values,
+        "vqu": vqu,
+        "sig2": scale_sq,
+    }
 
     return eigen_system_dict
+
 
 def forget_parameter(amount_of_spectra, memory=1):
     """
@@ -372,9 +394,16 @@ def forget_parameter(amount_of_spectra, memory=1):
     return forget_param
 
 
-def initalise_robust_pca_param(data, errors=None, amount_of_eigen=10, amount_to_initalise=200, breakdown_point=0.5,
-                               robust_function=vwpca.cauchy_like_function, robust_derivative=vwpca.derivate_of_cauchy_like_function,
-                               c_sq=1):
+def initalise_robust_pca_param(
+    data,
+    errors=None,
+    amount_of_eigen=10,
+    amount_to_initalise=200,
+    breakdown_point=0.5,
+    robust_function=vwpca.cauchy_like_function,
+    robust_derivative=vwpca.derivate_of_cauchy_like_function,
+    c_sq=1,
+):
     """
     Wrapper function to initalise the eigensystem all in one place using
     the functions in this script. If an error map is given, the initalised
@@ -418,35 +447,56 @@ def initalise_robust_pca_param(data, errors=None, amount_of_eigen=10, amount_to_
     """
     data_centred, mean_initial = mean_subtracted_data(data=data)
 
-    eigen_vectors_initial, eigen_values_inital = initalise_eigensystem(data_centred=data_centred)
+    eigen_vectors_initial, eigen_values_inital = initalise_eigensystem(
+        data_centred=data_centred
+    )
 
-    eigen_vectors_initial = eigen_vectors_initial[:,:amount_of_eigen]
+    eigen_vectors_initial = eigen_vectors_initial[:, :amount_of_eigen]
     eigen_values_initial = eigen_values_inital[:amount_of_eigen]
 
-    residuals_sq = get_mag_residuals_sq(data=data_centred[:amount_to_initalise],
-                                    eigen_vectors=eigen_vectors_initial, error_map=errors)
+    residuals_sq = get_mag_residuals_sq(
+        data=data_centred[:amount_to_initalise],
+        eigen_vectors=eigen_vectors_initial,
+        error_map=errors,
+    )
 
-    scale_sq_initial = initalise_scale_using_residuals_sq(residuals_sq=residuals_sq,
-                                                       breakdown_point=breakdown_point,
-                                                       amount_of_eigen=10,
-                                                       robust_function=robust_function,
-                                                       c_sq=c_sq)
+    scale_sq_initial = initalise_scale_using_residuals_sq(
+        residuals_sq=residuals_sq,
+        breakdown_point=breakdown_point,
+        amount_of_eigen=10,
+        robust_function=robust_function,
+        c_sq=c_sq,
+    )
 
-    vqu_initial = initalise_vqu(residuals_sq=residuals_sq,
-                                scale_sq=scale_sq_initial,
-                                robust_derivative=robust_derivative,
-                                c_sq=c_sq)
+    vqu_initial = initalise_vqu(
+        residuals_sq=residuals_sq,
+        scale_sq=scale_sq_initial,
+        robust_derivative=robust_derivative,
+        c_sq=c_sq,
+    )
 
-
-    eigen_system_dict = input_for_pca(mean_array=mean_initial,
-                                      eigen_values=eigen_values_initial,
-                                      eigen_vectors=eigen_vectors_initial,
-                                      scale_sq=scale_sq_initial, vqu=vqu_initial)
+    eigen_system_dict = input_for_pca(
+        mean_array=mean_initial,
+        eigen_values=eigen_values_initial,
+        eigen_vectors=eigen_vectors_initial,
+        scale_sq=scale_sq_initial,
+        vqu=vqu_initial,
+    )
     return eigen_system_dict
 
-def run_robust_pca(data, errors=None, amount_of_eigen=10, amount_to_initalise=200,
-               number_of_iterations=5, forget_param=None,
-               breakdown_point=0.5, memory=1, save_extra_param=False, c_sq=1):
+
+def run_robust_pca(
+    data,
+    errors=None,
+    amount_of_eigen=10,
+    amount_to_initalise=200,
+    number_of_iterations=5,
+    forget_param=None,
+    breakdown_point=0.5,
+    memory=1,
+    save_extra_param=False,
+    c_sq=1,
+):
     """
     Main wrapper to perform the robust pca method on an entire dataset.
 
@@ -496,14 +546,17 @@ def run_robust_pca(data, errors=None, amount_of_eigen=10, amount_to_initalise=20
     amount_of_spectra, number_of_pixels = data.shape
 
     if forget_param is None:
-        forget_param = forget_parameter(amount_of_spectra=amount_of_spectra,
-                                        memory=memory)
+        forget_param = forget_parameter(
+            amount_of_spectra=amount_of_spectra, memory=memory
+        )
 
-    eigen_system_dict = initalise_robust_pca_param(data=data,
-                                                   errors=errors,
-                                                   amount_of_eigen=amount_of_eigen,
-                                                   amount_to_initalise=amount_to_initalise,
-                                                   breakdown_point=breakdown_point)
+    eigen_system_dict = initalise_robust_pca_param(
+        data=data,
+        errors=errors,
+        amount_of_eigen=amount_of_eigen,
+        amount_to_initalise=amount_to_initalise,
+        breakdown_point=breakdown_point,
+    )
 
     if errors is not None:
         pca_function = vwpca.iterate_PCA_with_data_gaps
@@ -516,17 +569,23 @@ def run_robust_pca(data, errors=None, amount_of_eigen=10, amount_to_initalise=20
     save_amount = amount_of_spectra * number_of_iterations - amount_to_initalise + 1
     tracked_eigen_system_dict = {}
 
-    #Need to skip the data we used to initalise the eigenbasis
+    # Need to skip the data we used to initalise the eigenbasis
     start = amount_to_initalise
 
     for k in range(number_of_iterations):
         for sp in range(start, amount_of_spectra):
-            tracked_eigen_system_dict, counter = track_eigensystem_updates(counter, eigen_system_dict,
-                                                                           tracked_eigen_system_dict,
-                                                                           save_amount)
+            tracked_eigen_system_dict, counter = track_eigensystem_updates(
+                counter, eigen_system_dict, tracked_eigen_system_dict, save_amount
+            )
 
-            eigen_system_dict = pca_function(eigen_system_dict=eigen_system_dict, new_spectra=data[sp],
-                                                  alpha=forget_param, error_array=errors[sp], delta=breakdown_point, c_sq=c_sq)
+            eigen_system_dict = pca_function(
+                eigen_system_dict=eigen_system_dict,
+                new_spectra=data[sp],
+                alpha=forget_param,
+                error_array=errors[sp],
+                delta=breakdown_point,
+                c_sq=c_sq,
+            )
         start = 0
         # after one iteration of the entire dataset, the past is forgotten
         # so we can now include the data we used to initalise the inital
@@ -537,7 +596,10 @@ def run_robust_pca(data, errors=None, amount_of_eigen=10, amount_to_initalise=20
     else:
         return eigen_system_dict
 
-def track_eigensystem_updates(counter, eigen_system_dict, tracked_eigen_system_dict, save_amount):
+
+def track_eigensystem_updates(
+    counter, eigen_system_dict, tracked_eigen_system_dict, save_amount
+):
     """
     Updates the extra variables used to track the evolution of the eigen
     system as the PCA incriments.
@@ -565,14 +627,17 @@ def track_eigensystem_updates(counter, eigen_system_dict, tracked_eigen_system_d
 
     """
     if counter == 0:
-        amount_of_eigen = len(eigen_system_dict['W'])
-        tracked_eigen_system_dict = initialise_tracked_eigen_updates(save_amount, amount_of_eigen)
+        amount_of_eigen = len(eigen_system_dict["W"])
+        tracked_eigen_system_dict = initialise_tracked_eigen_updates(
+            save_amount, amount_of_eigen
+        )
 
-    tracked_eigen_system_dict['W'][counter] = eigen_system_dict['W']
-    tracked_eigen_system_dict['vqu'][counter] = eigen_system_dict['vqu'][0]
-    tracked_eigen_system_dict['sig2'][counter] = eigen_system_dict['sig2']
+    tracked_eigen_system_dict["W"][counter] = eigen_system_dict["W"]
+    tracked_eigen_system_dict["vqu"][counter] = eigen_system_dict["vqu"][0]
+    tracked_eigen_system_dict["sig2"][counter] = eigen_system_dict["sig2"]
 
     return tracked_eigen_system_dict, counter + 1
+
 
 def initialise_tracked_eigen_updates(save_amount, amount_of_eigen):
     """
@@ -597,7 +662,11 @@ def initialise_tracked_eigen_updates(save_amount, amount_of_eigen):
     vk_interated = np.zeros(save_amount)
     scalesq_interated = np.zeros(save_amount)
 
-    tracked_eigen_system = {'W':eigenvalues_interated, 'sig2':scalesq_interated, 'vqu':vk_interated}
+    tracked_eigen_system = {
+        "W": eigenvalues_interated,
+        "sig2": scalesq_interated,
+        "vqu": vk_interated,
+    }
 
     return tracked_eigen_system
 
@@ -605,8 +674,6 @@ def initialise_tracked_eigen_updates(save_amount, amount_of_eigen):
 def main():
     pass
 
+
 if __name__ == "__main__":
     main()
-
-
-

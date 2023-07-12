@@ -10,7 +10,7 @@ do_kern_to_copt = True
 do_kern_to_gauss = False
 
 # output directory where you want the JWST PSFs to be saved (relative for me to PSF/.)
-output_dir_psf = 'PSF/' # in PSF/PSF/ relative to the repo root
+output_dir_psf = 'PSF/'  # in PSF/PSF/ relative to the repo root
 output_dir_kernels = '../../orig_data/kernels/'
 
 # list of the PHANGS-JWST filters to consider, others can be added if necessary

@@ -1,8 +1,7 @@
 import os
 import socket
-import getpass
 
-from miri_destriping import MiriDestriper
+from LEGACY.miri_destriping import MiriDestriper
 
 host = socket.gethostname()
 

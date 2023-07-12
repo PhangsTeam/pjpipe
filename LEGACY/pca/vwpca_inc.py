@@ -47,7 +47,7 @@ Notes:
     take extra parameters. This can be changed by adding *args where needed
 """
 import numpy as np
-import pca.vwpca_normgappy as gappy
+import LEGACY.pca.vwpca_normgappy as gappy
 
 
 def cauchy_like_function(t, c_sq=1):

@@ -1,103 +1,178 @@
-# jwst_scripts
-PHANGS-JWST processing scripts
+# PJPipe
 
-## Quickstart
+**Note that this pipeline requires Python 3.9 or above**
 
-The pipeline is designed to be run inside a python environment that can run the [JWST pipeline](https://jwst-pipeline.readthedocs.io/en/latest/).  
-This Quickstart assumes a conda environment.
+PJPipe (the PHANGS-JWST-Pipeline) is a wrapper around the official 
+[STScI JWST Pipeline](https://github.com/spacetelescope/jwst), with 
+edits specific to the reduction of large mosaics and nearby galaxies
+with extended, diffuse emission.
 
-N.B. The pipeline is built to run with the latest GitHub version of the JWST pipeline. It may run in older versions,
-but is likely to throw up error messages.
+Beyond the standard pipeline, PJPipe offers options for 
 
-1. [Install and activate](https://jwst-pipeline.readthedocs.io/en/latest/getting_started/install.html) a `jwst-pipeline` conda environment.
-2. Clone the `jwst_scripts` directory in to a `/path/`
-3. Edit the `/path/config/local.toml` script to indicate where you want JWST processing to occur on your system.
-4. Edit the `/path/config/config.toml` to reflect the galaxies you want to update.  The default will process NGC 1385.
-5. Download the data from STScI.
+* NIRCam destriping
+* Dealing with the MIRI coronagraph
+* Background matching
+* Absolute astrometric correction
+
+Alongside this, PJPipe is also highly parallelised for speed, and provides
+a simple, high-level interface via configuration files.
+
+If you make use of PJPipe in your work, please cite the PHANGS-JWST survey 
+papers (Lee et al., 2022; Williams et al., in prep.), and do not hesitate to
+get in touch for help! The `/examples` directory has examples, but different
+datasets may need more specific tailoring.
+
+## Installation
+
+The easiest way to install PJPipe is via pip: 
+
+```bash
+pip install -e . -r requirements.txt
 ```
-python /path/download_phangs_jwst.py /path/config/config.toml
+
+## Setting up config files
+
+The pipeline is primarily interfaced with using config files. These are .toml,
+and as such are relatively human-readable. We separate out parameters that
+control the overall pipeline processing (config files) and ones that are 
+specific to the system directory layout (local files).
+
+At the very least, you should determine a list of targets:
+```toml
+targets = [
+    'ic5332',
+    'ngc0628',
+    'ngc1087',
+    'etc',
+]
 ```
-6a. Run the pipeline from the system command line:
+a version:
+```toml
+version = 'v0p8p2'
 ```
-python /path/run_jwst_reprocessing.py /path/config/config.toml
+a list of bands
+```toml
+bands = ['F300M']
 ```
-6b. If running inside an ipython shell, the script will load `/path/config/config.toml` automatically.
+and some steps
+```toml
+steps = [
+    'download',
+    'lv1',
+    'lv2',
+    'single_tile_destripe.nircam',
+    'get_wcs_adjust',
+    'apply_wcs_adjust',
+    'lyot_separate.miri',
+    'multi_tile_destripe.nircam',
+    'level_match',
+    'lv3',
+    'astrometric_catalog.miri',
+    'astrometric_align',
+    'release',
+    'regress_against_previous',
+]
+```
+Note that in the steps here, you can separate things out per-instrument.
+For instance, destriping only runs on NIRCam images, whilst anything to
+do with the lyot coronagraph only applies to MIRI.
+
+This config file also controls the parameters for each step. You can edit 
+things like so:
+```toml
+[parameters.download]
+
+prop_id = '2107'
+product_type = [
+    'SCIENCE',
+]
+calib_level = [
+    1,
+]
+```
+which will download data from Program ID 2107 (the PHANGS Cycle 1 Treasury),
+and only level 1 (uncal) files. For more examples, we suggest looking in the 
+`examples/` directory. For any parameters passed to the JWST pipeline itself,
+these should be nested as `jwst_parameters`, e.g.:
+```toml
+[parameters.lv1]
+
+jwst_parameters.save_results = true
+jwst_parameters.ramp_fit.suppress_one_group = false
+jwst_parameters.refpix.use_side_ref_pixels = true
+```
+
+The `local.toml` file simply defines where things will be saved. For example,
+```toml
+crds_path = '/data/beegfs/astro-storage/groups/schinnerer/williams/crds/'
+raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw/archive_20230711/'
+reprocess_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_phangs_reprocessed/'
+alignment_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_scripts/examples/2107/alignment/'
+processors = 20
+```
+This should be edited to match your system layout.
 
 
-The resulting images will be stored in the working directory stored in your `working` directory defined in the `local.toml` file.
+## Running the Pipeline
 
-## Query/Download tools
+After you have your config files set up (see the `/examples` directory for some examples),
+you can run the pipeline end-to-end with just a few lines:
 
-* `archive_download` is a generic wrapper around Astroquery MAST query/download
-* `download_phangs_jwst` can be used to download the PHANGS-JWST data into a reasonable directory structure
+```python
+from pjpipe import PJPipeline
 
-## Reduction tools
+config_file = '/path/to/config.toml'
+local_file = '/path/to/local.toml'
 
-* `jwst_reprocess` is used to reprocess both NIRCAM and MIRI data
-* `run_jwst_reprocessing` wraps around `jwst_reprocess`
-* `log_jwst_reprocessing` logs `run_jwst_reprocessing` to a file
-* `prepare_release` flattens the file structure into something more manageable
+pjp = PJPipeline(config_file=config_file,
+                 local_file=local_file,
+                 )
+pjp.do_pipeline()
+```
 
-## NIRCAM tools
+Then just sit back and enjoy the heavy lifting being done.
 
-* `nircam_destriping` contains various routines for destriping NIRCAM data
-* `run_nircam_destriping` is a wrapper to run the destriping for select NIRCAM frames
+### Downloading Reference Files
 
-## MIRI tools
+If this is your first time running anything JWST related, errors can
+occur because the pipeline expects some reference files. To fix this,
+after setting CRDS parameters run
+```python
+import os
 
-* `miri_destriping` contains routines for destriping MIRI data
-* `run_miri_destriping` wraps around `miri_destriping`
+os.system('crds sync --jwst')
+```
+and this will pull the minimum relevant files for you.
 
-## General tools
+### Optional Arguments
 
-* `check_archive_files` will check through downloaded files, to see if there are any issues and things need to be 
-  redownloaded
-* `compare_different_reprocess` will put out difference maps for two different reprocess versions, for regression 
-  testing
-* `get_wcs_adjust` will get WCS shifts and output in a format you can paste straight into a config file. It needs to run
-  on data processed up to just before level 3, and will output a 'wcs_adjust.toml' file into the reprocess directory
-* `psf_subtraction` has routines for PSF modelling/subtraction for saturated data
-* `convert_con_to_coverage` will convert the CON file present in the release to a simpler map of the number of pixels
-  contributing to the final mosaic
+Each step is highly configurable to the end user, although the defaults should be 
+sensible in many use cases. To see all steps, you can simply do:
+```python
+import pjpipe
 
-## PSF tools
+pjpipe.list_steps()
+```
+To see the possible arguments for each step, you can do:
+```python
+from pjpipe import DownloadStep
 
-* the PSF/ directory includes routines related to PSF creation and validation.
-* 'make_kernels' in that directory creates circularized kernels from JWST or Gaussian PSFs, using the Aniano method.
-* `generate_JWST_PSF_and_kernels` in that directory is a wrapper around `make_kernels`
-*  `conv_with_kernel` in 'utils_jwst' can be used with the kernels 'make_kernels' (or they can be used by hand)
+help(DownloadStep)
+```
 
-(These may be out of date and to be deprecated - they live in the home directory)
-* `loop_kernel_creation` is an older version of material in the PSF directory
-* `jwst_pypherise` uses pypher to produce PSF kernels to convert from JWST to JWST or JWST to gaussian/moffat
+This will list the optional arguments you can put into the config file, 
+and will be passed to the step. This is not necessarily true for each
+JWST pipeline step, for those we recommend looking at 
+[the online docs](https://jwst-pipeline.readthedocs.io/en/latest/jwst/pipeline/main.html#pipelines)
 
-## PCA tools
-* the `pca/` directory contains a number of robust PCA routines that we use for destriping data. They were ported to 
-  Python by Elizabeth Watkins from IDL. These should reference Budavari+ 2009 (MNRAS 394, 1496–1502), and Wild+Hewett
-  2005 (MNRAS 358, 1083-1099)
+### Credits
 
-## Alignment files
-* the `alignment/` directory contains .fits tables to provide absolute astrometric corrections
+PJPipe has been developed by the [PHANGS Team](phangs.org), with major contributions from:
 
-## Config files
-* We use TOML files to simplify the interface between the processing parameters and the pipeline itself. The parameters
-   we use for the PHANGS-JWST reduction are in the `config/` directory, but may need to be edited somewhat for other
-   programs. The pipeline stage-specific parameters are given on the JWST pipeline readthedocs
-   (https://jwst-pipeline.readthedocs.io/en/latest/jwst/pipeline/main.html#pipelines).
-
-## Requirements
-
-Beyond the requirements required by the official STScI pipeline, this pipeline also requires some packages not
-installed by default:
-
-* astroquery
-* drizzlepac
-* image-registration (install the GitHub version: pip install git+https://github.com/keflavich/image_registration.git)
-* lmfit (only required for PSF modelling)
-* numdifftools (only required for PSF modelling)
-* pytest
-* reproject
-* tomli (not required for python>=3.11)
-* tqdm
-* webbpsf (only required for PSF modelling)
-
+* Thomas Williams (University of Oxford)
+* Oleg Egorov (Universität Heidelberg)
+* Erik Rosolowsky (University of Alberta)
+* Francesco Belfiore (INAF)
+* Jessica Sutter (UCSD)
+* David Thilker (JHU)
+* Adam Leroy (OSU)
