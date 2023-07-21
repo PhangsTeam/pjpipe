@@ -19,7 +19,7 @@ a simple, high-level interface via configuration files.
 
 If you make use of PJPipe in your work, please cite the PHANGS-JWST survey 
 papers (Lee et al., 2022; Williams et al., in prep.), and do not hesitate to
-get in touch for help! The `/examples` directory has examples, but different
+get in touch for help! The `/config` directory has examples, but different
 datasets may need more specific tailoring.
 
 ## Installation
@@ -92,7 +92,7 @@ calib_level = [
 ```
 which will download data from Program ID 2107 (the PHANGS Cycle 1 Treasury),
 and only level 1 (uncal) files. For more examples, we suggest looking in the 
-`examples/` directory. For any parameters passed to the JWST pipeline itself,
+`config/` directory. For any parameters passed to the JWST pipeline itself,
 these should be nested as `jwst_parameters`, e.g.:
 ```toml
 [parameters.lv1]
@@ -115,7 +115,7 @@ This should be edited to match your system layout.
 
 ## Running the Pipeline
 
-After you have your config files set up (see the `/examples` directory for some examples),
+After you have your config files set up (see the `/config` directory for some examples),
 you can run the pipeline end-to-end with just a few lines:
 
 ```python

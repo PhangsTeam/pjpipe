@@ -3,6 +3,7 @@ import glob
 import logging
 import os
 import shutil
+import fnmatch
 
 from stdatamodels.jwst import datamodels
 from tqdm import tqdm
@@ -149,7 +150,8 @@ class MoveRawObsStep:
             # If we have a failed observation, skip it
             skip_file = False
             for obs in self.obs_to_skip:
-                if obs in raw_fits_name:
+                match = fnmatch.fnmatch(raw_fits_name, obs)
+                if match:
                     skip_file = True
             if skip_file:
                 continue

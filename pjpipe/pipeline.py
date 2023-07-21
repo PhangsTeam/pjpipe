@@ -54,65 +54,20 @@ IN_STEP_EXTS = {
     "download": None,
     "lv1": "uncal",
     "lv2": "rate",
-    # "single_tile_destripe": "cal",
-    # "lyot_mask": "cal",
-    # "dither_stripe_sub": "cal",
-    # "bg_sub": "cal",
-    # "dither_match": "cal",
-    # "lyot_adjust": "cal",
-    # "wcs_adjust": "cal",
-    # "psf_model": "cal",
-    # "lv3": "i2d",
     "astrometric_catalog": "i2d",
     "astrometric_align": "i2d",
-    "release": None,
-}
-
-OUT_STEP_EXTS = {
-    "download": None,
-    "lv1": "rate",
-    # "lv2": "cal",
-    # "single_tile_destripe": "cal",
-    # "lyot_mask": "cal",
-    # "dither_stripe_sub": "cal",
-    # "bg_sub": "cal",
-    # "dither_match": "cal",
-    # "lyot_adjust": "cal",
-    # "wcs_adjust": "cal",
-    # "psf_model": "cal",
-    "lv3": "i2d",
-    "astrometric_catalog": None,
-    "astrometric_align": "i2d_align",
     "release": None,
 }
 
 IN_BAND_DIRS = {
     "lv1": "uncal",
     "lv2": "lv1",
-    # "destripe": "cal",
-    # "dither_stripe_sub": "cal",
-    # "bg_sub": "cal",
-    # "dither_match": "cal",
-    # "lyot_adjust": "cal",
-    # "wcs_adjust": "cal",
-    # "psf_model": "cal",
-    # "lv3": "cal",
     "astrometric_catalog": "lv3",
     "astrometric_align": "lv3",
     "release": "lv3",
 }
 
 OUT_BAND_DIRS = {
-    # "lv1": "rate",
-    # "lv2": "cal",
-    # "destripe": "destripe",
-    # "dither_stripe_sub": "dither_stripe_sub",
-    # "bg_sub": "bg_sub",
-    # "dither_match": "dither_match",
-    # "lyot_adjust": "lyot_adjust",
-    # "wcs_adjust": "wcs_adjust",
-    # "psf_model": "psf_model",
-    # "lv3": "lv3",
     "astrometric_catalog": "lv3",
     "astrometric_align": "lv3",
     "release": None,
@@ -135,7 +90,6 @@ class PJPipeline:
                 or dict of preloaded toml
             local_file: Either string to location of local.toml file,
                 or dict of preloaded toml
-
         """
 
         if config_file is None:
@@ -186,7 +140,7 @@ class PJPipeline:
         log.info(f"Using CRDS_PATH: {os.environ['CRDS_PATH']}")
         log.info(f"Using {self.procs} processes")
 
-        # Log these out
+        # Log targets/band/steps out
         log.info("Found targets:")
         for target in self.targets:
             log.info(f"-> {target}")
@@ -236,11 +190,6 @@ class PJPipeline:
                     in_step_ext = IN_STEP_EXTS[step]
                 else:
                     in_step_ext = "cal"
-
-                if step in OUT_STEP_EXTS:
-                    out_step_ext = OUT_STEP_EXTS[step]
-                else:
-                    out_step_ext = "cal"
 
                 # Some steps operate on all bands, distinguish that here
                 if step in COMBINED_BAND_STEPS:

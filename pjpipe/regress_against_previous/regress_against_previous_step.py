@@ -156,6 +156,7 @@ class RegressAgainstPreviousStep:
                 merger.append(pdf)
 
             merger.write(merged_filename)
+            merger.close()
 
         with open(step_complete_file, "w+") as f:
             f.close()

@@ -21,14 +21,18 @@ class ReleaseStep:
         file_exts=None,
         remove_bloat=True,
         move_tweakback=False,
+        move_backgrounds=False,
+        tweakback_dir="lv3",
         tweakback_ext="tweakback",
+        background_dir="lv2",
+        background_ext="combinedbackground",
         overwrite=False,
     ):
         """Tidies up files, moves to a single directory for release
 
         This step will move the final useful files, plus optionally
-        any tweakback'd crf files, into a neat directory structure
-        for release
+        any tweakback'd crf files and background files, into a neat
+        directory structure for release
 
         Args:
             in_dir: Input directory
@@ -44,6 +48,16 @@ class ReleaseStep:
                 fits files. Defaults to True
             move_tweakback: Whether to move tweakback'd crf files or not.
                 Defaults to False
+            move_backgrounds: Whether to move combined background files or not.
+                Defaults to False
+            background_dir: Where tweakback files are located, relative
+                to the target directory structure. Defaults to "lv3"
+            tweakback_ext: Filename extension for tweakback files. Defaults to
+                "tweakback"
+            background_dir: Where combined background files are located, relative
+                to the target directory structure. Defaults to "lv2"
+            background_ext: Filename extension for combined background files.
+                Defaults to "combinedbackground"
             overwrite: Whether to overwrite or not. Defaults to False
         """
 
@@ -54,6 +68,7 @@ class ReleaseStep:
         self.progress_dict = progress_dict
         self.remove_bloat = remove_bloat
         self.move_tweakback = move_tweakback
+        self.move_backgrounds = move_backgrounds
         self.overwrite = overwrite
 
         self.hdu_ext_to_delete = [
@@ -75,7 +90,10 @@ class ReleaseStep:
                 "segm.fits",
             ]
         self.file_exts = file_exts
+        self.tweakback_dir = tweakback_dir
         self.tweakback_ext = tweakback_ext
+        self.background_dir = background_dir
+        self.background_ext = background_ext
 
     def do_step(self):
         """Run the release step"""
@@ -85,12 +103,16 @@ class ReleaseStep:
             "release_step_complete.txt",
         )
 
-        if self.overwrite:
-            os.remove(step_complete_file)
-            shutil.rmtree(self.out_dir)
+        out_dir = os.path.join(self.out_dir, self.target)
 
-        if not os.path.exists(self.out_dir):
-            os.makedirs(self.out_dir)
+        if self.overwrite:
+            if os.path.exists(step_complete_file):
+                os.remove(step_complete_file)
+            if os.path.exists(out_dir):
+                shutil.rmtree(out_dir)
+
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
 
         # Check if we've already run the step
         if os.path.exists(step_complete_file):
@@ -114,6 +136,10 @@ class ReleaseStep:
                 )
             if self.move_tweakback:
                 self.do_move_tweakback(
+                    band=band,
+                )
+            if self.move_backgrounds:
+                self.do_move_backgrounds(
                     band=band,
                 )
 
@@ -182,12 +208,13 @@ class ReleaseStep:
         Args:
             band: Band to consider
         """
-        band_dir = self.progress_dict[self.target][band]["dir"]
 
         files = glob.glob(
             os.path.join(
-                band_dir,
-                f"*_{self.tweakback_ext}",
+                self.in_dir,
+                band,
+                self.tweakback_dir,
+                f"*_{self.tweakback_ext}.fits",
             )
         )
 
@@ -208,6 +235,48 @@ class ReleaseStep:
             files,
             ascii=True,
             desc="tweakback",
+            leave=False,
+        ):
+            os.system(f"cp {file} {out_dir}")
+
+        return True
+
+    def do_move_backgrounds(
+        self,
+        band,
+    ):
+        """Move combined background files
+
+        Args:
+            band: Band to consider
+        """
+
+        files = glob.glob(
+            os.path.join(
+                self.in_dir,
+                band,
+                self.background_dir,
+                f"*_{self.background_ext}.fits",
+            )
+        )
+
+        if len(files) == 0:
+            return True
+
+        files.sort()
+
+        out_dir = os.path.join(
+            self.out_dir,
+            self.target,
+            f"{band.lower()}_background",
+        )
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+
+        for file in tqdm(
+            files,
+            ascii=True,
+            desc="background",
             leave=False,
         ):
             os.system(f"cp {file} {out_dir}")

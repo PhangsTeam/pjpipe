@@ -22,7 +22,7 @@ targets = [
 ]
 
 # Version for the reprocessing
-version = 'v0p8p2'
+version = 'v0p9'
 
 # Bands to consider
 bands = [
@@ -45,7 +45,6 @@ steps = [
     'single_tile_destripe.nircam',
     'get_wcs_adjust',
     'apply_wcs_adjust',
-#    'lyot_mask.miri',
     'lyot_separate.miri',
     'multi_tile_destripe.nircam',
     'level_match',
@@ -71,9 +70,11 @@ calib_level = [
 
 [parameters.move_raw_obs]
 
-# Manually skip this failed observation
 obs_to_skip = [
-    'jw02107007003_02105_00003'
+    # Manually skip this failed observation
+    'jw02107007003_02105_00003*',
+    # These are the new IC5332 MIRI offs, which we need to skip
+    'jw02107042001_0?2*',
 ]
 
 # For IC5332, pull the backgrounds from NGC7496
@@ -300,6 +301,11 @@ use2dhist = false
 fitgeom = 'shift'
 nclip = 5
 sigma = 3
+
+[parameters.release]
+
+move_tweakback = true
+move_backgrounds = true
 
 [parameters.regress_against_previous]
 prev_version = 'v0p8p1'
