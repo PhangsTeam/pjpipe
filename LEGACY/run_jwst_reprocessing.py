@@ -1,7 +1,7 @@
 import os
 import sys
 
-from jwst_reprocess import JWSTReprocess
+from LEGACY.jwst_reprocess import JWSTReprocess
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 

@@ -26,7 +26,7 @@ if not os.path.exists(base_dir):
 
 os.chdir(base_dir)
 
-psf_folder = os.path.join('..', 'psfs')
+psf_folder = os.path.join('../..', 'psfs')
 if not os.path.exists(psf_folder):
     os.makedirs(psf_folder)
 

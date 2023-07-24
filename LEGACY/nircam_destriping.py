@@ -1,5 +1,4 @@
 import copy
-import logging
 import os
 import pickle
 
@@ -12,12 +11,12 @@ from astropy.stats import sigma_clipped_stats, SigmaClip
 from jwst.datamodels.dqflags import pixel
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from photutils.segmentation import detect_threshold, detect_sources
-from scipy.ndimage import median_filter, uniform_filter1d
+from scipy.ndimage import median_filter
 from scipy.stats import median_abs_deviation
 from skimage import filters
 
-import pca.vwpca as vw
-import pca.vwpca_normgappy as gappy
+import LEGACY.pca.vwpca as vw
+import LEGACY.pca.vwpca_normgappy as gappy
 
 DESTRIPING_METHODS = [
     'row_median',
