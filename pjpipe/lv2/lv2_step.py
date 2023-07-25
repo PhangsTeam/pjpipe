@@ -28,6 +28,7 @@ class Lv2Step:
         in_dir,
         out_dir,
         step_ext,
+        is_bgr,
         procs,
         bgr_check_type="parallel_off",
         bgr_background_name="off",
@@ -46,6 +47,7 @@ class Lv2Step:
             out_dir: Output directory
             step_ext: .fits extension for the files going
                 into the lv2 pipeline
+            is_bgr: Whether we're processing background observations or not
             procs: Number of processes to run in parallel
             bgr_check_type: Method to check if obs is science
                 or background. Options are 'parallel_off' and
@@ -77,6 +79,7 @@ class Lv2Step:
         self.in_dir = in_dir
         self.out_dir = out_dir
         self.step_ext = step_ext
+        self.is_bgr = is_bgr
         self.procs = procs
         self.bgr_check_type = bgr_check_type
         self.bgr_background_name = bgr_background_name
@@ -191,8 +194,21 @@ class Lv2Step:
 
         asn_files = []
 
-        if self.process_bgr_like_science:
+        # If we're processing backgrounds like science,
+        # join the tables
+        if self.process_bgr_like_science and not self.is_bgr:
             full_tab = sci_tab + bgr_tab
+            full_tab["Type"] = "sci"
+
+        # If we're processing background observations,
+        # then just take the background table and don't
+        # include those backgrounds again
+        elif self.is_bgr:
+            full_tab = copy.deepcopy(bgr_tab)
+            full_tab["Type"] = "sci"
+            bgr_tab = []
+
+        # Or, just take the science
         else:
             full_tab = copy.deepcopy(sci_tab)
 

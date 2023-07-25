@@ -36,6 +36,7 @@ class Lv3Step:
         band,
         in_dir,
         out_dir,
+        is_bgr,
         step_ext,
         procs,
         tweakreg_group_dithers=None,
@@ -54,6 +55,7 @@ class Lv3Step:
             band: Band to consider
             in_dir: Input directory
             out_dir: Output directory
+            is_bgr: Whether we're processing background observations or not
             step_ext: .fits extension for the files going
                 into the lv3 pipeline
             procs: Number of processes to run in parallel
@@ -89,6 +91,7 @@ class Lv3Step:
         self.band = band
         self.in_dir = in_dir
         self.out_dir = out_dir
+        self.is_bgr = is_bgr
         self.step_ext = step_ext
         self.procs = procs
         self.tweakreg_group_dithers = tweakreg_group_dithers
@@ -206,6 +209,11 @@ class Lv3Step:
                 )
             )
 
+        if self.is_bgr:
+            bgr_ext = "_bgr"
+        else:
+            bgr_ext = ""
+
         json_content = {
             "asn_type": "None",
             "asn_rule": "DMS_Level3_Base",
@@ -218,19 +226,21 @@ class Lv3Step:
             "asn_pool": "none",
             "products": [
                 {
-                    "name": f"{self.target.lower()}_{self.band_type}_lv3_{self.band.lower()}",
+                    "name": f"{self.target.lower()}_{self.band_type}_lv3_{self.band.lower()}{bgr_ext}",
                     "members": [],
                 }
             ],
         }
 
-        # Make sure we're not including the MIRI backgrounds here
-        if not self.process_bgr_like_science:
-            sci_tab = tab[tab["Type"] == "sci"]
-        else:
-            sci_tab = tab
+        # If we're only processing background, flip the switch
+        if self.is_bgr:
+            tab["Type"] = "sci"
 
-        for row in sci_tab:
+        # If we're not including backgrounds, filter them out here
+        if not self.process_bgr_like_science:
+            tab = tab[tab["Type"] == "sci"]
+
+        for row in tab:
             json_content["products"][-1]["members"].append(
                 {"expname": row["File"], "exptype": "science", "exposerr": "null"}
             )

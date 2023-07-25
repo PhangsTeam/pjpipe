@@ -77,7 +77,24 @@ Note that in the steps here, you can separate things out per-instrument.
 For instance, destriping only runs on NIRCam images, whilst anything to
 do with the lyot coronagraph only applies to MIRI.
 
-This config file also controls the parameters for each step. You can edit 
+There is also the option to separately image background observations. For 
+this, append `_bgr` to a band:
+```toml
+bands = [
+    'F2100W',
+    'F2100W_bgr',
+]
+```
+and you can also run steps separately depending on whether the observations
+are background or not:
+```toml
+steps = [
+    'lyot_separate.miri.sci',
+    'lyot_mask.miri.bgr',
+]
+```
+
+This config file controls the parameters for each step. You can edit 
 things like so:
 ```toml
 [parameters.download]
