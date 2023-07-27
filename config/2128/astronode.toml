@@ -1,0 +1,6 @@
+crds_path = '/data/beegfs/astro-storage/groups/schinnerer/williams/crds/'
+raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw/2128/archive_20230727/'
+reprocess_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_m33_reprocessed/'
+alignment_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_scripts/config/2128/alignment/'
+#webb_psf_data = '/data/beegfs/astro-storage/groups/schinnerer/williams/webbpsf-data'
+processors = 20

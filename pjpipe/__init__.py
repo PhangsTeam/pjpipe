@@ -11,6 +11,7 @@ from .apply_wcs_adjust import ApplyWCSAdjustStep
 from .astrometric_align import AstrometricAlignStep
 from .astrometric_catalog import AstrometricCatalogStep
 from .download import DownloadStep
+from .gaia_query import GaiaQueryStep
 from .get_wcs_adjust import GetWCSAdjustStep
 from .level_match import LevelMatchStep
 from .lv1 import Lv1Step
@@ -30,6 +31,7 @@ __all__ = [
     "AstrometricAlignStep",
     "AstrometricCatalogStep",
     "DownloadStep",
+    "GaiaQueryStep",
     "GetWCSAdjustStep",
     "LevelMatchStep",
     "Lv1Step",
