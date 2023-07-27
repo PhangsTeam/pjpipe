@@ -117,21 +117,26 @@ class GetWCSAdjustStep:
 
         log.info(f"Getting transforms")
 
-        for band in self.bands:
+        for band_full in self.bands:
+            if "bgr" in band_full:
+                band = band_full.replace("_bgr", "")
+            else:
+                band = copy.deepcopy(band_full)
+
             band_type = get_band_type(band)
 
             # Some various failure states
-            if band not in self.progress_dict:
-                log.warning(f"No data found for {band}. Skipping")
+            if band_full not in self.progress_dict:
+                log.warning(f"No data found for {band_full}. Skipping")
                 continue
-            if "dir" not in self.progress_dict[band]:
-                log.warning(f"No files found for {band}. Skipping")
+            if "dir" not in self.progress_dict[band_full]:
+                log.warning(f"No files found for {band_full}. Skipping")
                 continue
-            if not self.progress_dict[band]["success"]:
-                log.warning(f"Previous failures found for {band}. Skipping")
+            if not self.progress_dict[band_full]["success"]:
+                log.warning(f"Previous failures found for {band_full}. Skipping")
                 continue
 
-            band_dir = copy.deepcopy(self.progress_dict[band]["dir"])
+            band_dir = copy.deepcopy(self.progress_dict[band_full]["dir"])
             if not os.path.exists(band_dir):
                 log.warning(f"Directory {band_dir} does not exist")
                 continue
@@ -155,6 +160,7 @@ class GetWCSAdjustStep:
 
             # If we only have one group, this won't do anything so just skip
             if len(asn_file.models_grouped) == 1:
+                log.info(f"Only one group. Skipping")
                 continue
 
             tweakreg_config = TweakRegStep.get_config_from_reference(asn_file)

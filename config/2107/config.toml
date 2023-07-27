@@ -22,22 +22,30 @@ targets = [
 ]
 
 # Version for the reprocessing
-version = 'v0p9'
+version = 'v0p9p1'
 
 # Bands to consider
 bands = [
-    'F200W',
-    'F300M',
-    'F335M',
-    'F360M',
-    'F1000W',
-    'F770W',
-    'F1130W',
-    'F2100W',
+#    'F200W',
+#    'F300M',
+#    'F335M',
+#    'F360M',
+#    'F1000W',
+#    'F770W',
+#    'F1130W',
+#    'F2100W',
+    'F1000W_bgr',
+    'F770W_bgr',
+    'F1130W_bgr',
+    'F2100W_bgr',
 ]
 
 # Steps. These can/should be different
 # for NIRCam and MIRI, and we can distinguish them here
+
+# We can also distinguish between steps that may be
+# different for science/background obs. This is something
+# like step.miri.sci/step.miri.bgr
 steps = [
     'download',
     'lv1',
@@ -70,16 +78,17 @@ calib_level = [
 
 [parameters.move_raw_obs]
 
-obs_to_skip = [
-    # Manually skip this failed observation
-    'jw02107007003_02105_00003*',
-    # These are the new IC5332 MIRI offs, which we need to skip
-    'jw02107042001_0?2*',
-]
+[parameters.move_raw_obs.obs_to_skip]
 
-# For IC5332, pull the backgrounds from NGC7496
-[parameters.move_raw_obs.extra_obs_to_include.ic5332]
-ngc7496 = ['jw02107041001_0?2']
+# Failed NGC1566 observation
+ngc1566 = 'jw02107007003_02105_00003*'
+
+# New IC5332 MIRI offs, which we need to skip
+ic5332.sci = 'jw02107042001_0?2*'
+
+# For IC5332, pull the backgrounds from NGC7496 but only for science images
+[parameters.move_raw_obs.extra_obs_to_include]
+ic5332.sci.ngc7496 = 'jw02107041001_0?2'
 
 [parameters.lv1]
 
@@ -103,7 +112,8 @@ jwst_parameters.bkg_subtract.sigma = 1.5
 
 bands = [
     'F300M',
-    'F770W',  # F1000W?
+    'F1000W',
+    'F1000W_bgr',
 ]
 
 group_dithers = [
@@ -257,6 +267,10 @@ F770W = 'F1000W'
 F1130W = 'F1000W'
 F2100W = 'F1000W'
 
+F770W_bgr = 'F1000W_bgr'
+F1130W_bgr = 'F1000W_bgr'
+F2100W_bgr = 'F1000W_bgr'
+
 [parameters.astrometric_align.catalogs]
 ic5332 = 'ic5332_agb_cat.fits'
 ngc0628 = 'ngc0628_agb_cat.fits'
@@ -308,4 +322,4 @@ move_tweakback = true
 move_backgrounds = true
 
 [parameters.regress_against_previous]
-prev_version = 'v0p8p1'
+prev_version = 'v0p9'

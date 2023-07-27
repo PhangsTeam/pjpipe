@@ -160,12 +160,25 @@ class PJPipeline:
             log.info(f"Beginning reprocessing: {target}")
 
             for step_full in self.steps:
-                # Parse out any potential instrument specific steps
+                # Parse out any potential instrument/observing type specific steps
+                step = None
+                step_instrument = None
+                step_science_type = None
+
                 if "." in step_full:
-                    step, step_instrument = step_full.split(".")
+                    step_split = step_full.split(".")
+
+                    # First search for sci/bgr
+                    if "bgr" in step_split:
+                        step_science_type = "bgr"
+                        step_split.remove(step_science_type)
+                    if "sci" in step_split:
+                        step_science_type = "sci"
+                        step_split.remove(step_science_type)
+
+                    step, step_instrument = copy.deepcopy(step_split)
                 else:
                     step = copy.deepcopy(step_full)
-                    step_instrument = None
 
                 if step not in ALLOWED_STEPS:
                     raise ValueError(
@@ -254,14 +267,21 @@ class PJPipeline:
                     log.info(f"Completed {step}")
 
                 else:
-                    for band in self.bands:
+                    for band_full in self.bands:
+                        if "bgr" in band_full:
+                            is_bgr = True
+                            band = band_full.replace("_bgr", "")
+                        else:
+                            is_bgr = False
+                            band = copy.deepcopy(band_full)
+
                         band_dir = os.path.join(
                             target_dir,
-                            band,
+                            band_full,
                         )
 
-                        if band not in progress_dict[target]:
-                            progress_dict[target][band] = {
+                        if band_full not in progress_dict[target]:
+                            progress_dict[target][band_full] = {
                                 "success": True,
                                 "data_moved": False,
                                 "dir": None,
@@ -272,25 +292,29 @@ class PJPipeline:
                         band_type = get_band_type(band)
 
                         # Pull out whether we will do this step for this particular band
+                        # and science type
+                        do_step = True
                         if step_instrument is not None:
-                            if step_instrument == band_type:
-                                do_step = True
-                            else:
+                            if step_instrument != band_type:
                                 do_step = False
-                        else:
-                            do_step = True
+
+                        if step_science_type is not None:
+                            if is_bgr and step_science_type == "sci":
+                                do_step = False
+                            if not is_bgr and step_science_type == "bgr":
+                                do_step = False
 
                         if not do_step:
                             continue
 
                         # If we've failed elsewhere, skip here
-                        if not progress_dict[target][band]["success"]:
+                        if not progress_dict[target][band_full]["success"]:
                             continue
 
-                        log.info(f"Beginning {step} for {band}")
+                        log.info(f"Beginning {step} for {band_full}")
 
                         # Pull out and make the directories we need
-                        in_dir = copy.deepcopy(progress_dict[target][band]["dir"])
+                        in_dir = copy.deepcopy(progress_dict[target][band_full]["dir"])
                         if in_dir is None:
                             # Pull the in band directory, else default to cal
                             if step in IN_BAND_DIRS:
@@ -321,8 +345,8 @@ class PJPipeline:
                             os.makedirs(out_dir)
 
                         # Move raw observations
-                        if not progress_dict[target][band]["data_moved"]:
-                            log.info(f"Moving raw observations for {band}")
+                        if not progress_dict[target][band_full]["data_moved"]:
+                            log.info(f"Moving raw observations for {band_full}")
 
                             if "move_raw_obs" in self.parameters:
                                 move_raw_params = self.parameters["move_raw_obs"]
@@ -343,17 +367,18 @@ class PJPipeline:
                                 step_ext=in_step_ext,
                                 in_dir=self.raw_dir,
                                 out_dir=in_dir,
+                                is_bgr=is_bgr,
                                 **kws,
                             )
                             step_result = move_raw_obs.do_step()
 
-                            progress_dict[target][band]["success"] = copy.deepcopy(
+                            progress_dict[target][band_full]["success"] = copy.deepcopy(
                                 step_result
                             )
 
                             # If we're not successful here, log a warning and delete the band folder,
                             # and move on
-                            if not progress_dict[target][band]["success"]:
+                            if not progress_dict[target][band_full]["success"]:
                                 log.warning(
                                     f"Failures detected moving raw data for {target}, {band}. "
                                     f"Removing folder and continuing"
@@ -362,9 +387,9 @@ class PJPipeline:
                                 continue
 
                             # Save out file moved state
-                            progress_dict[target][band]["data_moved"] = True
+                            progress_dict[target][band_full]["data_moved"] = True
 
-                            log.info(f"Moved raw observations for {band}")
+                            log.info(f"Moved raw observations for {band_full}")
 
                         # Level 1 processing
                         if step == "lv1":
@@ -403,6 +428,7 @@ class PJPipeline:
                                 in_dir=in_dir,
                                 out_dir=out_dir,
                                 step_ext=in_step_ext,
+                                is_bgr=is_bgr,
                                 procs=self.procs,
                                 **kws,
                             )
@@ -531,6 +557,7 @@ class PJPipeline:
                                 band=band,
                                 in_dir=in_dir,
                                 out_dir=out_dir,
+                                is_bgr=is_bgr,
                                 step_ext=in_step_ext,
                                 procs=self.procs,
                                 **kws,
@@ -551,13 +578,13 @@ class PJPipeline:
                             )
                             step_result = astrometric_catalog.do_step()
 
-                            progress_dict[target][band]["run_astro_cat"] = True
+                            progress_dict[target][band_full]["run_astro_cat"] = True
 
                         elif step == "astrometric_align":
                             # If we've run the astrometric catalog step, track
                             # that here
                             run_astro_cat = copy.deepcopy(
-                                progress_dict[target][band]["run_astro_cat"]
+                                progress_dict[target][band_full]["run_astro_cat"]
                             )
 
                             kws = get_kws(
@@ -573,6 +600,7 @@ class PJPipeline:
                                 band=band,
                                 target_dir=target_dir,
                                 in_dir=in_dir,
+                                is_bgr=is_bgr,
                                 catalog_dir=self.alignment_dir,
                                 run_astro_cat=run_astro_cat,
                                 step_ext=in_step_ext,
@@ -586,17 +614,17 @@ class PJPipeline:
                                 f"step should be one of {ALLOWED_STEPS}, not {step}"
                             )
 
-                        progress_dict[target][band]["success"] = copy.deepcopy(
+                        progress_dict[target][band_full]["success"] = copy.deepcopy(
                             step_result
                         )
-                        progress_dict[target][band]["dir"] = copy.deepcopy(out_dir)
+                        progress_dict[target][band_full]["dir"] = copy.deepcopy(out_dir)
 
                         # If we're not successful here, log a warning and delete the band folder
-                        if not progress_dict[target][band]["success"]:
+                        if not progress_dict[target][band_full]["success"]:
                             log.warning(
-                                f"Failures detected in step {step} for {target}, {band}. "
+                                f"Failures detected in step {step} for {target}, {band_full}. "
                                 f"Removing folder and continuing"
                             )
                             shutil.rmtree(band_dir)
 
-                        log.info(f"Completed {step} for {band}")
+                        log.info(f"Completed {step} for {band_full}")

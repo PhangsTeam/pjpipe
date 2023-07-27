@@ -22,11 +22,21 @@ class MoveRawObsStep:
         step_ext,
         in_dir,
         out_dir,
+        is_bgr,
         obs_to_skip=None,
         extra_obs_to_include=None,
         overwrite=False,
     ):
         """Move raw observations from the MAST folder into a specific target/band folder
+
+        Because we may want to pull files for science images but not for backgrounds,
+        they can be distinguished at the config level, as:
+
+            [parameters.move_raw_obs.extra_obs_to_include]
+            ic5332.sci.ngc7496 = 'jw02107041001_0?2'
+
+        where you can use 'sci' or 'bgr' to distinguish. To include in either case, just
+        omit this part.
 
         Args:
             target: Target to consider
@@ -35,6 +45,7 @@ class MoveRawObsStep:
             in_dir: Input directory to search for files (should be some kind of mastDownload-esque
                 folder)
             out_dir: Where to move files to
+            is_bgr: Whether we're processing background observations or not
             obs_to_skip: List of failed or otherwise observations that shouldn't be moved.
                 Defaults to None, which skips nothing
             extra_obs_to_include: List of extra observations to include, for example MIRI
@@ -54,6 +65,7 @@ class MoveRawObsStep:
         self.step_ext = step_ext
         self.in_dir = in_dir
         self.out_dir = out_dir
+        self.is_bgr = is_bgr
         self.obs_to_skip = obs_to_skip
         self.extra_obs_to_include = extra_obs_to_include
         self.overwrite = overwrite
@@ -115,21 +127,40 @@ class MoveRawObsStep:
         raw_files.sort()
 
         if self.extra_obs_to_include is not None:
-            for other_target in self.extra_obs_to_include:
-                for obs_to_include in self.extra_obs_to_include[other_target]:
-                    extra_files = glob.glob(
-                        os.path.join(
-                            self.in_dir,
-                            other_target,
-                            "mastDownload",
-                            "JWST",
-                            f"{obs_to_include}*{self.band_ext}",
-                            f"*{self.band_ext}_{self.step_ext}.fits",
-                        )
-                    )
-                    extra_files.sort()
+            for key in self.extra_obs_to_include:
+                # Pull out any other observations we might want to include,
+                # remembering the distinction between science and background
+                # obs
+                if key == "sci":
+                    if self.is_bgr:
+                        continue
+                    extra_obs_to_include = copy.deepcopy(self.extra_obs_to_include[key])
+                elif key == "bgr":
+                    if not self.is_bgr:
+                        continue
+                    extra_obs_to_include = copy.deepcopy(self.extra_obs_to_include[key])
+                else:
+                    extra_obs_to_include = copy.deepcopy(self.extra_obs_to_include)
 
-                    raw_files.extend(extra_files)
+                for other_target in extra_obs_to_include:
+                    extra_obs = extra_obs_to_include[other_target]
+                    if not isinstance(extra_obs, list):
+                        extra_obs = [extra_obs]
+
+                    for obs_to_include in extra_obs:
+                        extra_files = glob.glob(
+                            os.path.join(
+                                self.in_dir,
+                                other_target,
+                                "mastDownload",
+                                "JWST",
+                                f"{obs_to_include}*{self.band_ext}",
+                                f"*{self.band_ext}_{self.step_ext}.fits",
+                            )
+                        )
+                        extra_files.sort()
+
+                        raw_files.extend(extra_files)
 
         return raw_files
 
@@ -147,12 +178,30 @@ class MoveRawObsStep:
             raw_fits_name = raw_file.split(os.path.sep)[-1]
             hdu_out_name = os.path.join(self.out_dir, raw_fits_name)
 
-            # If we have a failed observation, skip it
+            # Check if we're skipping any of these observations
             skip_file = False
-            for obs in self.obs_to_skip:
-                match = fnmatch.fnmatch(raw_fits_name, obs)
-                if match:
-                    skip_file = True
+
+            if self.obs_to_skip is not None:
+                for obs_to_skip in self.obs_to_skip:
+                    if obs_to_skip == "sci":
+                        if self.is_bgr:
+                            continue
+                        obs = copy.deepcopy(self.obs_to_skip["sci"])
+                    elif obs_to_skip == "bgr":
+                        if not self.is_bgr:
+                            continue
+                        obs = copy.deepcopy(self.obs_to_skip["bgr"])
+                    else:
+                        obs = copy.deepcopy(self.obs_to_skip)
+
+                    if not isinstance(obs, list):
+                        obs = [obs]
+
+                    for ob in obs:
+                        match = fnmatch.fnmatch(raw_fits_name, ob)
+                        if match:
+                            skip_file = True
+
             if skip_file:
                 continue
 

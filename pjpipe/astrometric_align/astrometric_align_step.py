@@ -183,6 +183,7 @@ class AstrometricAlignStep:
         band,
         target_dir,
         in_dir,
+        is_bgr,
         catalog_dir,
         run_astro_cat,
         step_ext,
@@ -205,6 +206,7 @@ class AstrometricAlignStep:
             target: Target to consider
             band: Band to consider
             in_dir: Input directory
+            is_bgr: Whether we're processing background observations or not
             catalog_dir: Directory of alignment catalogs
             run_astro_cat: Whether we've run the astrometric_catalog
                 step for this target/band
@@ -235,6 +237,7 @@ class AstrometricAlignStep:
         self.band = band
         self.target_dir = target_dir
         self.in_dir = in_dir
+        self.is_bgr = is_bgr
         self.run_astro_cat = run_astro_cat
         self.step_ext = step_ext
         self.procs = procs
@@ -262,9 +265,13 @@ class AstrometricAlignStep:
             log.info("Step already run")
             return True
 
+        band = copy.deepcopy(self.band)
+        if self.is_bgr:
+            band += "_bgr"
+
         # If we're matching to pre-aligned image
-        if self.band in self.align_mapping:
-            success = self.align_to_aligned_image()
+        if band in self.align_mapping:
+            success = self.align_to_aligned_image(band=band)
 
         # If we're doing a more traditional tweakreg
         else:
@@ -285,11 +292,17 @@ class AstrometricAlignStep:
 
         return True
 
-    def align_to_aligned_image(self):
+    def align_to_aligned_image(
+        self,
+        band,
+    ):
         """Align to a pre-aligned image
 
         This will align to a pre-aligned image, either using cross-correlation
         or by pulling out the shift values and matrix from tweakreg (default)
+
+        Args:
+            band: Band we're aligning
         """
 
         files = glob.glob(
@@ -305,8 +318,8 @@ class AstrometricAlignStep:
 
         log.info("Aligning to pre-aligned image")
 
-        ref_band = self.align_mapping[self.band]
-        ref_band_type = get_band_type(ref_band)
+        ref_band = self.align_mapping[band]
+        ref_band_type = get_band_type(ref_band.replace("_bgr", ""))
 
         ref_hdu_name = os.path.join(
             self.target_dir,
@@ -559,8 +572,9 @@ class AstrometricAlignStep:
 
             wcs_aligned_fit = None
 
-            xoffset = 0
-            yoffset = 0
+            xoffset, yoffset = 0, 0
+            shift = np.array([0, 0])
+            matrix = np.array([[1, 0], [0, 1]])
 
             for iteration in range(n_iterations):
                 # Make sure we're not overwriting WCS
@@ -620,18 +634,23 @@ class AstrometricAlignStep:
                     fit_wcs_kws[fit_wcs_arg] = arg_val
 
                 # Do alignment
-                wcs_aligned_fit = fit_wcs(
-                    refcat=ref_tab[ref_idx],
-                    imcat=target_tab[target_idx],
-                    corrector=target_wcs_corrector,
-                    **fit_wcs_kws,
-                )
+                try:
+                    wcs_aligned_fit = fit_wcs(
+                        refcat=ref_tab[ref_idx],
+                        imcat=target_tab[target_idx],
+                        corrector=target_wcs_corrector,
+                        **fit_wcs_kws,
+                    )
 
-                # Pull out offsets, remember there's a negative here to the shift
-                xoffset, yoffset = -wcs_aligned_fit.meta["fit_info"]["shift"]
+                    # Pull out offsets, remember there's a negative here to the shift
+                    xoffset, yoffset = -wcs_aligned_fit.meta["fit_info"]["shift"]
 
-            shift = wcs_aligned_fit.meta["fit_info"]["shift"]
-            matrix = wcs_aligned_fit.meta["fit_info"]["matrix"]
+                    # Pull out shifts and matrix
+                    shift = wcs_aligned_fit.meta["fit_info"]["shift"]
+                    matrix = wcs_aligned_fit.meta["fit_info"]["matrix"]
+
+                except ValueError:
+                    log.warning("No catalog matches found. Defaulting to no shift")
 
             target_wcs_corrected = copy.deepcopy(target_wcs_corrector_orig)
 
@@ -679,30 +698,38 @@ class AstrometricAlignStep:
                 if not np.all(successes):
                     log.warning("Not all crf files tweakbacked. May cause issues")
 
-            fit_info = wcs_aligned_fit.meta["fit_info"]
-            fit_mask = fit_info["fitmask"]
+            if wcs_aligned_fit is not None:
+                fit_info = wcs_aligned_fit.meta["fit_info"]
+                fit_mask = fit_info["fitmask"]
 
-            # Pull out useful alignment info to the table -- HST x/y/RA/Dec, JWST x/y/RA/Dec (corrected and
-            # uncorrected)
-            aligned_tab = Table()
+                # Pull out useful alignment info to the table -- HST x/y/RA/Dec, JWST x/y/RA/Dec (corrected and
+                # uncorrected)
+                aligned_tab = Table()
 
-            # Catch if there's only RA/Dec in the reference table
-            if "xcentroid" in ref_tab.colnames:
-                aligned_tab["xcentroid_ref"] = ref_tab[ref_idx]["xcentroid"][fit_mask]
-                aligned_tab["ycentroid_ref"] = ref_tab[ref_idx]["ycentroid"][fit_mask]
-            aligned_tab["ra_ref"] = ref_tab[ref_idx]["RA"][fit_mask]
-            aligned_tab["dec_ref"] = ref_tab[ref_idx]["DEC"][fit_mask]
+                # Catch if there's only RA/Dec in the reference table
+                if "xcentroid" in ref_tab.colnames:
+                    aligned_tab["xcentroid_ref"] = ref_tab[ref_idx]["xcentroid"][
+                        fit_mask
+                    ]
+                    aligned_tab["ycentroid_ref"] = ref_tab[ref_idx]["ycentroid"][
+                        fit_mask
+                    ]
+                aligned_tab["ra_ref"] = ref_tab[ref_idx]["RA"][fit_mask]
+                aligned_tab["dec_ref"] = ref_tab[ref_idx]["DEC"][fit_mask]
 
-            # Since we're pulling from the source catalogue, these should all exist
-            aligned_tab["xcentroid_jwst"] = target_tab[target_idx]["x"][fit_mask]
-            aligned_tab["ycentroid_jwst"] = target_tab[target_idx]["y"][fit_mask]
-            aligned_tab["ra_jwst_uncorr"] = target_tab[target_idx]["ra"][fit_mask]
-            aligned_tab["dec_jwst_uncorr"] = target_tab[target_idx]["dec"][fit_mask]
+                # Since we're pulling from the source catalogue, these should all exist
+                aligned_tab["xcentroid_jwst"] = target_tab[target_idx]["x"][fit_mask]
+                aligned_tab["ycentroid_jwst"] = target_tab[target_idx]["y"][fit_mask]
+                aligned_tab["ra_jwst_uncorr"] = target_tab[target_idx]["ra"][fit_mask]
+                aligned_tab["dec_jwst_uncorr"] = target_tab[target_idx]["dec"][fit_mask]
 
-            aligned_tab["ra_jwst_corr"] = fit_info["fit_RA"]
-            aligned_tab["dec_jwst_corr"] = fit_info["fit_DEC"]
+                aligned_tab["ra_jwst_corr"] = fit_info["fit_RA"]
+                aligned_tab["dec_jwst_corr"] = fit_info["fit_DEC"]
 
-            aligned_tab.write(aligned_table, format="fits", overwrite=True)
+                aligned_tab.write(aligned_table, format="fits", overwrite=True)
+
+            else:
+                log.warning("Fit unsuccessful, not writing out table")
 
         return True
 
