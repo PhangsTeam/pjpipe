@@ -11,6 +11,7 @@ from .apply_wcs_adjust import ApplyWCSAdjustStep
 from .astrometric_align import AstrometricAlignStep
 from .astrometric_catalog import AstrometricCatalogStep
 from .download import DownloadStep
+from .gaia_query import GaiaQueryStep
 from .get_wcs_adjust import GetWCSAdjustStep
 from .level_match import LevelMatchStep
 from .lv1 import Lv1Step
@@ -18,6 +19,7 @@ from .lv2 import Lv2Step
 from .lv3 import Lv3Step
 from .lyot_mask import LyotMaskStep
 from .lyot_separate import LyotSeparateStep
+from .mosaic_individual_fields import MosaicIndividualFieldsStep
 from .move_raw_obs import MoveRawObsStep
 from .release import ReleaseStep
 from .regress_against_previous import RegressAgainstPreviousStep
@@ -30,6 +32,7 @@ __all__ = [
     "AstrometricAlignStep",
     "AstrometricCatalogStep",
     "DownloadStep",
+    "GaiaQueryStep",
     "GetWCSAdjustStep",
     "LevelMatchStep",
     "Lv1Step",
@@ -37,6 +40,7 @@ __all__ = [
     "Lv3Step",
     "LyotMaskStep",
     "LyotSeparateStep",
+    "MosaicIndividualFieldsStep",
     "MoveRawObsStep",
     "PJPipeline",
     "ReleaseStep",

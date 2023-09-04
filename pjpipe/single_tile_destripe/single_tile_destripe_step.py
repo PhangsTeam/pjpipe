@@ -1,4 +1,5 @@
 import copy
+import gc
 import glob
 import logging
 import multiprocessing as mp
@@ -285,6 +286,10 @@ class SingleTileDestripeStep:
                 total=len(files),
             ):
                 successes.append(success)
+
+            pool.close()
+            pool.join()
+            gc.collect()
 
         return successes
 

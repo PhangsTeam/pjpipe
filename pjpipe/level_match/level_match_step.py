@@ -15,15 +15,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
-from astropy.wcs import WCS
 from reproject import reproject_interp
 from reproject.mosaicking import find_optimal_celestial_wcs, reproject_and_coadd
-from reproject.mosaicking.subset_array import ReprojectedArraySubset
 from stdatamodels.jwst import datamodels
 from threadpoolctl import threadpool_limits
 from tqdm import tqdm
 
-from ..utils import get_dq_bit_mask, make_source_mask, reproject_image
+from ..utils import get_dq_bit_mask, reproject_image, make_source_mask
 
 matplotlib.use("agg")
 log = logging.getLogger("stpipe")
@@ -85,6 +83,11 @@ class LevelMatchStep:
         out_dir,
         step_ext,
         procs,
+        do_local_subtraction=True,
+        sigma=3,
+        npixels=3,
+        dilate_size=7,
+        max_iters=20,
         max_points=10000,
         do_sigma_clip=False,
         weight_method="equal",
@@ -112,6 +115,12 @@ class LevelMatchStep:
             step_ext: .fits extension for the files going
                 into the lv1 pipeline
             procs: Number of parallel processes to run
+            do_local_subtraction: Whether to do a sigma-clipped local median
+                subtraction. Defaults to True
+            sigma: Sigma for sigma-clipping. Defaults to 3
+            npixels: Pixels to grow for masking. Defaults to 5
+            dilate_size: make_source_mask dilation size. Defaults to 7
+            max_iters: Maximum sigma-clipping iterations. Defaults to 20
             max_points: Maximum points to include in histogram plots. This step can
                 be slow so this speeds it up. Defaults to 10000
             do_sigma_clip: Whether to do sigma-clipping on data when reprojecting.
@@ -132,6 +141,11 @@ class LevelMatchStep:
         self.out_dir = out_dir
         self.step_ext = step_ext
         self.procs = procs
+        self.do_local_subtraction = do_local_subtraction
+        self.sigma = sigma
+        self.npixels = npixels
+        self.dilate_size = dilate_size
+        self.max_iters = max_iters
         self.max_points = max_points
         self.do_sigma_clip = do_sigma_clip
         self.weight_method = weight_method
@@ -177,7 +191,7 @@ class LevelMatchStep:
         dithers = []
         for file in files:
             file_split = os.path.split(file)[-1].split("_")
-            dithers.append("_".join(file_split[:2]) + "*" + file_split[-2])
+            dithers.append("_".join(file_split[:2]) + "_*_" + file_split[-2])
         dithers = np.unique(dithers)
         dithers.sort()
 
@@ -194,6 +208,37 @@ class LevelMatchStep:
             deltas_idx = copy.deepcopy(deltas[idx])
             dither_files_idx = copy.deepcopy(dither_files[idx])
 
+            # If we're including a local subtraction, do it here
+            if self.do_local_subtraction:
+                with datamodels.open(dither_files_idx[0]) as im:
+                    data = copy.deepcopy(im.data)
+
+                    # Mask out bad data
+                    dq_bit_mask = get_dq_bit_mask(im.dq)
+                    data[dq_bit_mask != 0] = np.nan
+                    data[data == 0] = np.nan
+
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+
+                        mask = make_source_mask(
+                            data,
+                            nsigma=self.sigma,
+                            dilate_size=self.dilate_size,
+                            sigclip_iters=self.max_iters,
+                        )
+
+                        # Calculate sigma-clipped median
+                        local_delta = sigma_clipped_stats(
+                            data,
+                            mask=mask,
+                            sigma=self.sigma,
+                            maxiters=self.max_iters,
+                        )[1]
+                del im
+            else:
+                local_delta = 0
+
             for i, dither_file in enumerate(dither_files_idx):
                 short_file = os.path.split(dither_file)[-1]
                 out_file = os.path.join(
@@ -201,10 +246,10 @@ class LevelMatchStep:
                     short_file,
                 )
                 delta = copy.deepcopy(deltas_idx[i])
-                log.info(f"{short_file}, delta={delta:.2f}")
+                log.info(f"{short_file}, delta={delta + local_delta:.2f}")
 
                 with datamodels.open(dither_file) as im:
-                    im.data -= delta
+                    im.data -= delta + local_delta
                     im.save(out_file)
                 del im
 
@@ -306,6 +351,10 @@ class LevelMatchStep:
             ):
                 deltas.append(delta)
                 dither_files.append(dither_file)
+
+            pool.close()
+            pool.join()
+            gc.collect()
 
         return deltas, dither_files
 
@@ -878,7 +927,7 @@ class LevelMatchStep:
         inv_k = np.linalg.pinv(k, rcond=1.0e-12)
 
         deltas = np.dot(inv_k, f)
-        deltas[np.asarray(invalid, dtype=bool)] = np.nan
+        deltas[np.asarray(invalid, dtype=bool)] = 0
 
         return deltas
 

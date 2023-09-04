@@ -1,5 +1,4 @@
 import gc
-import gc
 import glob
 import json
 import logging
@@ -9,7 +8,6 @@ import time
 
 import jwst
 import numpy as np
-from astropy.table import Table
 from jwst.datamodels import ModelContainer
 from jwst.pipeline import calwebb_image3
 from jwst.skymatch import SkyMatchStep
@@ -18,7 +16,7 @@ from jwst.tweakreg import TweakRegStep
 from ..utils import (
     get_band_type,
     get_band_ext,
-    parse_fits_to_table,
+    get_obs_table,
     parse_parameter_dict,
     attribute_setter,
     recursive_setattr,
@@ -36,6 +34,7 @@ class Lv3Step:
         band,
         in_dir,
         out_dir,
+        is_bgr,
         step_ext,
         procs,
         tweakreg_group_dithers=None,
@@ -54,6 +53,7 @@ class Lv3Step:
             band: Band to consider
             in_dir: Input directory
             out_dir: Output directory
+            is_bgr: Whether we're processing background observations or not
             step_ext: .fits extension for the files going
                 into the lv3 pipeline
             procs: Number of processes to run in parallel
@@ -89,6 +89,7 @@ class Lv3Step:
         self.band = band
         self.in_dir = in_dir
         self.out_dir = out_dir
+        self.is_bgr = is_bgr
         self.step_ext = step_ext
         self.procs = procs
         self.tweakreg_group_dithers = tweakreg_group_dithers
@@ -182,29 +183,17 @@ class Lv3Step:
 
         filtered_files.sort()
 
-        tab = Table(
-            names=[
-                "File",
-                "Type",
-                "Obs_ID",
-                "Filter",
-                "Start",
-                "Exptime",
-                "Objname",
-                "Program",
-            ],
-            dtype=[str, str, str, str, str, float, str, str],
+        tab = get_obs_table(
+            files=filtered_files,
+            check_bgr=check_bgr,
+            check_type=self.bgr_check_type,
+            background_name=self.bgr_background_name,
         )
 
-        for f in filtered_files:
-            tab.add_row(
-                parse_fits_to_table(
-                    f,
-                    check_bgr=check_bgr,
-                    check_type=self.bgr_check_type,
-                    background_name=self.bgr_background_name,
-                )
-            )
+        if self.is_bgr:
+            bgr_ext = "_bgr"
+        else:
+            bgr_ext = ""
 
         json_content = {
             "asn_type": "None",
@@ -218,19 +207,21 @@ class Lv3Step:
             "asn_pool": "none",
             "products": [
                 {
-                    "name": f"{self.target.lower()}_{self.band_type}_lv3_{self.band.lower()}",
+                    "name": f"{self.target.lower()}_{self.band_type}_lv3_{self.band.lower()}{bgr_ext}",
                     "members": [],
                 }
             ],
         }
 
-        # Make sure we're not including the MIRI backgrounds here
-        if not self.process_bgr_like_science:
-            sci_tab = tab[tab["Type"] == "sci"]
-        else:
-            sci_tab = tab
+        # If we're only processing background, flip the switch
+        if self.is_bgr:
+            tab["Type"] = "sci"
 
-        for row in sci_tab:
+        # If we're not including backgrounds, filter them out here
+        if not self.process_bgr_like_science:
+            tab = tab[tab["Type"] == "sci"]
+
+        for row in tab:
             json_content["products"][-1]["members"].append(
                 {"expname": row["File"], "exptype": "science", "exposerr": "null"}
             )

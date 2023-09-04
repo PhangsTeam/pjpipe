@@ -10,6 +10,7 @@ import numpy as np
 from astropy.io import fits
 from astropy.nddata.bitmask import interpret_bit_flags, bitfield_to_boolean_mask
 from astropy.stats import sigma_clipped_stats, SigmaClip
+from astropy.table import Table
 from astropy.wcs import WCS
 from photutils.segmentation import detect_threshold, detect_sources
 from reproject import reproject_interp
@@ -403,6 +404,52 @@ def recursive_getattr(
     return functools.reduce(_getattr, [f] + attribute.split("."))
 
 
+def get_obs_table(
+    files,
+    check_bgr=False,
+    check_type="parallel_off",
+    background_name="off",
+):
+    """Pull necessary info out of fits headers"""
+
+    tab = Table(
+        names=[
+            "File",
+            "Type",
+            "Obs_ID",
+            "Filter",
+            "Start",
+            "Exptime",
+            "Objname",
+            "Program",
+            "Array",
+        ],
+        dtype=[
+            str,
+            str,
+            str,
+            str,
+            str,
+            float,
+            str,
+            str,
+            str,
+        ],
+    )
+
+    for f in files:
+        tab.add_row(
+            parse_fits_to_table(
+                f,
+                check_bgr=check_bgr,
+                check_type=check_type,
+                background_name=background_name,
+            )
+        )
+
+    return tab
+
+
 def parse_fits_to_table(
     file,
     check_bgr=False,
@@ -444,6 +491,7 @@ def parse_fits_to_table(
         obs_duration = im.meta.exposure.duration
         obs_label = im.meta.observation.observation_label.lower()
         obs_program = im.meta.observation.program_number
+        array_name = im.meta.subarray.name.lower().strip()
 
     return (
         file,
@@ -454,6 +502,7 @@ def parse_fits_to_table(
         obs_duration,
         obs_label,
         obs_program,
+        array_name,
     )
 
 

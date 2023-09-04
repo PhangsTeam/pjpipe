@@ -29,6 +29,9 @@ class ApplyWCSAdjustStep:
     ):
         """Apply WCS adjustments to images
 
+        TODO: This occasionally fails on compute nodes,
+            so figure that out
+
         Args:
             wcs_adjust: Dictionary for WCS adjustments
             in_dir: Input directory
@@ -120,6 +123,10 @@ class ApplyWCSAdjustStep:
                 total=len(files),
             ):
                 successes.append(success)
+
+            pool.close()
+            pool.join()
+            gc.collect()
 
         return successes
 

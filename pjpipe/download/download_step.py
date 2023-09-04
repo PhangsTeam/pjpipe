@@ -1,9 +1,13 @@
+import gc
 import glob
 import logging
+import multiprocessing as mp
 import os
 import shutil
 import warnings
+from functools import partial
 
+import astropy.units as u
 import numpy as np
 from astropy.table import unique, vstack
 from astroquery.exceptions import NoResultsWarning
@@ -47,6 +51,28 @@ def download(
     return True
 
 
+def parallel_verify_integrity(
+    file,
+):
+    """Wrapper to parallelise checking file integrity
+
+    Args:
+        file: File to check
+    """
+
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("error")
+            im = datamodels.open(file)
+        del im
+        gc.collect()
+        return True
+    except:
+        del im
+        gc.collect()
+        return file
+
+
 warnings.simplefilter("error", NoResultsWarning)
 
 
@@ -56,6 +82,7 @@ class DownloadStep:
         target=None,
         prop_id=None,
         download_dir=None,
+        procs=1,
         radius=None,
         telescope="JWST",
         instrument_name=None,
@@ -77,7 +104,8 @@ class DownloadStep:
             prop_id: Proposal identifier. Defaults to None, but at least one of `target`, `prop_id` needs
                 to be set
             download_dir: Where to download to. Defaults to current directory if not set
-            radius: Radius to search from centre of target. Defaults to None, which uses astroquery default
+            procs: Number of processes to run in parallel. Defaults to 1
+            radius: Radius to search from centre of target in arcmin. Defaults to None, which uses astroquery default
             telescope: Telescope to use. Defaults to 'JWST'
             instrument_name: Something like 'NIRCAM/IMAGE', to filter down what products you want. Defaults to None
                 (no filtering)
@@ -115,8 +143,13 @@ class DownloadStep:
                 "AUXILIARY",
             ]
 
+        # Make sure the radius is in arcmin
+        if not isinstance(radius, u.Quantity) and radius is not None:
+            radius = radius * u.arcmin
+
         self.target = target
         self.download_dir = download_dir
+        self.procs = procs
         self.radius = radius
         self.telescope = telescope
         self.prop_id = prop_id
@@ -127,17 +160,14 @@ class DownloadStep:
         self.do_filter = do_filter
         self.breakout_targets = breakout_targets
         self.filter_gs = filter_gs
+        self.login = login
+        self.api_key = api_key
         self.product_type = product_type
         self.overwrite = overwrite
 
         self.obs_list = None
 
         self.observations = Observations()
-
-        if login:
-            if api_key is None:
-                raise Warning("If logging in, supply an API key!")
-            self.observations.login(token=api_key)
 
     def do_step(self):
         """Run download step"""
@@ -160,6 +190,11 @@ class DownloadStep:
             os.chdir(cwd)
             return True
 
+        if self.login:
+            if self.api_key is None:
+                self.api_key = input("Supply an API key: ")
+            self.observations.login(token=self.api_key)
+
         self.run_archive_query()
 
         if self.obs_list is None:
@@ -172,11 +207,12 @@ class DownloadStep:
             os.chdir(cwd)
             return False
 
-        # Check that all the files work now
+        # Check that all the files work now, else stop to rerun
         success = self.verify_integrity()
         if not success:
-            os.chdir(cwd)
-            return False
+            raise Warning(
+                "Integrity verification failed. Files will have been deleted, so run again"
+            )
 
         # Make a file to let us know we've already downloaded
         # these files
@@ -409,6 +445,8 @@ class DownloadStep:
         return products
 
     def verify_integrity(self):
+        """Check files have downloaded successfully"""
+
         log.info("Verifying file integrity")
 
         downloaded_files = glob.glob(
@@ -416,23 +454,38 @@ class DownloadStep:
         )
         downloaded_files.sort()
 
+        # Ensure we're not wasting processes
+        procs = np.nanmin([self.procs, len(downloaded_files)])
+
         bad_files = []
 
-        for file in tqdm(
-            downloaded_files,
-            ascii=True,
-        ):
-            try:
-                im = datamodels.open(file)
-                del im
-            except:
-                bad_files.append(file)
+        with mp.get_context("fork").Pool(procs) as pool:
+            for bad_file in tqdm(
+                pool.imap_unordered(
+                    partial(
+                        parallel_verify_integrity,
+                    ),
+                    downloaded_files,
+                ),
+                ascii=True,
+                desc="Verifying integrity",
+                total=len(downloaded_files),
+            ):
+                bad_files.append(bad_file)
+
+            pool.close()
+            pool.join()
+            gc.collect()
+
+        # Filter out the good files (Trues)
+        bad_files = [file for file in bad_files if file is not True]
 
         if len(bad_files) == 0:
             log.info("All files verified successfully")
             return True
         else:
-            log.warning(f"Found {len(bad_files)} bad files:")
+            log.warning(f"Found {len(bad_files)} bad files, will remove:")
             for file in bad_files:
                 log.warning(f"-> {file}")
+                os.remove(file)
             return False

@@ -1,0 +1,6 @@
+crds_path = '/home/tgw/scratch/crds/'
+raw_dir = '/home/tgw/scratch/jwst_raw/2128/archive_20230729/'
+reprocess_dir = '/home/tgw/scratch/m33_reprocessed/'
+alignment_dir = '/home/tgw/projects/rrg-eros-ab/tgw/jwst_scripts/config/2128/alignment/'
+#webb_psf_data = '/data/beegfs/astro-storage/groups/schinnerer/williams/webbpsf-data'
+processors = 20

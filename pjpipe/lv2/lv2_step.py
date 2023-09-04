@@ -14,7 +14,7 @@ import numpy as np
 from astropy.table import Table
 from jwst.pipeline import calwebb_image2
 
-from ..utils import get_band_type, parse_fits_to_table, attribute_setter
+from ..utils import get_band_type, get_obs_table, attribute_setter
 
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
@@ -28,6 +28,7 @@ class Lv2Step:
         in_dir,
         out_dir,
         step_ext,
+        is_bgr,
         procs,
         bgr_check_type="parallel_off",
         bgr_background_name="off",
@@ -46,6 +47,7 @@ class Lv2Step:
             out_dir: Output directory
             step_ext: .fits extension for the files going
                 into the lv2 pipeline
+            is_bgr: Whether we're processing background observations or not
             procs: Number of processes to run in parallel
             bgr_check_type: Method to check if obs is science
                 or background. Options are 'parallel_off' and
@@ -77,6 +79,7 @@ class Lv2Step:
         self.in_dir = in_dir
         self.out_dir = out_dir
         self.step_ext = step_ext
+        self.is_bgr = is_bgr
         self.procs = procs
         self.bgr_check_type = bgr_check_type
         self.bgr_background_name = bgr_background_name
@@ -160,29 +163,12 @@ class Lv2Step:
         if self.band_type == "nircam" and self.bgr_check_type == "parallel_off":
             check_bgr = False
 
-        tab = Table(
-            names=[
-                "File",
-                "Type",
-                "Obs_ID",
-                "Filter",
-                "Start",
-                "Exptime",
-                "Objname",
-                "Program",
-            ],
-            dtype=[str, str, str, str, str, float, str, str],
+        tab = get_obs_table(
+            files=files,
+            check_bgr=check_bgr,
+            check_type=self.bgr_check_type,
+            background_name=self.bgr_background_name,
         )
-
-        for f in files:
-            tab.add_row(
-                parse_fits_to_table(
-                    f,
-                    check_bgr=check_bgr,
-                    check_type=self.bgr_check_type,
-                    background_name=self.bgr_background_name,
-                )
-            )
         tab.sort(keys="Start")
 
         # Loop over science first, then backgrounds
@@ -191,8 +177,21 @@ class Lv2Step:
 
         asn_files = []
 
-        if self.process_bgr_like_science:
+        # If we're processing backgrounds like science,
+        # join the tables
+        if self.process_bgr_like_science and not self.is_bgr:
             full_tab = sci_tab + bgr_tab
+            full_tab["Type"] = "sci"
+
+        # If we're processing background observations,
+        # then just take the background table and don't
+        # include those backgrounds again
+        elif self.is_bgr:
+            full_tab = copy.deepcopy(bgr_tab)
+            full_tab["Type"] = "sci"
+            bgr_tab = []
+
+        # Or, just take the science
         else:
             full_tab = copy.deepcopy(sci_tab)
 
@@ -258,6 +257,7 @@ class Lv2Step:
             json_content["products"].append(
                 {
                     "name": name,
+                    "array": row["Array"],
                     "members": [
                         {
                             "expname": row["File"],
@@ -271,6 +271,13 @@ class Lv2Step:
         if self.band_type in self.bgr_observation_types:
             for product in json_content["products"]:
                 for row in bgr_tab:
+                    # TODO: Issue #7807 (https://github.com/spacetelescope/jwst/issues/7807)
+                    # Things will crash in the background step if the
+                    # arrays aren't the same. May be intended behaviour
+                    # or a bug, but skip for now
+                    # if row["Array"] != product["array"]:
+                    #     continue
+
                     product["members"].append(
                         {
                             "expname": row["File"],
