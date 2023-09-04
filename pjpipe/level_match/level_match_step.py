@@ -191,7 +191,7 @@ class LevelMatchStep:
         dithers = []
         for file in files:
             file_split = os.path.split(file)[-1].split("_")
-            dithers.append("_".join(file_split[:2]) + "*" + file_split[-2])
+            dithers.append("_".join(file_split[:2]) + "_*_" + file_split[-2])
         dithers = np.unique(dithers)
         dithers.sort()
 
@@ -351,6 +351,10 @@ class LevelMatchStep:
             ):
                 deltas.append(delta)
                 dither_files.append(dither_file)
+
+            pool.close()
+            pool.join()
+            gc.collect()
 
         return deltas, dither_files
 

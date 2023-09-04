@@ -29,6 +29,7 @@ class LyotSeparateStep:
         out_dir,
         step_ext,
         procs,
+        miri_ext="mirimage",
         overwrite=False,
     ):
         """Separate each MIRI file out into main science chip and lyot coronagraph
@@ -39,6 +40,7 @@ class LyotSeparateStep:
             step_ext: .fits extension for the files going
                 into the lv1 pipeline
             procs: Number of processes to run in parallel
+            miri_ext: MIRI filename extension. Defaults to "mirimage"
             overwrite: Whether to overwrite or not. Defaults
                 to False
         """
@@ -47,6 +49,7 @@ class LyotSeparateStep:
         self.out_dir = out_dir
         self.step_ext = step_ext
         self.procs = procs
+        self.miri_ext = miri_ext
         self.overwrite = overwrite
 
     def do_step(self):
@@ -151,15 +154,18 @@ class LyotSeparateStep:
         short_file = os.path.split(file)[-1]
 
         # Pull out filenames for the main chip image
-        # and lyot. For the lyot, just replace 'jw'
-        # at the start with 'lw' (clever, hey)
+        # and lyot. These need to be distinct, but the
+        # same length. We do this by distinguishing the
+        # main science as miri_ext+"s", and the lyot as
+        # miri_ext+"l"
         main_chip_out_file = os.path.join(
             self.out_dir,
-            short_file,
+            short_file.replace(self.miri_ext, f"{self.miri_ext}s"),
         )
+
         lyot_out_file = os.path.join(
             self.out_dir,
-            short_file.replace("jw", "lw"),
+            short_file.replace(self.miri_ext, f"{self.miri_ext}l"),
         )
 
         with datamodels.open(file) as im:

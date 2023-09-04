@@ -2,17 +2,20 @@ import copy
 import logging
 import os
 import shutil
+import multiprocessing as mp
 
 from .apply_wcs_adjust import ApplyWCSAdjustStep
 from .astrometric_align import AstrometricAlignStep
 from .astrometric_catalog import AstrometricCatalogStep
 from .download import DownloadStep
+from .gaia_query import GaiaQueryStep
 from .level_match import LevelMatchStep
 from .lv1 import Lv1Step
 from .lv2 import Lv2Step
 from .lv3 import Lv3Step
 from .lyot_mask import LyotMaskStep
 from .lyot_separate import LyotSeparateStep
+from .mosaic_individual_fields import MosaicIndividualFieldsStep
 from .move_raw_obs import MoveRawObsStep
 from .multi_tile_destripe import MultiTileDestripeStep
 from .single_tile_destripe import SingleTileDestripeStep
@@ -24,6 +27,7 @@ from .utils import *
 # All possible steps
 ALLOWED_STEPS = [
     "download",
+    "gaia_query",
     "lv1",
     "lv2",
     "single_tile_destripe",
@@ -36,6 +40,7 @@ ALLOWED_STEPS = [
     "lv3",
     "astrometric_catalog",
     "astrometric_align",
+    "mosaic_individual_fields",
     "release",
     "regress_against_previous",
 ]
@@ -43,6 +48,7 @@ ALLOWED_STEPS = [
 # Steps that don't operate per-band
 COMBINED_BAND_STEPS = [
     "download",
+    "gaia_query",
     "get_wcs_adjust",
     "release",
     "regress_against_previous",
@@ -132,7 +138,7 @@ class PJPipeline:
         if "processors" in local:
             procs = local["processors"]
         else:
-            procs = 1
+            procs = mp.cpu_count()
         self.procs = procs
 
         # Log the environment variables that should be set
@@ -218,9 +224,18 @@ class PJPipeline:
                         download = DownloadStep(
                             target=target,
                             download_dir=download_dir,
+                            procs=self.procs,
                             **step_parameters,
                         )
                         step_result = download.do_step()
+
+                    elif step == "gaia_query":
+                        gaia_query = GaiaQueryStep(
+                            target=target,
+                            out_dir=self.alignment_dir,
+                            **step_parameters,
+                        )
+                        step_result = gaia_query.do_step()
 
                     elif step == "get_wcs_adjust":
                         get_wcs_adjust = GetWCSAdjustStep(
@@ -237,7 +252,6 @@ class PJPipeline:
                             out_dir=self.release_dir,
                             target=target,
                             bands=self.bands,
-                            progress_dict=progress_dict,
                             **step_parameters,
                         )
                         step_result = release.do_step()
@@ -608,6 +622,31 @@ class PJPipeline:
                                 **kws,
                             )
                             step_result = astrometric_catalog.do_step()
+
+                        elif step == "mosaic_individual_fields":
+                            # Here, the input directory should be level 3
+                            mosaic_in_dir = os.path.join(
+                                band_dir,
+                                "lv3",
+                            )
+
+                            kws = get_kws(
+                                parameters=step_parameters,
+                                func=MosaicIndividualFieldsStep,
+                                target=target,
+                                band=band,
+                                max_level=0,
+                            )
+
+                            mosaic_individual_fields = MosaicIndividualFieldsStep(
+                                target=target,
+                                band=band,
+                                in_dir=mosaic_in_dir,
+                                out_dir=out_dir,
+                                procs=self.procs,
+                                **kws,
+                            )
+                            step_result = mosaic_individual_fields.do_step()
 
                         else:
                             raise ValueError(

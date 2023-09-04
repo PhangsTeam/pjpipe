@@ -19,6 +19,7 @@ from .lv2 import Lv2Step
 from .lv3 import Lv3Step
 from .lyot_mask import LyotMaskStep
 from .lyot_separate import LyotSeparateStep
+from .mosaic_individual_fields import MosaicIndividualFieldsStep
 from .move_raw_obs import MoveRawObsStep
 from .release import ReleaseStep
 from .regress_against_previous import RegressAgainstPreviousStep
@@ -39,6 +40,7 @@ __all__ = [
     "Lv3Step",
     "LyotMaskStep",
     "LyotSeparateStep",
+    "MosaicIndividualFieldsStep",
     "MoveRawObsStep",
     "PJPipeline",
     "ReleaseStep",

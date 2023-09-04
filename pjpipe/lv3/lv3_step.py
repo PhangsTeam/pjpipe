@@ -1,5 +1,4 @@
 import gc
-import gc
 import glob
 import json
 import logging
@@ -9,7 +8,6 @@ import time
 
 import jwst
 import numpy as np
-from astropy.table import Table
 from jwst.datamodels import ModelContainer
 from jwst.pipeline import calwebb_image3
 from jwst.skymatch import SkyMatchStep
@@ -18,7 +16,7 @@ from jwst.tweakreg import TweakRegStep
 from ..utils import (
     get_band_type,
     get_band_ext,
-    parse_fits_to_table,
+    get_obs_table,
     parse_parameter_dict,
     attribute_setter,
     recursive_setattr,
@@ -185,29 +183,12 @@ class Lv3Step:
 
         filtered_files.sort()
 
-        tab = Table(
-            names=[
-                "File",
-                "Type",
-                "Obs_ID",
-                "Filter",
-                "Start",
-                "Exptime",
-                "Objname",
-                "Program",
-            ],
-            dtype=[str, str, str, str, str, float, str, str],
+        tab = get_obs_table(
+            files=filtered_files,
+            check_bgr=check_bgr,
+            check_type=self.bgr_check_type,
+            background_name=self.bgr_background_name,
         )
-
-        for f in filtered_files:
-            tab.add_row(
-                parse_fits_to_table(
-                    f,
-                    check_bgr=check_bgr,
-                    check_type=self.bgr_check_type,
-                    background_name=self.bgr_background_name,
-                )
-            )
 
         if self.is_bgr:
             bgr_ext = "_bgr"

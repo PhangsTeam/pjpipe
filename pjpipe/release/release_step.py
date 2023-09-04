@@ -17,15 +17,17 @@ class ReleaseStep:
         out_dir,
         target,
         bands,
-        progress_dict,
         file_exts=None,
         remove_bloat=True,
         move_tweakback=False,
         move_backgrounds=False,
+        move_individual_fields=False,
+        lv3_dir="lv3",
         tweakback_dir="lv3",
         tweakback_ext="tweakback",
         background_dir="lv2",
         background_ext="combinedbackground",
+        individual_fields_dir="mosaic_individual_fields",
         overwrite=False,
     ):
         """Tidies up files, moves to a single directory for release
@@ -39,9 +41,6 @@ class ReleaseStep:
             out_dir: Output directory
             target: Target to consider
             bands: Bands to consider
-            progress_dict: The progress dictionary the pipeline builds up.
-                This is used to figure out what subdirectories we should
-                be looking in
             file_exts: List of filetypes to move. Defaults to moving fits
                 files, plus any generated catalogues and segmentation maps
             remove_bloat: Will remove generally un-needed extensions from
@@ -50,6 +49,10 @@ class ReleaseStep:
                 Defaults to False
             move_backgrounds: Whether to move combined background files or not.
                 Defaults to False
+            move_individual_fields: Whether to move individual field mosaics
+                or not. Defaults to False
+            lv3_dir: Where level 3 files are located, relative
+                to the target directory structure. Defaults to "lv3"
             background_dir: Where tweakback files are located, relative
                 to the target directory structure. Defaults to "lv3"
             tweakback_ext: Filename extension for tweakback files. Defaults to
@@ -58,6 +61,9 @@ class ReleaseStep:
                 to the target directory structure. Defaults to "lv2"
             background_ext: Filename extension for combined background files.
                 Defaults to "combinedbackground"
+            individual_fields_dir: Where individual field mosaics are located,
+                relative to the target directory structure. Defaults to
+                "mosaic_individual_fields"
             overwrite: Whether to overwrite or not. Defaults to False
         """
 
@@ -65,10 +71,10 @@ class ReleaseStep:
         self.out_dir = out_dir
         self.target = target
         self.bands = bands
-        self.progress_dict = progress_dict
         self.remove_bloat = remove_bloat
         self.move_tweakback = move_tweakback
         self.move_backgrounds = move_backgrounds
+        self.move_individual_fields = move_individual_fields
         self.overwrite = overwrite
 
         self.hdu_ext_to_delete = [
@@ -90,10 +96,12 @@ class ReleaseStep:
                 "segm.fits",
             ]
         self.file_exts = file_exts
+        self.lv3_dir = lv3_dir
         self.tweakback_dir = tweakback_dir
         self.tweakback_ext = tweakback_ext
         self.background_dir = background_dir
         self.background_ext = background_ext
+        self.individual_fields_dir = individual_fields_dir
 
     def do_step(self):
         """Run the release step"""
@@ -142,6 +150,10 @@ class ReleaseStep:
                 self.do_move_backgrounds(
                     band=band,
                 )
+            if self.move_individual_fields:
+                self.do_move_individual_fields(
+                    band=band,
+                )
 
         with open(step_complete_file, "w+") as f:
             f.close()
@@ -160,11 +172,11 @@ class ReleaseStep:
             file_ext: File extension to move
         """
 
-        band_dir = self.progress_dict[self.target][band]["dir"]
-
         files = glob.glob(
             os.path.join(
-                band_dir,
+                self.in_dir,
+                band,
+                self.lv3_dir,
                 f"*_{file_ext}",
             )
         )
@@ -277,6 +289,48 @@ class ReleaseStep:
             files,
             ascii=True,
             desc="background",
+            leave=False,
+        ):
+            os.system(f"cp {file} {out_dir}")
+
+        return True
+
+    def do_move_individual_fields(
+        self,
+        band,
+    ):
+        """Move individual field mosaics
+
+        Args:
+            band: Band to consider
+        """
+
+        files = glob.glob(
+            os.path.join(
+                self.in_dir,
+                band,
+                self.individual_fields_dir,
+                f"*.fits",
+            )
+        )
+
+        if len(files) == 0:
+            return True
+
+        files.sort()
+
+        out_dir = os.path.join(
+            self.out_dir,
+            self.target,
+            f"{band.lower()}_indiv_fields",
+        )
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+
+        for file in tqdm(
+            files,
+            ascii=True,
+            desc="Individual fields",
             leave=False,
         ):
             os.system(f"cp {file} {out_dir}")

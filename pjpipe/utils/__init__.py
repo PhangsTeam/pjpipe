@@ -1,6 +1,7 @@
 from .utils import (
     get_band_type,
     get_band_ext,
+    get_obs_table,
     load_toml,
     get_kws,
     attribute_setter,
@@ -20,6 +21,7 @@ __all__ = [
     "get_band_type",
     "get_band_ext",
     "get_kws",
+    "get_obs_table",
     "load_toml",
     "parse_fits_to_table",
     "get_dq_bit_mask",

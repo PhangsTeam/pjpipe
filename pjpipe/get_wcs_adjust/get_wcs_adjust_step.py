@@ -17,6 +17,55 @@ log.addHandler(logging.NullHandler())
 RAD_TO_ARCSEC = 3600 * np.rad2deg(1)
 
 
+def write_visit_transforms(
+    visit_transforms,
+    out_file,
+):
+    """Write out table of WCS transforms
+
+    Args:
+        visit_transforms: Dictionary of transforms
+            per visit
+        out_file: Name for the output .toml file
+    """
+    log.info(f"Writing transforms")
+
+    with open(out_file, "w+") as f:
+        f.write("[wcs_adjust]\n\n")
+
+        # Skip where we don't have anything
+        if len(visit_transforms) == 0:
+            log.info("No WCS adjusts found. Skipping")
+            f.close()
+            return True
+
+        for visit in visit_transforms:
+            # If we only have one shift value, take that, otherwise take the mean
+            if len(visit_transforms[visit]["shift"].shape) == 1:
+                shift = visit_transforms[visit]["shift"]
+            else:
+                shift = np.nanmean(visit_transforms[visit]["shift"], axis=0)
+
+            # If we only have one matrix value, take that, otherwise take the mean
+            if len(visit_transforms[visit]["matrix"].shape) == 2:
+                matrix = visit_transforms[visit]["matrix"]
+            else:
+                matrix = np.nanmean(visit_transforms[visit]["matrix"], axis=-1)
+
+            # Format these as nice strings and write out
+            shift_str = [float(f"{s:.3f}") for s in shift]
+            matrix_l1 = [float(f"{s:.3f}") for s in matrix[0]]
+            matrix_l2 = [float(f"{s:.3f}") for s in matrix[1]]
+
+            f.write(f"{visit}.shift = {shift_str}\n")
+            f.write(f"{visit}.matrix = [\n\t{matrix_l1},\n\t{matrix_l2}\n]\n")
+
+        f.write("\n")
+        f.close()
+
+    return True
+
+
 class GetWCSAdjustStep:
     def __init__(
         self,
@@ -89,7 +138,7 @@ class GetWCSAdjustStep:
         visit_transforms = self.get_visit_transforms()
 
         # Write transforms
-        success = self.write_visit_transforms(
+        success = write_visit_transforms(
             visit_transforms,
             out_file,
         )
@@ -219,53 +268,7 @@ class GetWCSAdjustStep:
         # Remove the temp directory
         shutil.rmtree(out_dir)
 
+        # Sort the dictionary so the file is more human-readable
+        visit_transforms = dict(sorted(visit_transforms.items()))
+
         return visit_transforms
-
-    def write_visit_transforms(
-        self,
-        visit_transforms,
-        out_file,
-    ):
-        """Write out table of WCS transforms
-
-        Args:
-            visit_transforms: Dictionary of transforms
-                per visit
-            out_file: Name for the output .toml file
-        """
-        log.info(f"Writing transforms")
-
-        with open(out_file, "w+") as f:
-            f.write("[wcs_adjust]\n\n")
-
-            # Skip where we don't have anything
-            if len(visit_transforms) == 0:
-                log.info("No WCS adjusts found. Skipping")
-                f.close()
-                return True
-
-            for visit in visit_transforms:
-                # If we only have one shift value, take that, otherwise take the mean
-                if len(visit_transforms[visit]["shift"].shape) == 1:
-                    shift = visit_transforms[visit]["shift"]
-                else:
-                    shift = np.nanmean(visit_transforms[visit]["shift"], axis=0)
-
-                # If we only have one matrix value, take that, otherwise take the mean
-                if len(visit_transforms[visit]["matrix"].shape) == 2:
-                    matrix = visit_transforms[visit]["matrix"]
-                else:
-                    matrix = np.nanmean(visit_transforms[visit]["matrix"], axis=-1)
-
-                # Format these as nice strings and write out
-                shift_str = [float(f"{s:.3f}") for s in shift]
-                matrix_l1 = [float(f"{s:.3f}") for s in matrix[0]]
-                matrix_l2 = [float(f"{s:.3f}") for s in matrix[1]]
-
-                f.write(f"{visit}.shift = {shift_str}\n")
-                f.write(f"{visit}.matrix = [\n\t{matrix_l1},\n\t{matrix_l2}\n]\n")
-
-            f.write("\n")
-            f.close()
-
-        return True

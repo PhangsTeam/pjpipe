@@ -5,7 +5,7 @@ import pjpipe
 this_dir = os.path.dirname(os.path.realpath(__file__))
 
 config_file = os.path.join(this_dir, "config.toml")
-local_file = os.path.join(this_dir, "astronode.toml")
+local_file = os.path.join(this_dir, "cedar.toml")
 
 # We need to set CRDS path
 local = pjpipe.load_toml(local_file)

@@ -14,7 +14,7 @@ import numpy as np
 from astropy.table import Table
 from jwst.pipeline import calwebb_image2
 
-from ..utils import get_band_type, parse_fits_to_table, attribute_setter
+from ..utils import get_band_type, get_obs_table, attribute_setter
 
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
@@ -163,29 +163,12 @@ class Lv2Step:
         if self.band_type == "nircam" and self.bgr_check_type == "parallel_off":
             check_bgr = False
 
-        tab = Table(
-            names=[
-                "File",
-                "Type",
-                "Obs_ID",
-                "Filter",
-                "Start",
-                "Exptime",
-                "Objname",
-                "Program",
-            ],
-            dtype=[str, str, str, str, str, float, str, str],
+        tab = get_obs_table(
+            files=files,
+            check_bgr=check_bgr,
+            check_type=self.bgr_check_type,
+            background_name=self.bgr_background_name,
         )
-
-        for f in files:
-            tab.add_row(
-                parse_fits_to_table(
-                    f,
-                    check_bgr=check_bgr,
-                    check_type=self.bgr_check_type,
-                    background_name=self.bgr_background_name,
-                )
-            )
         tab.sort(keys="Start")
 
         # Loop over science first, then backgrounds
@@ -274,6 +257,7 @@ class Lv2Step:
             json_content["products"].append(
                 {
                     "name": name,
+                    "array": row["Array"],
                     "members": [
                         {
                             "expname": row["File"],
@@ -287,6 +271,13 @@ class Lv2Step:
         if self.band_type in self.bgr_observation_types:
             for product in json_content["products"]:
                 for row in bgr_tab:
+                    # TODO: Issue #7807 (https://github.com/spacetelescope/jwst/issues/7807)
+                    # Things will crash in the background step if the
+                    # arrays aren't the same. May be intended behaviour
+                    # or a bug, but skip for now
+                    # if row["Array"] != product["array"]:
+                    #     continue
+
                     product["members"].append(
                         {
                             "expname": row["File"],

@@ -8,12 +8,18 @@ version = 'v0p7'
 
 # Bands to consider
 bands = [
-#    'F090W',
-#    'F200W',
+    'F090W',
+    'F200W',
+    'F090W_bgr',
+    'F200W_bgr',
     'F335M',
     'F444W',
+    'F335M_bgr',
+    'F444W_bgr',
     'F560W',
     'F2100W',
+    'F560W_bgr',
+    'F2100W_bgr',
 ]
 
 # Steps. These can/should be different
@@ -32,6 +38,7 @@ steps = [
 #    'psf_model',  # TODO
     'lv3',
     'astrometric_align',
+    'mosaic_individual_fields',
     'release',
     'regress_against_previous',
 ]
@@ -49,44 +56,13 @@ calib_level = [
 ]
 
 # Set a large enough radius that we download the backgrounds
-radius = 1
+radius = 60
 
 login = true
 
-#[parameters.move_raw_obs]
-#
-## Skip the short NIRCam frames that don't link to anything
-#obs_to_skip = [
-#    'jw02128001001_02201_00001_nrcb1',
-#    'jw02128001001_02201_00002_nrcb1',
-#    'jw02128001001_02201_00003_nrcb1',
-#    'jw02128001001_02201_00004_nrcb1',
-#
-#    'jw02128001025_02201_00001_nrcb3',
-#    'jw02128001025_02201_00002_nrcb3',
-#    'jw02128001025_02201_00003_nrcb3',
-#    'jw02128001025_02201_00004_nrcb3',
-#
-#    'jw02128001001_04201_00001_nrcb1',
-#    'jw02128001001_04201_00002_nrcb1',
-#    'jw02128001001_04201_00003_nrcb1',
-#    'jw02128001001_04201_00004_nrcb1',
-#
-#    'jw02128001017_04201_00001_nrcb2',
-#    'jw02128001017_04201_00002_nrcb2',
-#    'jw02128001017_04201_00003_nrcb2',
-#    'jw02128001017_04201_00004_nrcb2',
-#
-#    'jw02128001021_04201_00001_nrcb4',
-#    'jw02128001021_04201_00002_nrcb4',
-#    'jw02128001021_04201_00003_nrcb4',
-#    'jw02128001021_04201_00004_nrcb4',
-#
-#    'jw02128001025_04201_00001_nrcb3',
-#    'jw02128001025_04201_00002_nrcb3',
-#    'jw02128001025_04201_00003_nrcb3',
-#    'jw02128001025_04201_00004_nrcb3',
-#]
+[parameters.gaia_query]
+
+radius = 20
 
 [parameters.lv1]
 
@@ -147,16 +123,20 @@ enforce_user_order = true
 [parameters.single_tile_destripe]
 quadrants = true
 do_vertical_subtraction = true
-filter_diffuse = true
+
+# Generally, filter diffuse. F090W is high enough res we don't have to
+filter_diffuse.nircam = true
+filter_diffuse.F090W = false
+
 dilate_size = 7
 destriping_method = 'median_filter'
-median_filter_scales = [3, 7, 15, 31, 63, 127]
+median_filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
 
 [parameters.multi_tile_destripe]
 quadrants = true
 sigma = 3
 weight_type = 'ivm'
-do_large_scale = true
+do_large_scale = false
 
 [parameters.level_match]
 do_sigma_clip = false
@@ -208,7 +188,7 @@ sigma.nircam = 2
 sigma.miri = 3
 
 # Tweak boxsize, so we detect objects in diffuse emission
-bkg_boxsize = 100
+bkg_boxsize.nircam = 100
 bkg_boxsize.miri = 25
 enforce_user_order = true
 
@@ -281,6 +261,7 @@ sigma = 3
 remove_bloat = false
 move_tweakback = true
 move_backgrounds = true
+move_individual_fields = true
 
 [parameters.regress_against_previous]
 prev_version = 'v0p6'

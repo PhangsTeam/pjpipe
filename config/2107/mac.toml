@@ -1,0 +1,5 @@
+crds_path = '/Users/thomaswilliams/Documents/phangs/jwst/crds/'
+raw_dir = '/Users/thomaswilliams/Documents/phangs/jwst/jwst_raw/archive_20230804/'
+reprocess_dir = '/Users/thomaswilliams/Documents/phangs/jwst/jwst_phangs_reprocessed/'
+alignment_dir = '/Users/thomaswilliams/PycharmProjects/jwst_scripts/config/2107/alignment/2107/alignment/'
+#webb_psf_data = '/data/beegfs/astro-storage/groups/schinnerer/williams/webbpsf-data'
