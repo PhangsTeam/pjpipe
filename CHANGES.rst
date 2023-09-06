@@ -1,4 +1,4 @@
-0.9.1 (unreleased)
+0.9.1 (2023-09-04)
 ==================
 
 - If not supplied, will default to running on all CPUs, not 1
