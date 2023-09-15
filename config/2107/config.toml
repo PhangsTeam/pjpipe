@@ -153,7 +153,7 @@ method = 'mask'
 
 [parameters.single_tile_destripe]
 quadrants = true
-do_vertical_subtraction = true
+vertical_subtraction = true
 filter_diffuse = true
 dilate_size = 7
 destriping_method = 'median_filter'

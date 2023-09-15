@@ -1132,13 +1132,13 @@ class SingleTileDestripeStep:
 
         else:
             if use_mask:
-                data = np.ma.array(copy.deepcopy(data), mask=copy.deepcopy(mask))
+                data_copy = np.ma.array(copy.deepcopy(data), mask=copy.deepcopy(mask))
             else:
-                data = copy.deepcopy(data)
+                data_copy = copy.deepcopy(data)
 
             for scale in self.median_filter_scales:
                 if use_mask:
-                    med = np.ma.median(data, axis=1)
+                    med = np.ma.median(data_copy, axis=1)
                     mask_idx = np.where(med.mask)
                     med = med.data
                     med[mask_idx] = np.nan
@@ -1147,7 +1147,7 @@ class SingleTileDestripeStep:
                 med[~np.isfinite(med)] = 0
                 noise = med - median_filter(med, scale, mode="reflect")
 
-                data -= noise[:, np.newaxis]
+                data_copy -= noise[:, np.newaxis]
 
                 full_noise_model += noise[:, np.newaxis]
 

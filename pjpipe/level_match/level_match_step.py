@@ -113,7 +113,7 @@ class LevelMatchStep:
             in_dir: Input directory
             out_dir: Output directory
             step_ext: .fits extension for the files going
-                into the lv1 pipeline
+                into the step
             procs: Number of parallel processes to run
             do_local_subtraction: Whether to do a sigma-clipped local median
                 subtraction. Defaults to True
@@ -701,6 +701,11 @@ class LevelMatchStep:
             ii[np.where(np.isnan(file1.array))] = np.nan
             jj[np.where(np.isnan(file1.array))] = np.nan
 
+            # If we have something that's all NaNs
+            # (e.g. lyot on MIRI subarray obs.), skip
+            if np.all(np.isnan(ii)):
+                continue
+
             file1_iaxis = np.nanmax(ii) - np.nanmin(ii)
             file1_jaxis = np.nanmax(jj) - np.nanmin(jj)
 
@@ -718,6 +723,11 @@ class LevelMatchStep:
                     ii, jj = np.indices(file2.array.shape, dtype=float)
                     ii[np.where(np.isnan(file2.array))] = np.nan
                     jj[np.where(np.isnan(file2.array))] = np.nan
+
+                    # If we have something that's all NaNs
+                    # (e.g. lyot on MIRI subarray obs.), skip
+                    if np.all(np.isnan(ii)):
+                        continue
 
                     file2_iaxis = np.nanmax(ii) - np.nanmin(ii)
                     file2_jaxis = np.nanmax(jj) - np.nanmin(jj)

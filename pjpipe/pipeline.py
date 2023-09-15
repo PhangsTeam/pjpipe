@@ -395,9 +395,9 @@ class PJPipeline:
                             if not progress_dict[target][band_full]["success"]:
                                 log.warning(
                                     f"Failures detected moving raw data for {target}, {band}. "
-                                    f"Removing folder and continuing"
+                                    f"Removing directories and continuing"
                                 )
-                                shutil.rmtree(band_dir)
+                                shutil.rmtree(out_dir)
                                 continue
 
                             # Save out file moved state

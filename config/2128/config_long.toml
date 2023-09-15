@@ -122,7 +122,7 @@ enforce_user_order = true
 
 [parameters.single_tile_destripe]
 quadrants = true
-do_vertical_subtraction = true
+vertical_subtraction = true
 
 # Generally, filter diffuse. F090W is high enough res we don't have to
 filter_diffuse.nircam = true

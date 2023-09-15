@@ -37,7 +37,7 @@ class ApplyWCSAdjustStep:
             in_dir: Input directory
             out_dir: Output directory
             step_ext: .fits extension for the files going
-                into the lv1 pipeline
+                into the step
             procs: Number of processes to run in parallel
             overwrite: Whether to overwrite or not. Defaults
                 to False

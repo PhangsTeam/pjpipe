@@ -6,7 +6,7 @@ targets = [
 ]
 
 # Version for the reprocessing
-version = 'v0p2'
+version = 'v0p2p1'
 
 # Bands to consider
 bands = [
@@ -114,11 +114,12 @@ nclip = 5
 bkg_boxsize.nircam_short = 100
 bkg_boxsize.nircam_long = 100
 bkg_boxsize.miri = 25
-enforce_user_order = false
+enforce_user_order.miri = false
+enforce_user_order.nircam = true
 
 [parameters.single_tile_destripe]
 quadrants = true
-do_vertical_subtraction = true
+vertical_subtraction = true
 
 # Generally, filter diffuse. F090W is high enough res we don't have to
 filter_diffuse.nircam = true
@@ -159,9 +160,8 @@ save_results = true
 
 [parameters.lv3.jwst_parameters.tweakreg]
 
-# Skip MIRI wavelengths, since we have already
-# solved for this
-skip.miri = true
+# Skip, since we have already solved for this
+skip = true
 
 align_to_gaia = false
 brightest.nircam_short = 125
@@ -190,7 +190,8 @@ sigma.miri = 3
 # Tweak boxsize, so we detect objects in diffuse emission
 bkg_boxsize.nircam = 100
 bkg_boxsize.miri = 25
-enforce_user_order = false
+enforce_user_order.miri = false
+enforce_user_order.nircam = true
 
 [parameters.lv3.jwst_parameters.skymatch]
 
@@ -266,4 +267,4 @@ move_backgrounds = true
 move_individual_fields = true
 
 [parameters.regress_against_previous]
-prev_version = 'v0p1'
+prev_version = 'v0p2'
