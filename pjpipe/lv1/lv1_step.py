@@ -36,7 +36,7 @@ class Lv1Step:
             in_dir: Input directory
             out_dir: Output directory
             step_ext: .fits extension for the files going
-                into the lv1 pipeline
+                into the step
             procs: Number of processes to run in parallel.
             jwst_parameters: Parameter dictionary to pass to
                 the level 1 pipeline. Defaults to None,
@@ -91,13 +91,12 @@ class Lv1Step:
 
         # For speed, we want to parallelise these up by dither since we use the
         # persistence file
-
-        dithers = np.unique(
-            [
-                "_".join(os.path.split(in_file)[-1].split("_")[:2])
-                for in_file in in_files
-            ]
-        )
+        dithers = []
+        for file in in_files:
+            file_split = os.path.split(file)[-1].split("_")
+            dithers.append("_".join(file_split[:2]) + "_*_" + file_split[-2])
+        dithers = np.unique(dithers)
+        dithers.sort()
 
         # Ensure we're not wasting processes
         procs = np.nanmin([self.procs, len(dithers)])

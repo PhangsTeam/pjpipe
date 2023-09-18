@@ -1,24 +1,21 @@
 # List of targets
 targets = [
-    'm33',
+    'ngc1559',
 ]
 
 # Version for the reprocessing
-version = 'v0p7'
+version = 'v0p0p2'
 
 # Bands to consider
 bands = [
-    'F090W',
+    'F150W',
+    'F187N',
     'F200W',
-    'F090W_bgr',
-    'F200W_bgr',
+    'F300M',
     'F335M',
-    'F444W',
-    'F335M_bgr',
-    'F444W_bgr',
-    'F560W',
+    'F770W',
     'F2100W',
-    'F560W_bgr',
+    'F770W_bgr',
     'F2100W_bgr',
 ]
 
@@ -47,18 +44,13 @@ steps = [
 # the raw science
 [parameters.download]
 
-prop_id = '2128'
+prop_id = '3707'
 product_type = [
     'SCIENCE',
 ]
 calib_level = [
     1,
 ]
-
-# Set a large enough radius that we download the backgrounds
-radius = 60
-
-login = true
 
 [parameters.gaia_query]
 
@@ -67,12 +59,16 @@ radius = 20
 [parameters.lv1]
 
 jwst_parameters.save_results = true
+
+# Flag snowballs in the narrowband
+jwst_parameters.jump.expand_large_events.F187N = true
+
 jwst_parameters.ramp_fit.suppress_one_group = false
 jwst_parameters.refpix.use_side_ref_pixels = true
 
 [parameters.lv2]
 
-bgr_check_type = 'check_in_name'
+bgr_check_type = 'parallel_off'
 bgr_background_name = 'off'
 bgr_observation_types = [
     'miri',
@@ -85,7 +81,9 @@ jwst_parameters.bkg_subtract.sigma = 1.5
 [parameters.get_wcs_adjust]
 
 bands = [
-    'F335M',
+    'F300M',
+    'F770W',
+    'F770W_bgr',
 ]
 
 group_dithers = [
@@ -120,14 +118,13 @@ bkg_boxsize.nircam_long = 100
 bkg_boxsize.miri = 25
 enforce_user_order = true
 
+[parameters.lyot_mask]
+method = 'mask'
+
 [parameters.single_tile_destripe]
 quadrants = true
 vertical_subtraction = true
-
-# Generally, filter diffuse. F090W is high enough res we don't have to
-filter_diffuse.nircam = true
-filter_diffuse.F090W = false
-
+filter_diffuse = true
 dilate_size = 7
 destriping_method = 'median_filter'
 median_filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
@@ -136,7 +133,9 @@ median_filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
 quadrants = true
 sigma = 3
 weight_type = 'ivm'
-do_large_scale = false
+
+# Do large scale filtering on everything # TODO: likely this will need tweaking
+do_large_scale = true
 
 [parameters.level_match]
 do_sigma_clip = false
@@ -155,24 +154,27 @@ skymatch_group_dithers = [
     'nircam_long',
 ]
 
-bgr_check_type = 'check_in_name'
-bgr_background_name = 'off'
+bgr_check_type = 'parallel_off'
 
 [parameters.lv3.jwst_parameters]
 save_results = true
 
 [parameters.lv3.jwst_parameters.tweakreg]
 
+# Skip MIRI wavelengths, since we have already
+# solved for this
+skip.F770W = true
+skip.F2100W = true
+
 align_to_gaia = false
 brightest.nircam_short = 125
 brightest.nircam_long = 500
 brightest.miri = 500
-snr_threshold.nircam = 5
-snr_threshold.miri = 4
+snr_threshold = 3
 expand_refcat = true
 fitgeometry = 'shift'
 minobj = 3
-peakmax.nircam = 1000
+peakmax.nircam = 20
 roundlo.nircam = -0.5
 roundhi.nircam = 0.5
 
@@ -184,11 +186,10 @@ tolerance.nircam_short = 0.3
 tolerance.nircam_long = 0.3
 tolerance.miri = 1
 use2dhist = false
-sigma.nircam = 2
-sigma.miri = 3
 
 # Tweak boxsize, so we detect objects in diffuse emission
-bkg_boxsize.nircam = 100
+bkg_boxsize.nircam_short = 100
+bkg_boxsize.nircam_long = 100
 bkg_boxsize.miri = 25
 enforce_user_order = true
 
@@ -213,13 +214,13 @@ rotation = 0.0
 in_memory = true
 
 [parameters.lv3.jwst_parameters.source_catalog]
-snr_threshold = 3
+snr_threshold = 2
 npixels = 5
-bkg_boxsize = 100
+bkg_boxsize = 25
 deblend = true
 
 [parameters.astrometric_catalog]
-snr = 50
+snr = 10
 
 [parameters.astrometric_catalog.dao_parameters]
 sharplo = 0.2
@@ -229,8 +230,13 @@ roundhi = 0.5
 
 [parameters.astrometric_align]
 
+[parameters.astrometric_align.align_mapping]
+# Map F2100W to F770W
+F2100W = 'F770W'
+F2100W_bgr = 'F770W_bgr'
+
 [parameters.astrometric_align.catalogs]
-m33 = 'Gaia_DR3_m33.fits'
+ngc1559 = 'Gaia_DR3_ngc1559.fits'
 
 # Initial pass to get decent shifts for absolute astrometry
 [parameters.astrometric_align.tweakreg_parameters.iteration1]
@@ -258,10 +264,9 @@ sigma = 3
 
 [parameters.release]
 
-remove_bloat = false
-move_tweakback = true
-move_backgrounds = true
-move_individual_fields = true
+remove_bloat = true
+move_tweakback = false
+move_backgrounds = false
 
 [parameters.regress_against_previous]
-prev_version = 'v0p6'
+prev_version = 'v0p0p1'

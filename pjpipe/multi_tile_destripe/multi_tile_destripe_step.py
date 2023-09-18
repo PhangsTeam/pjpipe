@@ -8,15 +8,16 @@ import shutil
 import warnings
 from functools import partial
 
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 from astropy.stats import sigma_clipped_stats
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from reproject import reproject_interp
 from reproject.mosaicking import find_optimal_celestial_wcs
+from scipy.ndimage import uniform_filter1d
 from stdatamodels.jwst import datamodels
 from tqdm import tqdm
-from scipy.ndimage import uniform_filter1d
-import matplotlib.pyplot as plt
-import matplotlib
 
 from ..utils import get_dq_bit_mask, make_source_mask, reproject_image
 
@@ -29,6 +30,123 @@ ALLOWED_WEIGHT_TYPES = ["exptime", "ivm"]
 # Global variables, to speed up multiprocessing
 data_reproj = []
 weight_reproj = []
+
+
+def make_diagnostic_plot(
+    plot_name,
+    data,
+    stripes,
+    figsize=(9, 4),
+):
+    """Make a diagnostic plot to show the destriping
+
+    Args:
+        plot_name: Output name for plot
+        data: Original data
+        stripes: Stripe model
+        figsize: Size for the figure. Defaults to (9, 4)
+    """
+
+    plt.figure(figsize=figsize)
+
+    n_rows = 1
+    n_cols = 3
+
+    vmin_data, vmax_data = np.nanpercentile(data, [10, 90])
+    vmin_stripes, vmax_stripes = np.nanpercentile(stripes, [1, 99])
+
+    # Plot the uncorrected data
+    ax = plt.subplot(n_rows, n_cols, 1)
+
+    im = plt.imshow(
+        data,
+        origin="lower",
+        interpolation="nearest",
+        vmin=vmin_data,
+        vmax=vmax_data,
+    )
+    plt.axis("off")
+
+    plt.text(
+        0.05,
+        0.95,
+        "Uncorr. data",
+        ha="left",
+        va="top",
+        fontweight="bold",
+        bbox=dict(facecolor="white", edgecolor="black", alpha=0.7),
+        transform=ax.transAxes,
+    )
+
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("bottom", size="5%", pad=0)
+
+    plt.colorbar(im, cax=cax, label="MJy/sr", orientation="horizontal")
+
+    # Plot the stripes model
+    ax = plt.subplot(n_rows, n_cols, 2)
+
+    im = plt.imshow(
+        stripes,
+        origin="lower",
+        interpolation="nearest",
+        vmin=vmin_stripes,
+        vmax=vmax_stripes,
+    )
+    plt.axis("off")
+
+    plt.text(
+        0.05,
+        0.95,
+        "Noise model",
+        ha="left",
+        va="top",
+        fontweight="bold",
+        bbox=dict(facecolor="white", edgecolor="black", alpha=0.7),
+        transform=ax.transAxes,
+    )
+
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("bottom", size="5%", pad=0)
+
+    plt.colorbar(im, cax=cax, label="MJy/sr", orientation="horizontal")
+
+    # And finally, the corrected data
+    ax = plt.subplot(n_rows, n_cols, 3)
+
+    im = plt.imshow(
+        data - stripes,
+        origin="lower",
+        interpolation="nearest",
+        vmin=vmin_data,
+        vmax=vmax_data,
+    )
+    plt.axis("off")
+
+    plt.text(
+        0.05,
+        0.95,
+        "Corr. data",
+        ha="left",
+        va="top",
+        fontweight="bold",
+        bbox=dict(facecolor="white", edgecolor="black", alpha=0.7),
+        transform=ax.transAxes,
+    )
+
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("bottom", size="5%", pad=0)
+
+    plt.colorbar(im, cax=cax, label="MJy/sr", orientation="horizontal")
+
+    plt.subplots_adjust(wspace=0.01)
+
+    plt.savefig(f"{plot_name}.png", bbox_inches="tight")
+    plt.savefig(f"{plot_name}.pdf", bbox_inches="tight")
+
+    plt.close()
+
+    return True
 
 
 def parallel_reproject_weight(
@@ -95,7 +213,7 @@ class MultiTileDestripeStep:
         weight_type="exptime",
         min_area_frac=0.5,
         quadrants=True,
-        do_large_scale=True,
+        do_large_scale=False,
         median_filter_factor=4,
         sigma=3,
         dilate_size=7,
@@ -112,13 +230,12 @@ class MultiTileDestripeStep:
             in_dir: Input directory
             out_dir: Output directory
             step_ext: .fits extension for the files going
-                into the lv1 pipeline
+                into the step
             procs: Number of processes to run in parallel
             weight_type: How to weight the stacked image.
                 Defaults to 'exptime'
             do_large_scale: Whether to do boxcar-filtering to try and remove large,
-                consistent ripples between data. Defaults to True, but can probably be turned
-                off for observations with many overlaps
+                consistent ripples between data. Defaults to False
             median_filter_factor: Factor by which we smooth in terms of the array size.
                 Defaults to 4, i.e. smoothing scale is 1/4th the array size
             sigma: sigma value for sigma-clipped statistics. Defaults to 3
@@ -637,71 +754,11 @@ class MultiTileDestripeStep:
                 self.plot_dir,
                 file_name.replace(".fits", "_dither_stripe_sub"),
             )
-            plt.figure(figsize=(9, 6))
 
-            vmin_diff, vmax_diff = np.nanpercentile(diff_unsmoothed, [1, 99])
-            vmin_data, vmax_data = np.nanpercentile(data, [5, 95])
-
-            plt.subplot(2, 3, 1)
-            plt.imshow(
-                diff_unsmoothed,
-                origin="lower",
-                interpolation="nearest",
-                vmin=vmin_diff,
-                vmax=vmax_diff,
+            make_diagnostic_plot(
+                plot_name=plot_name,
+                data=data,
+                stripes=stripes_arr,
             )
-            plt.axis("off")
-            plt.title("Uncorr. diff")
-
-            plt.subplot(2, 3, 2)
-            plt.imshow(
-                diff_unsmoothed - stripes_arr,
-                origin="lower",
-                interpolation="nearest",
-                vmin=vmin_diff,
-                vmax=vmax_diff,
-            )
-            plt.axis("off")
-            plt.title("Corr. diff")
-
-            plt.subplot(2, 3, 3)
-            plt.imshow(
-                stripes_arr,
-                origin="lower",
-                interpolation="none",
-                vmin=vmin_diff,
-                vmax=vmax_diff,
-            )
-            plt.axis("off")
-            plt.title("Stripe model")
-
-            plt.subplot(2, 3, 4)
-            plt.imshow(
-                data,
-                origin="lower",
-                interpolation="nearest",
-                vmin=vmin_data,
-                vmax=vmax_data,
-            )
-            plt.axis("off")
-            plt.title("Uncorr. data")
-
-            plt.subplot(2, 3, 5)
-            plt.imshow(
-                data - stripes_arr,
-                origin="lower",
-                interpolation="nearest",
-                vmin=vmin_data,
-                vmax=vmax_data,
-            )
-            plt.axis("off")
-            plt.title("Corr. data")
-
-            plt.subplots_adjust(wspace=0.01)
-
-            plt.savefig(f"{plot_name}.png", bbox_inches="tight")
-            plt.savefig(f"{plot_name}.pdf", bbox_inches="tight")
-
-            plt.close()
 
         return file, stripes_arr

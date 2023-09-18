@@ -41,7 +41,7 @@ class LyotMaskStep:
             in_dir: Input directory
             out_dir: Output directory
             step_ext: .fits extension for the files going
-                into the lv1 pipeline
+                into the step
             procs: Number of processes to run in parallel
             method: Whether to just mask the coronagraph (mask),
                 or only parts that overlap the main science
@@ -185,6 +185,13 @@ class LyotMaskStep:
         )
 
         with datamodels.open(file) as im:
+            # If we have subarray data, don't mask
+            is_subarray = "sub" in im.meta.subarray.name.lower()
+            if is_subarray:
+                im.save(out_file)
+                del im
+                return True
+
             # Get a rough mask to start
             lyot_rough_mask = np.zeros_like(im.dq)
             lyot_rough_mask[LYOT_I, LYOT_J] = 1

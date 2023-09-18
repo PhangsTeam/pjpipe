@@ -46,7 +46,7 @@ class Lv2Step:
             in_dir: Input directory
             out_dir: Output directory
             step_ext: .fits extension for the files going
-                into the lv2 pipeline
+                into the step
             is_bgr: Whether we're processing background observations or not
             procs: Number of processes to run in parallel
             bgr_check_type: Method to check if obs is science

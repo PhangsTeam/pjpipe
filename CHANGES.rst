@@ -1,3 +1,19 @@
+0.9.2 (Unreleased)
+==================
+
+- Allow multiple options for e.g. proposal ID in ``download_step``
+- Fix potential error with file validation in ``download_step``
+- ``move_raw_obs_step`` is smarter about missing filters
+- ``lv1_step`` is smarter about grouping dithers
+- Fix plotting error if quadrants=False and using median filter in ``single_tile_destripe_step``
+- Fix potential subarray issues with ``lyot_separate_step``/``lyot_mask_step``
+- ``do_large_scale`` defaults to False in ``multi_tile_destripe_step``
+- Much improved diagnostic plots in ``multi_tile_destripe_step``
+- Catch errors in ``level_match_step`` where all data might be NaN
+- Rename ``do_vertical_subtraction`` in config files
+- Caught some typos from lazy copy/pasting docstrings
+- Additions and updates for #2130 (Local Group) and #3707 (Cy2 Treasury)
+
 0.9.1 (2023-09-04)
 ==================
 

@@ -38,7 +38,7 @@ class LyotSeparateStep:
             in_dir: Input directory
             out_dir: Output directory
             step_ext: .fits extension for the files going
-                into the lv1 pipeline
+                into the step
             procs: Number of processes to run in parallel
             miri_ext: MIRI filename extension. Defaults to "mirimage"
             overwrite: Whether to overwrite or not. Defaults
@@ -171,6 +171,13 @@ class LyotSeparateStep:
         with datamodels.open(file) as im:
             lyot_rough_mask = np.zeros_like(im.data)
             lyot_rough_mask[LYOT_I, LYOT_J] = 1
+
+            # If we have subarray data, don't separate things out
+            is_subarray = "sub" in im.meta.subarray.name.lower()
+            if is_subarray:
+                im.save(main_chip_out_file)
+                del im
+                return True
 
             # Get DQ mask
             dq_mask = get_dq_bit_mask(im.dq)

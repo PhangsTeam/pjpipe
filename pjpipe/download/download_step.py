@@ -68,7 +68,6 @@ def parallel_verify_integrity(
         gc.collect()
         return True
     except:
-        del im
         gc.collect()
         return file
 
@@ -146,6 +145,15 @@ class DownloadStep:
         # Make sure the radius is in arcmin
         if not isinstance(radius, u.Quantity) and radius is not None:
             radius = radius * u.arcmin
+
+        if isinstance(telescope, str):
+            telescope = [telescope]
+        if isinstance(prop_id, str):
+            prop_id = [prop_id]
+        if isinstance(instrument_name, str):
+            instrument_name = [instrument_name]
+        if isinstance(dataproduct_type, str):
+            dataproduct_type = [dataproduct_type]
 
         self.target = target
         self.download_dir = download_dir
@@ -254,20 +262,27 @@ class DownloadStep:
 
         self.obs_list = self.obs_list[self.obs_list["calib_level"] >= 0]
 
+        # Filter down by various options
         if self.telescope is not None:
-            self.obs_list = self.obs_list[
-                self.obs_list["obs_collection"] == self.telescope
-            ]
+            idx = [obs["obs_collection"] in self.telescope for obs in self.obs_list]
+            self.obs_list = self.obs_list[idx]
+
         if self.prop_id is not None:
-            self.obs_list = self.obs_list[self.obs_list["proposal_id"] == self.prop_id]
+            idx = [obs["proposal_id"] in self.prop_id for obs in self.obs_list]
+            self.obs_list = self.obs_list[idx]
+
         if self.instrument_name is not None:
-            self.obs_list = self.obs_list[
-                self.obs_list["instrument_name"] == self.instrument_name
+            idx = [
+                obs["instrument_name"] in self.instrument_name for obs in self.obs_list
             ]
+            self.obs_list = self.obs_list[idx]
+
         if self.dataproduct_type is not None:
-            self.obs_list = self.obs_list[
-                self.obs_list["dataproduct_type"] == self.dataproduct_type
+            idx = [
+                obs["dataproduct_type"] in self.dataproduct_type
+                for obs in self.obs_list
             ]
+            self.obs_list = self.obs_list[idx]
 
         if len(self.obs_list) == 0:
             log.warning("No available data")

@@ -211,7 +211,7 @@ class AstrometricAlignStep:
             run_astro_cat: Whether we've run the astrometric_catalog
                 step for this target/band
             step_ext: .fits extension for the files going
-                into the lv2 pipeline
+                into the step
             procs: Number of processes to run in parallel
             catalogs: Dictionary for the external alignment
                 catalogs

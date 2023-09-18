@@ -129,9 +129,7 @@ class MosaicIndividualFieldsStep:
         successes = []
 
         if self.parallel:
-
             with mp.get_context("fork").Pool(procs) as pool:
-
                 for success in pool.imap_unordered(
                     partial(
                         self.parallel_mosaic_fields,
@@ -144,7 +142,6 @@ class MosaicIndividualFieldsStep:
                 pool.join()
 
         else:
-
             for individual_visit in individual_visits:
                 successes.append(self.parallel_mosaic_fields(individual_visit))
 

@@ -89,6 +89,12 @@ class MoveRawObsStep:
 
         if os.path.exists(step_complete_file):
             log.info("Step already run")
+
+            # If we don't find anything, return False
+            n_files = len(glob.glob(os.path.join(self.out_dir, "*.fits")))
+            if n_files == 0:
+                log.warning("No files found in the output directory")
+                return False
             return True
 
         raw_files = self.get_raw_files()
@@ -103,12 +109,17 @@ class MoveRawObsStep:
 
         # If not everything has succeeded, then return a warning
         if not success:
-            log.warning("Failures detected in level 2 pipeline")
+            log.warning("Failures detected in moving raw observations")
             return False
 
         with open(step_complete_file, "w+") as f:
             f.close()
 
+        # If we don't find anything, return False
+        n_files = len(glob.glob(os.path.join(self.out_dir, "*.fits")))
+        if n_files == 0:
+            log.warning("No files found in the output directory")
+            return False
         return True
 
     def get_raw_files(self):

@@ -55,7 +55,7 @@ class Lv3Step:
             out_dir: Output directory
             is_bgr: Whether we're processing background observations or not
             step_ext: .fits extension for the files going
-                into the lv3 pipeline
+                into the step
             procs: Number of processes to run in parallel
             tweakreg_group_dithers: List of 'miri',
                 'nircam_long', 'nircam_short' of whether to group
