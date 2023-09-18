@@ -1,4 +1,4 @@
-0.9.2 (Unreleased)
+0.9.2 (2023-09-18)
 ==================
 
 - Allow multiple options for e.g. proposal ID in ``download_step``
