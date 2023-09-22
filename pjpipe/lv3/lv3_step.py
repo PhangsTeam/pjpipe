@@ -1,3 +1,4 @@
+import copy
 import gc
 import glob
 import json
@@ -7,7 +8,6 @@ import shutil
 import time
 
 import jwst
-import numpy as np
 from jwst.datamodels import ModelContainer
 from jwst.pipeline import calwebb_image3
 from jwst.skymatch import SkyMatchStep
@@ -37,7 +37,9 @@ class Lv3Step:
         is_bgr,
         step_ext,
         procs,
+        tweakreg_degroup_nircam_modules=False,
         tweakreg_group_dithers=None,
+        tweakreg_degroup_dithers=None,
         skymatch_group_dithers=None,
         skymatch_degroup_dithers=None,
         bgr_check_type="parallel_off",
@@ -57,16 +59,24 @@ class Lv3Step:
             step_ext: .fits extension for the files going
                 into the step
             procs: Number of processes to run in parallel
+            tweakreg_degroup_nircam_modules: Whether to degroup NIRCam A and B
+                modules. Currently, the WCS is inconsistent between the two,
+                so should probably be set to True if you see "ghosting" in the final
+                mosaic. Defaults to False
             tweakreg_group_dithers: List of 'miri',
                 'nircam_long', 'nircam_short' of whether to group
                 up dithers for tweakreg. Defaults to None, which will
                 keep at default
+            tweakreg_degroup_dithers: List of 'miri', 'nircam_long',
+                'nircam_short' of whether to degroup dithers for
+                tweakreg. Defaults to None, which will keep at
+                default.
             skymatch_group_dithers: List of 'miri', 'nircam_long',
                 'nircam_short' of whether to group up dithers for
                 skymatch. Defaults to None, which will keep at
                 default
             skymatch_degroup_dithers: List of 'miri', 'nircam_long',
-                'nircam_short' of whether to group up dithers for
+                'nircam_short' of whether to degroup dithers for
                 skymatch. Defaults to None, which will keep at
                 default.
             bgr_check_type: Method to check if obs is science
@@ -85,6 +95,15 @@ class Lv3Step:
         if jwst_parameters is None:
             jwst_parameters = {}
 
+        if tweakreg_group_dithers is None:
+            tweakreg_group_dithers = []
+        if tweakreg_degroup_dithers is None:
+            tweakreg_degroup_dithers = []
+        if skymatch_group_dithers is None:
+            skymatch_group_dithers = []
+        if skymatch_degroup_dithers is None:
+            skymatch_degroup_dithers = []
+
         self.target = target
         self.band = band
         self.in_dir = in_dir
@@ -92,7 +111,9 @@ class Lv3Step:
         self.is_bgr = is_bgr
         self.step_ext = step_ext
         self.procs = procs
+        self.tweakreg_degroup_nircam_modules = tweakreg_degroup_nircam_modules
         self.tweakreg_group_dithers = tweakreg_group_dithers
+        self.tweakreg_degroup_dithers = tweakreg_degroup_dithers
         self.skymatch_group_dithers = skymatch_group_dithers
         self.skymatch_degroup_dithers = skymatch_degroup_dithers
         self.bgr_check_type = bgr_check_type
@@ -130,9 +151,6 @@ class Lv3Step:
             )
         )
         files.sort()
-
-        # Ensure we're not wasting processes
-        procs = np.nanmin([self.procs, len(files)])
 
         asn_file = self.create_asn_file(
             files=files,
@@ -243,7 +261,7 @@ class Lv3Step:
 
         log.info("Running level 3 pipeline")
 
-        _, short_long = get_band_type(self.band, short_long_nircam=True)
+        band_type, short_long = get_band_type(self.band, short_long_nircam=True)
 
         # FWHM should be set per-band for both tweakreg and source catalogue
         fwhm_pix = fwhms_pix[self.band]
@@ -292,10 +310,46 @@ class Lv3Step:
 
             recursive_setattr(tweakreg, tweakreg_key, value)
 
+        # Keep track of exposure numbers in case we change them
+        exposure_numbers = {}
+        for model in asn_file._models:
+            model_name = model.meta.filename
+            exposure_numbers[model_name] = model.meta.observation.exposure_number
+
         # Group up the dithers
         if short_long in self.tweakreg_group_dithers:
             for model in asn_file._models:
                 model.meta.observation.exposure_number = "1"
+
+        # Or degroup the dithers
+        elif short_long in self.tweakreg_degroup_dithers:
+            for i, model in enumerate(asn_file._models):
+                model.meta.observation.exposure_number = str(i)
+
+        # If needed, degroup the NIRCam modules. Do this by changing the
+        # first letter of the filename to the module, and adding a large
+        # number to the exposure number to degroup them
+        if (
+            band_type == "nircam"
+            and self.tweakreg_degroup_nircam_modules
+            and short_long not in self.tweakreg_degroup_dithers
+        ):
+            for i, model in enumerate(asn_file._models):
+
+                module = model.meta.instrument.module.strip().lower()
+
+                exp_no = int(model.meta.observation.exposure_number)
+                if module == "a":
+                    model.meta.observation.exposure_number = str(exp_no + 99)
+                elif module == "b":
+                    model.meta.observation.exposure_number = str(exp_no + 100)
+                else:
+                    raise ValueError("Expecting module to either be A or B")
+
+                model_name = list(copy.deepcopy(model.meta.filename))
+                model_name[0] = module
+                model_name = "".join(model_name)
+                model.meta.filename = copy.deepcopy(model_name)
 
         asn_file = tweakreg.run(asn_file)
 
@@ -305,10 +359,26 @@ class Lv3Step:
         # Make sure we skip tweakreg since we've already done it
         im3.tweakreg.skip = True
 
-        # Degroup again to avoid potential weirdness later
-        if short_long in self.tweakreg_group_dithers:
+        # Set the name back to "jw" at the start if we're degrouping NIRCam modules
+        if (
+                band_type == "nircam"
+                and self.tweakreg_degroup_nircam_modules
+                and short_long not in self.tweakreg_degroup_dithers
+        ):
             for i, model in enumerate(asn_file._models):
-                model.meta.observation.exposure_number = str(i)
+                model_name = list(copy.deepcopy(model.meta.filename))
+                model_name[0] = "j"
+                model_name = "".join(model_name)
+                model.meta.filename = copy.deepcopy(model_name)
+
+        # Set exposure numbers back to original values to avoid potential weirdness later
+        if (
+            short_long in self.tweakreg_group_dithers
+            or short_long in self.tweakreg_degroup_dithers
+        ):
+            for i, model in enumerate(asn_file._models):
+                model_name = model.meta.filename
+                model.meta.observation.exposure_number = exposure_numbers[model_name]
 
         # Run the skymatch step with custom hacks if required
         config = SkyMatchStep.get_config_from_reference(asn_file)
@@ -348,10 +418,14 @@ class Lv3Step:
         del skymatch
         gc.collect()
 
-        # Degroup again to avoid potential weirdness later
-        if short_long in self.skymatch_group_dithers:
+        # Set exposure numbers back to original values to avoid potential weirdness later
+        if (
+            short_long in self.skymatch_group_dithers
+            or short_long in self.skymatch_degroup_dithers
+        ):
             for i, model in enumerate(asn_file._models):
-                model.meta.observation.exposure_number = str(i)
+                model_name = model.meta.filename
+                model.meta.observation.exposure_number = exposure_numbers[model_name]
 
         im3.skymatch.skip = True
 

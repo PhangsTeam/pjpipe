@@ -340,7 +340,7 @@ class AstrometricAlignStep:
             )
 
             if not os.path.exists(ref_hdu_name):
-                os.system("cp %s %s" % (file, aligned_file))
+                os.system(f"cp {file} {aligned_file}")
                 continue
 
             with datamodels.open(ref_hdu_name) as ref_im:
@@ -416,7 +416,7 @@ class AstrometricAlignStep:
                 shift = [-x_off, -y_off]
                 matrix = [[1, 0], [0, 1]]
 
-                log.info("Found offset of %s" % shift)
+                log.info(f"Found offset of {shift}")
 
             elif self.align_mapping_mode == "shift":
                 # Add in shift metadata
@@ -584,7 +584,7 @@ class AstrometricAlignStep:
                     astrometry_parameter_dict = copy.deepcopy(self.tweakreg_parameters)
                 else:
                     astrometry_parameter_dict = copy.deepcopy(
-                        self.tweakreg_parameters["iteration%d" % (iteration + 1)]
+                        self.tweakreg_parameters[f"iteration{iteration + 1:d}"]
                     )
 
                 # Run a match

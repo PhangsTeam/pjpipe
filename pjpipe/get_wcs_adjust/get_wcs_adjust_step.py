@@ -128,7 +128,10 @@ class GetWCSAdjustStep:
         out_file = os.path.join(self.directory, f"{self.target}_wcs_adjust.toml")
 
         if self.overwrite:
-            os.remove(out_file)
+            if os.path.exists(out_file):
+                os.remove(out_file)
+            if os.path.exists(step_complete_file):
+                os.remove(step_complete_file)
 
         if os.path.exists(step_complete_file):
             log.info("Step already run")
@@ -249,7 +252,16 @@ class GetWCSAdjustStep:
                 matrix = transform.matrix.value
                 xy_shift = RAD_TO_ARCSEC * transform.translation.value
 
-                visit = os.path.split(output_file)[-1].split("_")[0]
+                # Pull out a visit name. This will be different if the band is having
+                # dithers grouped or not
+                out_split = os.path.split(output_file)[-1]
+
+                band_type = aligned_model.meta.instrument.name.strip().lower()
+                if band_type in self.group_dithers:
+                    visit = out_split.split("_")[0]
+                else:
+                    visit = "_".join(out_split.split("_")[:3])
+
                 if visit in visit_transforms:
                     visit_transforms[visit]["shift"] = np.vstack(
                         (visit_transforms[visit]["shift"], xy_shift)

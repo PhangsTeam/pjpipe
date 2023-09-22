@@ -155,26 +155,35 @@ class ApplyWCSAdjustStep:
 
         im = JWSTWCSCorrector(ref_wcs, ref_wcsinfo)
 
-        # Pull out the info we need to shift
-        visit = file_short.split("_")[0]
+        # Pull out the info we need to shift. If we have both
+        # dithers ungrouped and grouped, prefer the ungrouped
+        # ones
+        visit_grouped = file_short.split("_")[0]
+        visit_ungrouped = "_".join(file_short.split("_")[:3])
 
-        try:
-            wcs_adjust_vals = self.wcs_adjust["wcs_adjust"][visit]
+        matrix = [[1, 0], [0, 1]]
+        shift = [0, 0]
 
-            try:
-                matrix = wcs_adjust_vals["matrix"]
-            except KeyError:
-                matrix = [[1, 0], [0, 1]]
+        visit_found = False
+        for visit in [visit_ungrouped, visit_grouped]:
+            if not visit_found:
+                if visit in self.wcs_adjust["wcs_adjust"]:
+                    wcs_adjust_vals = self.wcs_adjust["wcs_adjust"][visit]
 
-            try:
-                shift = wcs_adjust_vals["shift"]
-            except KeyError:
-                shift = [0, 0]
+                    try:
+                        matrix = wcs_adjust_vals["matrix"]
+                    except KeyError:
+                        matrix = [[1, 0], [0, 1]]
 
-        except KeyError:
-            # log.info('No WCS adjust info found for %s. Defaulting to no shift' % visit)
-            matrix = [[1, 0], [0, 1]]
-            shift = [0, 0]
+                    try:
+                        shift = wcs_adjust_vals["shift"]
+                    except KeyError:
+                        shift = [0, 0]
+
+                    visit_found = True
+
+        if not visit_found:
+            log.info(f"No shifts found for {file_short}. Defaulting to no shift")
 
         im.set_correction(matrix=matrix, shift=shift)
 

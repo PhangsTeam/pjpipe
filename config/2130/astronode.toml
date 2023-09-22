@@ -1,5 +1,5 @@
 crds_path = '/data/beegfs/astro-storage/groups/schinnerer/williams/crds/'
-raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw/2130/archive_20230912/'
+raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw/2130/archive_20230918/'
 reprocess_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_2130/'
 alignment_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_scripts/config/2130/alignment/'
 #webb_psf_data = '/data/beegfs/astro-storage/groups/schinnerer/williams/webbpsf-data'
