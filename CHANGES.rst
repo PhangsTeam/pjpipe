@@ -1,3 +1,15 @@
+0.9.3 (Unreleased)
+==================
+
+- If not grouping dithers in ``get_wcs_adjust_step``, respect that in how the transforms are
+  written out
+- Added option in ``lv3_step`` to degroup dithers for tweakreg
+- Added option in ``lv3_step`` to degroup NIRCam modules, since the WCS is currently inconsistent
+  between the two
+- Fixed crash in ``lv3_step`` if one of the group/degroup parameters is not defined
+- Be smarter about keeping track of exposure numbers in ``lv3_step``
+- f-string fixes
+
 0.9.2 (2023-09-18)
 ==================
 

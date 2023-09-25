@@ -239,7 +239,13 @@ def get_kws(
     return func_kws
 
 
-def parse_parameter_dict(parameters, key, band, target, max_level=None):
+def parse_parameter_dict(
+    parameters,
+    key,
+    band,
+    target,
+    max_level=None,
+):
     """Pull values out of a parameter dictionary
 
     Args:
@@ -481,7 +487,7 @@ def parse_fits_to_table(
                     f_type = "bgr"
 
         else:
-            raise Warning("check_type %s not known" % check_type)
+            raise Warning(f"check_type {check_type} not known")
 
     # Pull out data we need from header
     with datamodels.open(file) as im:
@@ -602,7 +608,7 @@ def reproject_image(
             elif hdu_type == "var_rnoise":
                 data = copy.deepcopy(hdu.var_rnoise)
             else:
-                raise Warning("Unsure how to deal with hdu_type %s" % hdu_type)
+                raise Warning(f"Unsure how to deal with hdu_type {hdu_type}")
 
             dq_bit_mask = get_dq_bit_mask(hdu.dq)
 

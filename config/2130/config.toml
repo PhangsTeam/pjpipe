@@ -1,8 +1,8 @@
 # List of targets
 targets = [
-    'ngc0300',
+#    'ngc0300',
     'ngc0598',
-    'ngc7793',
+#    'ngc7793',
 ]
 
 # Version for the reprocessing
@@ -78,6 +78,8 @@ jwst_parameters.bkg_subtract.sigma = 1.5
 
 [parameters.get_wcs_adjust]
 
+# Use shortest long NIRCam band, and shortest MIRI band to
+# lock in relative astrometry
 bands = [
     'F430M',
     'F444W',
@@ -92,7 +94,9 @@ group_dithers = [
 [parameters.get_wcs_adjust.tweakreg_parameters]
 
 align_to_gaia = false
-brightest = 500
+brightest.miri = 500
+brightest.nircam_long = 500
+brightest.nircam_short = 125
 snr_threshold = 3
 expand_refcat = true
 fitgeometry = 'shift'
@@ -114,8 +118,7 @@ nclip = 5
 bkg_boxsize.nircam_short = 100
 bkg_boxsize.nircam_long = 100
 bkg_boxsize.miri = 25
-enforce_user_order.miri = false
-enforce_user_order.nircam = true
+enforce_user_order = false
 
 [parameters.single_tile_destripe]
 quadrants = true
@@ -123,11 +126,10 @@ vertical_subtraction = true
 
 # Generally, filter diffuse. F090W is high enough res we don't have to
 filter_diffuse.nircam = true
-filter_diffuse.F090W = false
 
 dilate_size = 7
 destriping_method = 'median_filter'
-median_filter_scales = [3, 7, 15, 31, 63, 127]
+median_filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
 
 [parameters.multi_tile_destripe]
 quadrants = true
@@ -140,6 +142,8 @@ do_sigma_clip = false
 weight_method = 'rms'
 
 [parameters.lv3]
+
+tweakreg_degroup_nircam_modules = true
 
 tweakreg_group_dithers = [
     'nircam_short',
@@ -160,8 +164,8 @@ save_results = true
 
 [parameters.lv3.jwst_parameters.tweakreg]
 
-# Skip, since we have already solved for this
-skip = true
+# Skip for MIRI, since we have already solved for this
+skip.miri = true
 
 align_to_gaia = false
 brightest.nircam_short = 125
@@ -190,8 +194,7 @@ sigma.miri = 3
 # Tweak boxsize, so we detect objects in diffuse emission
 bkg_boxsize.nircam = 100
 bkg_boxsize.miri = 25
-enforce_user_order.miri = false
-enforce_user_order.nircam = true
+enforce_user_order = false
 
 [parameters.lv3.jwst_parameters.skymatch]
 
@@ -262,9 +265,9 @@ sigma = 3
 [parameters.release]
 
 remove_bloat = false
-move_tweakback = true
-move_backgrounds = true
-move_individual_fields = true
+move_tweakback = false
+move_backgrounds = false
+move_individual_fields = false
 
 [parameters.regress_against_previous]
 prev_version = 'v0p2'
