@@ -335,7 +335,6 @@ class Lv3Step:
             and short_long not in self.tweakreg_degroup_dithers
         ):
             for i, model in enumerate(asn_file._models):
-
                 module = model.meta.instrument.module.strip().lower()
 
                 exp_no = int(model.meta.observation.exposure_number)
@@ -361,9 +360,9 @@ class Lv3Step:
 
         # Set the name back to "jw" at the start if we're degrouping NIRCam modules
         if (
-                band_type == "nircam"
-                and self.tweakreg_degroup_nircam_modules
-                and short_long not in self.tweakreg_degroup_dithers
+            band_type == "nircam"
+            and self.tweakreg_degroup_nircam_modules
+            and short_long not in self.tweakreg_degroup_dithers
         ):
             for i, model in enumerate(asn_file._models):
                 model_name = list(copy.deepcopy(model.meta.filename))

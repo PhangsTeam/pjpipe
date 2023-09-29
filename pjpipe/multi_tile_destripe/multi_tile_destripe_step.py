@@ -15,7 +15,7 @@ from astropy.stats import sigma_clipped_stats
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from reproject import reproject_interp
 from reproject.mosaicking import find_optimal_celestial_wcs
-from scipy.ndimage import uniform_filter1d
+from scipy.ndimage import uniform_filter1d, median_filter
 from stdatamodels.jwst import datamodels
 from tqdm import tqdm
 
@@ -25,7 +25,9 @@ matplotlib.use("agg")
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
 
+ALLOWED_WEIGHT_METHODS = ["mean", "median"]
 ALLOWED_WEIGHT_TYPES = ["exptime", "ivm"]
+ALLOWED_LARGE_SCALE_METHODS = ["boxcar", "median", "sigma_clip"]
 
 # Global variables, to speed up multiprocessing
 data_reproj = []
@@ -210,11 +212,16 @@ class MultiTileDestripeStep:
         out_dir,
         step_ext,
         procs,
+        do_convergence=False,
+        convergence_sigma=1,
+        convergence_max_iterations=5,
+        weight_method="mean",
         weight_type="exptime",
         min_area_frac=0.5,
         quadrants=True,
         do_large_scale=False,
-        median_filter_factor=4,
+        large_scale_method="median",
+        large_scale_filter_factor=4,
         sigma=3,
         dilate_size=7,
         maxiters=None,
@@ -222,9 +229,14 @@ class MultiTileDestripeStep:
     ):
         """Subtracts large-scale stripes using dither information
 
-        Create a weighted mean image of all overlapping files, then do a sigma-clipped
+        Create a weighted average image of all overlapping files, then do a sigma-clipped
         median along columns and rows (optionally by quadrants), and finally a smoothed clip along
         rows after boxcar filtering to remove persistent large-scale ripples in the data
+
+        The default settings should be fine in most circumstances. If you are seeing
+        ripples in the data (particularly for short NIRCam observations), then you should set
+        do_large_scale to True, and use large_scale_method "median", since that seems to be more
+        robust than the boxcar
 
         Args:
             in_dir: Input directory
@@ -232,12 +244,24 @@ class MultiTileDestripeStep:
             step_ext: .fits extension for the files going
                 into the step
             procs: Number of processes to run in parallel
+            do_convergence: Whether to loop this iteratively
+                until convergence, or just do a single run.
+                Defaults to False
+            convergence_sigma: Maximum sigma difference to decide
+                if the iterative loop has converged. Defaults to 1
+            convergence_max_iterations: Maximum number of iterations
+                to run. Defaults to 5
+            weight_type: Weighting method for stacking the image.
+                Should be one of 'mean', 'median'. Defaults to 'mean'
             weight_type: How to weight the stacked image.
                 Defaults to 'exptime'
-            do_large_scale: Whether to do boxcar-filtering to try and remove large,
+            do_large_scale: Whether to do filtering to try and remove large,
                 consistent ripples between data. Defaults to False
-            median_filter_factor: Factor by which we smooth in terms of the array size.
-                Defaults to 4, i.e. smoothing scale is 1/4th the array size
+            large_scale_method: Which method to use to try and filter out
+                remaining large-scale stripes. Defaults to 'median'
+            large_scale_filter_factor: Factor by which we smooth in terms of the array
+                size for large scale methods that use this. Defaults to 4, i.e. smoothing
+                scale is 1/4th the array size
             sigma: sigma value for sigma-clipped statistics. Defaults to 3
             dilate_size: Dilation size for mask creation. Defaults to 7
             maxiters: Maximum number of sigma-clipping iterations. Defaults to None
@@ -245,10 +269,17 @@ class MultiTileDestripeStep:
                 to False
         """
 
+        if weight_method not in ALLOWED_WEIGHT_METHODS:
+            raise ValueError(
+                f"weight_method should be one of {ALLOWED_WEIGHT_METHODS}, not {weight_method}"
+            )
         if weight_type not in ALLOWED_WEIGHT_TYPES:
             raise ValueError(
                 f"weight_type should be one of {ALLOWED_WEIGHT_TYPES}, not {weight_type}"
             )
+
+        if weight_method == "median":
+            log.info("Using median for creating average image, will not use weighting")
 
         self.in_dir = in_dir
         self.out_dir = out_dir
@@ -259,11 +290,16 @@ class MultiTileDestripeStep:
         self.step_ext = step_ext
         self.procs = procs
 
+        self.do_convergence = do_convergence
+        self.convergence_sigma = convergence_sigma
+        self.convergence_max_iterations = convergence_max_iterations
+        self.weight_method = weight_method
         self.weight_type = weight_type
         self.min_area_frac = min_area_frac
         self.quadrants = quadrants
         self.do_large_scale = do_large_scale
-        self.median_filter_factor = median_filter_factor
+        self.large_scale_method = large_scale_method
+        self.large_scale_filter_factor = large_scale_filter_factor
         self.sigma = sigma
         self.dilate_size = dilate_size
         self.maxiters = maxiters
@@ -304,23 +340,65 @@ class MultiTileDestripeStep:
         # Ensure we're not wasting processes
         procs = np.nanmin([self.procs, len(files)])
 
-        # Create weighted images
-        success = self.weighted_reproject_image(
-            files,
-            procs=procs,
-        )
-        if not success:
-            log.warning("Error in creating reproject stack")
-            return False
+        # Get out the optimal WCS, since we only need to calculate this once
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            optimal_wcs, optimal_shape = find_optimal_celestial_wcs(files, hdu_in="SCI")
 
-        success = self.run_multi_tile_destripe(
-            procs=procs,
-        )
+        self.optimal_wcs = optimal_wcs
+        self.optimal_shape = optimal_shape
 
-        # If not everything has succeeded, then return a warning
-        if not success:
-            log.warning("Failures detected in multi-tile destriping")
-            return False
+        converged = False
+        iteration = 1
+
+        while not converged:
+            if self.do_convergence:
+                log.info(f"Performing iteration {iteration}")
+
+            # Create weighted images
+            success = self.weighted_reproject_image(
+                files,
+                procs=procs,
+            )
+            if not success:
+                log.warning("Error in creating reproject stack")
+                return False
+
+            stripe_sigma = self.run_multi_tile_destripe(
+                procs=procs,
+                iteration=iteration,
+            )
+
+            # If we're not iterating, then say we've converged
+            if not self.do_convergence:
+                converged = True
+            else:
+                if not np.all(stripe_sigma < self.convergence_sigma):
+                    if iteration < self.convergence_max_iterations:
+                        log.info("Destriping not converged. Continuing")
+                    else:
+                        log.info(
+                            "Destriping not converged but max iterations reached. Final stripe sigma values:"
+                        )
+                        for i, file in enumerate(files):
+                            log.info(f"{os.path.split(file)[-1]}, {stripe_sigma[i]}")
+                        converged = True
+                else:
+                    log.info("Convergence reached! Final stripe sigma values:")
+                    for i, file in enumerate(files):
+                        log.info(f"{os.path.split(file)[-1]}: {stripe_sigma[i]}")
+                    converged = True
+
+                # Use the output files to input into next iteration
+                files = glob.glob(
+                    os.path.join(
+                        self.out_dir,
+                        f"*_{self.step_ext}.fits",
+                    )
+                )
+                files.sort()
+
+            iteration += 1
 
         with open(step_complete_file, "w+") as f:
             f.close()
@@ -332,26 +410,19 @@ class MultiTileDestripeStep:
         files,
         procs=1,
     ):
-        """Get weighted mean reprojected image
+        """Get reprojected images (and weights)
 
         Args:
             files (list): Files to reproject
             procs (int): Number of processes to use. Defaults to 1.
         """
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            optimal_wcs, optimal_shape = find_optimal_celestial_wcs(files, hdu_in="SCI")
-
-        self.optimal_wcs = optimal_wcs
-        self.optimal_shape = optimal_shape
-
         global data_reproj, weight_reproj
         data_reproj = [None] * len(files)
         weight_reproj = [None] * len(files)
         files_reproj = [None] * len(files)
 
-        log.info("Creating weighted mean images")
+        log.info(f"Reprojecting images (and weights)")
 
         with mp.get_context("fork").Pool(procs) as pool:
             for i, result in tqdm(
@@ -359,8 +430,8 @@ class MultiTileDestripeStep:
                     partial(
                         parallel_reproject_weight,
                         files=files,
-                        optimal_wcs=optimal_wcs,
-                        optimal_shape=optimal_shape,
+                        optimal_wcs=self.optimal_wcs,
+                        optimal_shape=self.optimal_shape,
                         weight_type=self.weight_type,
                     ),
                     range(len(files)),
@@ -384,11 +455,13 @@ class MultiTileDestripeStep:
     def run_multi_tile_destripe(
         self,
         procs=1,
+        iteration=1,
     ):
         """Wrap parallelism around the multi-tile destriping
 
         Args:
             procs: Number of parallel processes. Defaults to 1
+            iteration: What iteration are we on? Defaults to 1
         """
 
         log.info("Running multi-tile destripe")
@@ -400,6 +473,7 @@ class MultiTileDestripeStep:
                 pool.imap_unordered(
                     partial(
                         self.parallel_multi_tile_destripe,
+                        iteration=iteration,
                     ),
                     range(len(self.files_reproj)),
                 ),
@@ -412,6 +486,8 @@ class MultiTileDestripeStep:
             pool.close()
             pool.join()
             gc.collect()
+
+        stripe_sigma = np.zeros(len(self.files_reproj))
 
         for result in results:
             if result is not None:
@@ -427,16 +503,32 @@ class MultiTileDestripeStep:
                 with datamodels.open(in_file) as im:
                     im.data -= stripes
                     im.save(out_file)
+
+                    # Find the right index, since multiprocessing doesn't
+                    # preserve the order necessarily
+                    idx = self.files_reproj.index(in_file)
+
+                    # Calculate the maximum sigma-values for the stripes wrt error
+                    err = copy.deepcopy(im.err)
+                    err[err == 0] = np.nan
+                    stripe_sigma[idx] = np.abs(np.nanmax(stripes / im.err))
+
                 del im
+
         gc.collect()
 
-        return True
+        return stripe_sigma
 
-    def parallel_multi_tile_destripe(self, idx):
+    def parallel_multi_tile_destripe(
+        self,
+        idx,
+        iteration=1,
+    ):
         """Function to parallelise up multi-tile destriping
 
         Args:
             idx: Index of file to be destriped
+            iteration: What iteration are we on? Defaults to 1
         """
 
         file = self.files_reproj[idx]
@@ -451,6 +543,7 @@ class MultiTileDestripeStep:
             file,
             data_avg_array=data_avg,
             data_avg_wcs=data_avg_wcs,
+            iteration=iteration,
         )
         return idx, result
 
@@ -467,19 +560,26 @@ class MultiTileDestripeStep:
         file_data = copy.deepcopy(data_reproj[subset_idx])
         file_weight = copy.deepcopy(weight_reproj[subset_idx])
 
-        data = np.zeros_like(file_data.array)
-        weights = np.zeros_like(file_weight.array)
+        weighted_file_data = file_weight.array * file_data.array
 
         # First, put the original image in
-        data += file_weight.array * file_data.array
-        weights += file_weight.array
+        if self.weight_method == "mean":
+            data = np.zeros_like(file_data.array)
+            weights = np.zeros_like(file_weight.array)
+            data += weighted_file_data
+            weights += file_weight.array
+        elif self.weight_method == "median":
+            data = [copy.deepcopy(file_data.array)]
+            weights = [copy.deepcopy(file_weight.array)]
+        else:
+            raise ValueError(f"weight_method should be one of {ALLOWED_WEIGHT_METHODS}")
 
         # Get the number of pixels, so that we can remove any small overlaps
         # later
         valid_idx = np.where(
             np.logical_and(
-                data != 0,
-                np.isfinite(data),
+                weighted_file_data != 0,
+                np.isfinite(weighted_file_data),
             )
         )
         npix_file = len(valid_idx[0])
@@ -540,13 +640,15 @@ class MultiTileDestripeStep:
             )
 
             # Put data and weights into array
-            new_data = np.zeros_like(data)
-            new_weights = np.zeros_like(weights)
-            new_data[final_slice] += weight_i[reproj_slice] * data_i[reproj_slice]
-            new_weights[final_slice] += weight_i[reproj_slice]
+            new_data = np.zeros_like(file_data.array)
+            new_weights = np.zeros_like(file_weight.array)
+            new_weighted_file_data = np.zeros_like(new_data)
+            new_weighted_file_data[final_slice] = (
+                weight_i[reproj_slice] * data_i[reproj_slice]
+            )
 
             # Check we have the required amount of overlap
-            valid_i = new_data[valid_idx]
+            valid_i = new_weighted_file_data[valid_idx]
             valid_i = valid_i[np.logical_and(valid_i != 0, np.isfinite(valid_i))]
 
             area_frac = len(valid_i) / npix_file
@@ -554,12 +656,42 @@ class MultiTileDestripeStep:
             if area_frac < self.min_area_frac:
                 continue
 
-            data += new_data
-            weights += new_weights
+            # If we're using the mean, we can just add here. Otherwise, we need to append
+            # data and weights
+            if self.weight_method == "mean":
+                new_data += new_weighted_file_data
+                new_weights[final_slice] += weight_i[reproj_slice]
+                data += new_data
+                weights += new_weights
+            elif self.weight_method == "median":
+                new_data[final_slice] = copy.deepcopy(data_i[reproj_slice])
+                new_weights[final_slice] = copy.deepcopy(weight_i[reproj_slice])
+                data.append(new_data)
+                weights.append(new_weights)
+            else:
+                raise ValueError(
+                    f"weight_method should be one of {ALLOWED_WEIGHT_METHODS}"
+                )
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            data_avg = data / weights
+        # Now we can calculate the average. For the mean, this is weighted
+        if self.weight_method == "mean":
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                data_avg = data / weights
+
+        # For the median, ignore weights (apart from 0s)
+        elif self.weight_method == "median":
+            data = np.stack(data, axis=-1)
+            weights = np.stack(weights, axis=-1)
+            data[weights == 0] = np.nan
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                data_avg = np.nanmedian(data, axis=-1)
+
+        else:
+            raise ValueError(f"weight_method should be one of {ALLOWED_WEIGHT_METHODS}")
+
         data_avg[data_avg == 0] = np.nan
 
         return data_avg, file_imin, file_imax, file_jmin, file_jmax
@@ -569,10 +701,11 @@ class MultiTileDestripeStep:
         file,
         data_avg_array,
         data_avg_wcs,
+        iteration=1,
     ):
         """Do a row-by-row, column-by-column data subtraction using other dither information
 
-        Create a weighted mean image of all overlapping files, then do a sigma-clipped
+        Create a weighted average image of all overlapping files, then do a sigma-clipped
         median along columns and rows (optionally by quadrants), and finally a smoothed clip along
         rows after boxcar filtering to remove persistent large-scale ripples in the data
 
@@ -580,6 +713,7 @@ class MultiTileDestripeStep:
             file (str): File to correct
             data_avg_array (np.ndarray): Pre-calculated average image
             data_avg_wcs: WCS for the average image
+            iteration: What iteration are we on? Defaults to 1
         """
 
         with warnings.catch_warnings():
@@ -703,16 +837,79 @@ class MultiTileDestripeStep:
             stripes_arr[np.isnan(stripes_arr)] = 0
 
             if self.do_large_scale:
-                # Filter along the y-axis (to preserve the stripe noise) with a large boxcar filter.
+
+                # Filter along the y-axis (to preserve the stripe noise) with some filter.
                 # This ideally flattens out the background, for any consistent large-scale ripples
                 # between images
-                boxcar = uniform_filter1d(
-                    data_avg,
-                    size=data_avg.shape[0] // self.median_filter_factor,
-                    axis=0,
-                    mode="reflect",
-                )
-                diff_smoothed = data - stripes_arr - boxcar
+
+                # Boxcar filter
+                if self.large_scale_method == "boxcar":
+
+                    # Centre data and replace NaN with 0 so boxcar don't catastrophically fail
+                    data_avg -= np.nanmedian(data_avg)
+                    data_avg[np.isnan(data_avg)] = 0
+
+                    boxcar = uniform_filter1d(
+                        data_avg,
+                        size=data_avg.shape[0] // self.large_scale_filter_factor,
+                        axis=0,
+                        mode="reflect",
+                    )
+                    diff_smoothed = data - stripes_arr - boxcar
+
+                # Median filter
+                elif self.large_scale_method == "median":
+
+                    # Centre data and replace NaN with 0 so median don't catastrophically fail
+                    data_avg -= np.nanmedian(data_avg)
+                    data_avg[np.isnan(data_avg)] = 0
+
+                    # TODO: For now this doesn't work, since JWST requires older scipy versions
+                    # med = median_filter(
+                    #     data_avg,
+                    #     size=data_avg.shape[0] // self.large_scale_filter_factor,
+                    #     axes=0,
+                    #     mode="reflect",
+                    # )
+
+                    # Loop to do the median filter
+                    med = np.zeros_like(data_avg)
+                    for i in range(med.shape[1]):
+                        med[:, i] = median_filter(
+                            data_avg[:, i],
+                            size=data_avg.shape[0] // self.large_scale_filter_factor,
+                            mode="reflect",
+                        )
+
+                    diff_smoothed = data - stripes_arr - med
+
+                # Sigma-clipping and subtracting (likely to break down in bright tiles)
+                elif self.large_scale_method == "sigma_clip":
+                    # Mask data and sigma-clip along the x-axis
+                    mask_data = make_source_mask(
+                        data_avg,
+                        nsigma=self.sigma,
+                        dilate_size=self.dilate_size,
+                        sigclip_iters=self.maxiters,
+                    )
+
+                    data_sig_clip = sigma_clipped_stats(
+                        data_avg,
+                        mask=mask_data,
+                        sigma=self.sigma,
+                        maxiters=self.maxiters,
+                        axis=1,
+                    )[1]
+
+                    data_sub = data_avg - data_sig_clip[:, np.newaxis]
+
+                    diff_smoothed = data - stripes_arr - data_sub
+
+                else:
+                    raise ValueError(
+                        f"large_scale_method should be one of {ALLOWED_LARGE_SCALE_METHODS}"
+                    )
+
                 diff_smoothed -= np.nanmedian(diff_smoothed)
 
                 mask_pos = make_source_mask(
@@ -749,10 +946,15 @@ class MultiTileDestripeStep:
                 stripes_arr -= np.nanmedian(stripes_arr)
                 stripes_arr[np.isnan(stripes_arr)] = 0
 
-            # Make diagnostic plot
+            # Make diagnostic plot. Use different names if
+            # we're iterating
+            suffix = "_dither_stripe_sub"
+            if self.do_convergence:
+                suffix += f"_iter_{iteration}"
+
             plot_name = os.path.join(
                 self.plot_dir,
-                file_name.replace(".fits", "_dither_stripe_sub"),
+                file_name.replace(".fits", suffix),
             )
 
             make_diagnostic_plot(

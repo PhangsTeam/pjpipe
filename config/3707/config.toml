@@ -60,8 +60,9 @@ radius = 20
 
 jwst_parameters.save_results = true
 
-# Flag snowballs in the narrowband
-jwst_parameters.jump.expand_large_events.F187N = true
+# Flag snowballs in NIRCam
+#jwst_parameters.jump.expand_large_events.F187N = true
+jwst_parameters.jump.expand_large_events.nircam = true
 
 jwst_parameters.ramp_fit.suppress_one_group = false
 jwst_parameters.refpix.use_side_ref_pixels = true
