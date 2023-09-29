@@ -8,6 +8,7 @@
   between the two
 - Fixed crash in ``lv3_step`` if one of the group/degroup parameters is not defined
 - Be smarter about keeping track of exposure numbers in ``lv3_step``
+- Make sure backgrounds are included in label for ``regress_against_previous``
 - f-string fixes
 
 0.9.2 (2023-09-18)
