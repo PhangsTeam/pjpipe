@@ -3,6 +3,15 @@
 
 - If not grouping dithers in ``get_wcs_adjust_step``, respect that in how the transforms are
   written out
+- Added median option to ``multi_tile_destripe_step`` to do a median rather than mean image
+- Added iterative option to ``multi_tile_destripe_step`` that will keep things going until
+  sigma-based convergence
+- Added support for different ``do_large_scale`` methods in ``multi_tile_destripe_step``,
+  which may work better in certain situations
+- Added a median filter ``do_large_scale`` method, which may be more robust than the boxcar. THIS
+  IS NOW THE DEFAULT
+- Added a sigma-clipped ``do_large_scale`` method, as should be optimal in observations that aren't
+  full of emission
 - Added option in ``lv3_step`` to degroup dithers for tweakreg
 - Added option in ``lv3_step`` to degroup NIRCam modules, since the WCS is currently inconsistent
   between the two
