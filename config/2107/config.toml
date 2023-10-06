@@ -22,18 +22,18 @@ targets = [
 ]
 
 # Version for the reprocessing
-version = 'v0p9p1'
+version = 'v0p9p2'
 
 # Bands to consider
 bands = [
-#    'F200W',
-#    'F300M',
-#    'F335M',
-#    'F360M',
-#    'F1000W',
-#    'F770W',
-#    'F1130W',
-#    'F2100W',
+    'F200W',
+    'F300M',
+    'F335M',
+    'F360M',
+    'F1000W',
+    'F770W',
+    'F1130W',
+    'F2100W',
     'F1000W_bgr',
     'F770W_bgr',
     'F1130W_bgr',

@@ -186,7 +186,16 @@ class RegressAgainstPreviousStep:
             plt.subplots(nrows=1, ncols=len(files), figsize=(4 * len(files), 4))
 
             for i, file in enumerate(files):
-                band = os.path.split(file)[-1].split("_")[3]
+
+                file_short = os.path.split(file)[-1]
+
+                # Make sure we get bands right if it's a background obs
+                if "_bgr_" in file_short:
+                    is_bgr = True
+                else:
+                    is_bgr = False
+
+                band = file_short.split("_")[3]
 
                 diff, v = get_diff_image(
                     file,
@@ -227,10 +236,14 @@ class RegressAgainstPreviousStep:
                     cax = divider.append_axes("right", size="5%", pad=0)
                     plt.colorbar(im, cax=cax, label="MJy/sr")
 
+                band_text = band.upper()
+                if is_bgr:
+                    band_text += " bgr"
+
                 plt.text(
                     0.05,
                     0.95,
-                    band.upper(),
+                    band_text,
                     ha="left",
                     va="top",
                     fontweight="bold",
