@@ -12,6 +12,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.stats import sigma_clipped_stats
+from astropy.convolution import convolve
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from reproject import reproject_interp
 from reproject.mosaicking import find_optimal_celestial_wcs
@@ -27,7 +28,7 @@ log.addHandler(logging.NullHandler())
 
 ALLOWED_WEIGHT_METHODS = ["mean", "median"]
 ALLOWED_WEIGHT_TYPES = ["exptime", "ivm"]
-ALLOWED_LARGE_SCALE_METHODS = ["boxcar", "median", "sigma_clip"]
+ALLOWED_LARGE_SCALE_METHODS = ["boxcar", "median", "convolve_smooth", "sigma_clip"]
 
 # Global variables, to speed up multiprocessing
 data_reproj = []
@@ -222,6 +223,7 @@ class MultiTileDestripeStep:
         do_large_scale=False,
         large_scale_method="median",
         large_scale_filter_factor=4,
+        large_scale_filter_extend_mode="reflect",
         sigma=3,
         dilate_size=7,
         maxiters=None,
@@ -262,6 +264,8 @@ class MultiTileDestripeStep:
             large_scale_filter_factor: Factor by which we smooth in terms of the array
                 size for large scale methods that use this. Defaults to 4, i.e. smoothing
                 scale is 1/4th the array size
+            large_scale_filter_extend_mode: How to extend values in the filter beyond
+                array edge. Default is "reflect". See the specific docs for more info
             sigma: sigma value for sigma-clipped statistics. Defaults to 3
             dilate_size: Dilation size for mask creation. Defaults to 7
             maxiters: Maximum number of sigma-clipping iterations. Defaults to None
@@ -300,6 +304,7 @@ class MultiTileDestripeStep:
         self.do_large_scale = do_large_scale
         self.large_scale_method = large_scale_method
         self.large_scale_filter_factor = large_scale_filter_factor
+        self.large_scale_filter_extend_mode = large_scale_filter_extend_mode
         self.sigma = sigma
         self.dilate_size = dilate_size
         self.maxiters = maxiters
@@ -853,7 +858,7 @@ class MultiTileDestripeStep:
                         data_avg,
                         size=data_avg.shape[0] // self.large_scale_filter_factor,
                         axis=0,
-                        mode="reflect",
+                        mode=self.large_scale_filter_extend_mode,
                     )
                     diff_smoothed = data - stripes_arr - boxcar
 
@@ -869,7 +874,7 @@ class MultiTileDestripeStep:
                     #     data_avg,
                     #     size=data_avg.shape[0] // self.large_scale_filter_factor,
                     #     axes=0,
-                    #     mode="reflect",
+                    #     mode=self.large_scale_filter_extend_mode,
                     # )
 
                     # Loop to do the median filter
@@ -878,8 +883,29 @@ class MultiTileDestripeStep:
                         med[:, i] = median_filter(
                             data_avg[:, i],
                             size=data_avg.shape[0] // self.large_scale_filter_factor,
-                            mode="reflect",
+                            mode=self.large_scale_filter_extend_mode,
                         )
+
+                    diff_smoothed = data - stripes_arr - med
+
+                elif self.large_scale_method == "convolve_smooth":
+
+                    # Centre data and replace NaN with 0 so median don't catastrophically fail
+                    data_avg -= np.nanmedian(data_avg)
+                    data_avg[np.isnan(data_avg)] = 0
+
+                    # Create kernel
+                    kernel_scale = data_avg.shape[0] // self.large_scale_filter_factor
+
+                    # Make sure scale is odd!
+                    if kernel_scale % 2 == 0:
+                        kernel_scale -= 1
+                    kernel = np.ones(kernel_scale) / float(kernel_scale)
+
+                    # Loop over the data and smooth down each column
+                    med = np.zeros_like(data_avg)
+                    for i in range(med.shape[1]):
+                        med[:, i] = convolve(data_avg[:, i], kernel, boundary="extend")
 
                     diff_smoothed = data - stripes_arr - med
 
