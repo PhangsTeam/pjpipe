@@ -1,10 +1,12 @@
 # List of targets
 targets = [
+    'ic5273',
     'ngc1559',
+    'ngc7456',
 ]
 
 # Version for the reprocessing
-version = 'v0p0p2'
+version = 'v0p0p3'
 
 # Bands to consider
 bands = [
@@ -237,7 +239,9 @@ F2100W = 'F770W'
 F2100W_bgr = 'F770W_bgr'
 
 [parameters.astrometric_align.catalogs]
-ngc1559 = 'Gaia_DR3_ngc1559.fits'
+ic5273 = 'Gaia_DR3_ic5273.fits'
+ngc1559 = 'ngc1559_agb_cat.fits'
+ngc7456 = 'Gaia_DR3_ngc7456.fits'
 
 # Initial pass to get decent shifts for absolute astrometry
 [parameters.astrometric_align.tweakreg_parameters.iteration1]
@@ -270,4 +274,4 @@ move_tweakback = false
 move_backgrounds = false
 
 [parameters.regress_against_previous]
-prev_version = 'v0p0p1'
+prev_version = 'v0p0p2'
