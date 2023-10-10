@@ -20,6 +20,8 @@ from .move_raw_obs import MoveRawObsStep
 from .multi_tile_destripe import MultiTileDestripeStep
 from .single_tile_destripe import SingleTileDestripeStep
 from .get_wcs_adjust import GetWCSAdjustStep
+from .anchoring import AnchoringStep
+from .psf_matching import PSFMatchingStep
 from .release import ReleaseStep
 from .regress_against_previous import RegressAgainstPreviousStep
 from .utils import *
@@ -41,6 +43,8 @@ ALLOWED_STEPS = [
     "astrometric_catalog",
     "astrometric_align",
     "mosaic_individual_fields",
+    "anchoring",
+    "psf_matching",
     "release",
     "regress_against_previous",
 ]
@@ -50,6 +54,7 @@ COMBINED_BAND_STEPS = [
     "download",
     "gaia_query",
     "get_wcs_adjust",
+    "anchoring",
     "release",
     "regress_against_previous",
 ]
@@ -62,6 +67,8 @@ IN_STEP_EXTS = {
     "lv2": "rate",
     "astrometric_catalog": "i2d",
     "astrometric_align": "i2d",
+    "anchoring": "i2d_align",
+    "psf_matching": "anc",
     "release": None,
 }
 
@@ -70,12 +77,16 @@ IN_BAND_DIRS = {
     "lv2": "lv1",
     "astrometric_catalog": "lv3",
     "astrometric_align": "lv3",
+    "anchoring": "lv3",
+    "psf_matching": "anchoring",
     "release": "lv3",
 }
 
 OUT_BAND_DIRS = {
     "astrometric_catalog": "lv3",
     "astrometric_align": "lv3",
+    "anchoring": "anchoring",
+    "psf_matching": "psf_match",
     "release": None,
 }
 
@@ -135,6 +146,8 @@ class PJPipeline:
             self.version,
         )
         self.alignment_dir = local["alignment_dir"]
+        self.kernels_dir = local["kernels_dir"]
+        self.reference_dir = local["reference_dir"]
         if "processors" in local:
             procs = local["processors"]
         else:
@@ -245,6 +258,26 @@ class PJPipeline:
                             **step_parameters,
                         )
                         step_result = get_wcs_adjust.do_step()
+
+                    # anchoring is in the part operating for all bands because
+                    # we need more control on the sequence (reference nircam and miri bands first)
+                    elif step == "anchoring":
+                        anchoring = AnchoringStep(
+                            procs=self.procs,
+                            w_dir=target_dir,
+                            subdir_in=IN_BAND_DIRS[step],
+                            subdir_out=OUT_BAND_DIRS[step],
+                            reference_dir=self.reference_dir,
+                            kernels_dir=self.kernels_dir,
+                            step_ext_in=in_step_ext,
+                            step_ext_out='anc',
+                            target=target,
+                            all_bands=[b for b in self.bands if 'bgr' not in b],  # exclude backgrounds
+                            **step_parameters,
+                        )
+                        step_result = anchoring.do_step()
+                        # we don't want to remove all target directory for this step. So, assume it is success
+                        step_result = True
 
                     elif step == "release":
                         release = ReleaseStep(
@@ -647,6 +680,23 @@ class PJPipeline:
                                 **kws,
                             )
                             step_result = mosaic_individual_fields.do_step()
+
+                        elif step == "psf_matching":
+
+                            psf_matching = PSFMatchingStep(
+                                in_dir=in_dir,
+                                out_dir=out_dir,
+                                step_ext_in=in_step_ext,
+                                target=target,
+                                procs=self.procs,
+                                kernels_dir=self.kernels_dir,
+                                band=band,
+                                **step_parameters,
+                            )
+                            step_result = psf_matching.do_step()
+                            # we don't want to remove all band directory if something wrong with this step.
+                            # So, assume here that it is successful
+                            step_result = True
 
                         else:
                             raise ValueError(

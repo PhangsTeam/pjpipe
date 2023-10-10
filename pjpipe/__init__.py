@@ -26,8 +26,11 @@ from .regress_against_previous import RegressAgainstPreviousStep
 from .pipeline import PJPipeline
 from .single_tile_destripe import SingleTileDestripeStep
 from .utils import load_toml
+from .anchoring import AnchoringStep
+from .psf_matching import PSFMatchingStep
 
 __all__ = [
+    "AnchoringStep",
     "ApplyWCSAdjustStep",
     "AstrometricAlignStep",
     "AstrometricCatalogStep",
@@ -43,6 +46,7 @@ __all__ = [
     "MosaicIndividualFieldsStep",
     "MoveRawObsStep",
     "PJPipeline",
+    "PSFMatchingStep",
     "ReleaseStep",
     "RegressAgainstPreviousStep",
     "SingleTileDestripeStep",
