@@ -157,7 +157,8 @@ vertical_subtraction = true
 filter_diffuse = true
 dilate_size = 7
 destriping_method = 'median_filter'
-median_filter_scales = [3, 7, 15, 31, 63, 127]
+filter_extend_mode = "nearest"
+filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
 
 [parameters.multi_tile_destripe]
 quadrants = true
@@ -165,6 +166,7 @@ sigma = 3
 weight_type = 'ivm'
 do_large_scale.nircam_long = true
 do_large_scale.nircam_short = false
+large_scale_filter_extend_mode = "nearest"
 
 [parameters.level_match]
 do_sigma_clip = false

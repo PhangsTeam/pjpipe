@@ -12,6 +12,7 @@ from functools import partial
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+from astropy.convolution import convolve
 from astropy.stats import sigma_clipped_stats
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.ndimage import median_filter
@@ -32,6 +33,7 @@ DESTRIPING_METHODS = [
     "row_median",
     "median_filter",
     "remstripe",
+    "smooth",
     "pca",
 ]
 
@@ -145,7 +147,8 @@ class SingleTileDestripeStep:
         npixels=3,
         dilate_size=11,
         max_iters=20,
-        median_filter_scales=None,
+        filter_scales=None,
+        filter_extend_mode="reflect",
         pca_components=50,
         pca_reconstruct_components=10,
         overwrite=False,
@@ -172,7 +175,9 @@ class SingleTileDestripeStep:
             npixels: Pixels to grow for masking. Defaults to 5
             dilate_size: make_source_mask dilation size. Defaults to 11
             max_iters: Maximum sigma-clipping iterations. Defaults to 20
-            median_filter_scales: Scales for median filtering
+            filter_scales: Scales for filtering. Used in median filtering and smooth
+            filter_extend_mode: How to extend values in the filter beyond
+                array edge. Default is "reflect". See the specific docs for more info
             pca_components: Number of PCA components to model. Defaults to 50
             pca_reconstruct_components: Number of PCA components to use in reconstruction. Defaults to 10
             overwrite: Whether to overwrite or not. Defaults to False
@@ -183,8 +188,8 @@ class SingleTileDestripeStep:
                 f"destriping_method should be one of {DESTRIPING_METHODS}, not {destriping_method}"
             )
 
-        if median_filter_scales is None:
-            median_filter_scales = [3, 7, 15, 31, 63, 127]
+        if filter_scales is None:
+            filter_scales = [3, 7, 15, 31, 63, 127]
 
         self.in_dir = in_dir
         self.out_dir = out_dir
@@ -204,7 +209,8 @@ class SingleTileDestripeStep:
         self.npixels = npixels
         self.dilate_size = dilate_size
         self.max_iters = max_iters
-        self.median_filter_scales = median_filter_scales
+        self.filter_scales = filter_scales
+        self.filter_extend_mode = filter_extend_mode
         self.pca_components = pca_components
         self.pca_reconstruct_components = pca_reconstruct_components
         self.overwrite = overwrite
@@ -355,6 +361,14 @@ class SingleTileDestripeStep:
                     is_subarray=is_subarray,
                     quadrants=quadrants,
                 )
+            elif self.destriping_method == "smooth":
+                full_noise_model += self.run_smooth(
+                    im=im,
+                    prev_noise_model=full_noise_model,
+                    out_name=out_name,
+                    is_subarray=is_subarray,
+                    quadrants=quadrants,
+                )
             elif self.destriping_method == "pca":
                 pca_dir = os.path.join(
                     self.out_dir,
@@ -461,13 +475,13 @@ class SingleTileDestripeStep:
         # Use median filtering to avoid noise and boundary issues
         data = np.ma.array(copy.deepcopy(data), mask=copy.deepcopy(mask))
 
-        for scale in self.median_filter_scales:
+        for scale in self.filter_scales:
             med = np.ma.median(data, axis=0)
             mask_idx = np.where(med.mask)
             med = med.data
             med[mask_idx] = np.nan
             med[~np.isfinite(med)] = 0
-            noise = med - median_filter(med, scale, mode="reflect")
+            noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
 
             data -= noise[np.newaxis, :]
 
@@ -611,6 +625,147 @@ class SingleTileDestripeStep:
 
             # Bring everything back up to the median level
             trimmed_noise_model -= np.nanmedian(median_arr)
+
+        if self.plot_dir is not None and mask is not None:
+            self.make_mask_plot(
+                data=data,
+                mask=mask,
+                out_name=out_name,
+                filter_diffuse=self.filter_diffuse,
+            )
+
+        if not is_subarray:
+            full_noise_model[4:-4, 4:-4] = copy.deepcopy(trimmed_noise_model)
+        else:
+            full_noise_model = copy.deepcopy(trimmed_noise_model)
+
+        return full_noise_model
+
+    def run_smooth(
+        self,
+        im,
+        prev_noise_model,
+        out_name,
+        is_subarray=False,
+        quadrants=False,
+    ):
+        """Smoothing-based de-noising
+
+        Calculate the sigma-clipped median over the rows, smooth these over a range of scales
+        and use this to subtract. Should have the benefit of maintaining flux without necessarily
+        having to filter away the large-scale structure. This is based on Dan Coe's algorithm,
+        except we do a number of scales here to effectively remove noise at multiple levels
+
+        Args:
+            im: Input datamodel
+            prev_noise_model: Previously calculated noise model, to subtract before
+                destriping
+            out_name: Output filename
+            is_subarray: Whether image is subarray or not. Defaults to False
+            quadrants: Whether to break out by quadrants. Defaults to False
+        """
+
+        im_data = copy.deepcopy(im.data)
+
+        zero_idx = np.where(im_data == 0)
+
+        im_data[zero_idx] = np.nan
+
+        im_data -= prev_noise_model
+
+        quadrant_size = im_data.shape[1] // 4
+
+        mask = make_source_mask(
+            im_data,
+            nsigma=self.sigma,
+            npixels=self.npixels,
+            dilate_size=self.dilate_size,
+            sigclip_iters=self.max_iters,
+        )
+
+        dq_mask = get_dq_mask(
+            im_data,
+            im.err,
+            im.dq,
+        )
+
+        mask = mask | dq_mask
+
+        # Cut out the reference edge pixels if we're not in subarray mode
+        if not is_subarray:
+            data = copy.deepcopy(im_data[4:-4, 4:-4])
+            mask = mask[4:-4, 4:-4]
+            dq_mask = dq_mask[4:-4, 4:-4]
+        else:
+            data = copy.deepcopy(im_data)
+
+        if self.filter_diffuse:
+            data, mask = self.get_filter_diffuse(
+                data=data,
+                mask=mask,
+                dq_mask=dq_mask,
+            )
+
+        full_noise_model = np.zeros_like(im_data)
+        trimmed_noise_model = np.zeros_like(data)
+
+        if quadrants:
+            # Calculate medians and apply
+            for i in range(4):
+                if not is_subarray:
+                    if i == 0:
+                        idx_slice = slice(0, quadrant_size - 4)
+                    elif i == 3:
+                        idx_slice = slice(1532, 2040)
+                    else:
+                        idx_slice = slice(
+                            i * quadrant_size - 4, (i + 1) * quadrant_size - 4
+                        )
+                else:
+                    idx_slice = slice(i * quadrant_size, (i + 1) * quadrant_size)
+
+                data_quadrants = data[:, idx_slice]
+                mask_quadrants = mask[:, idx_slice]
+
+                for filter_scale in self.filter_scales:
+                    # Sigma-clip along the x-direction
+                    _, med, _ = sigma_clipped_stats(
+                        data_quadrants - trimmed_noise_model[:, idx_slice],
+                        mask=mask_quadrants,
+                        sigma=self.sigma,
+                        maxiters=self.max_iters,
+                        axis=1,
+                    )
+
+                    # Smooth this out
+                    kernel = np.ones(filter_scale) / float(filter_scale)
+                    med_conv = convolve(med, kernel, boundary="extend")
+
+                    # Add to the noise model, centre around 0
+                    trimmed_noise_model[:, idx_slice] += (
+                        med[:, np.newaxis] - med_conv[:, np.newaxis]
+                    )
+                    trimmed_noise_model[:, idx_slice] -= np.nanmedian(
+                        trimmed_noise_model[:, idx_slice]
+                    )
+
+        else:
+            for filter_scale in self.filter_scales:
+                # Sigma-clip along the x-direction
+                _, med, _ = sigma_clipped_stats(
+                    data - trimmed_noise_model,
+                    mask=mask,
+                    sigma=self.sigma,
+                    maxiters=self.max_iters,
+                    axis=1,
+                )
+
+                # Smooth this out
+                kernel = np.ones(filter_scale) / float(filter_scale)
+                med_conv = convolve(med, kernel, boundary="extend")
+
+                trimmed_noise_model += med[:, np.newaxis] - med_conv[:, np.newaxis]
+                trimmed_noise_model -= np.nanmedian(trimmed_noise_model)
 
         if self.plot_dir is not None and mask is not None:
             self.make_mask_plot(
@@ -1105,7 +1260,7 @@ class SingleTileDestripeStep:
                 else:
                     data_quadrant = data[:, i * quadrant_size : (i + 1) * quadrant_size]
 
-                for scale in self.median_filter_scales:
+                for scale in self.filter_scales:
                     if use_mask:
                         med = np.ma.median(data_quadrant, axis=1)
                         mask_idx = np.where(med.mask)
@@ -1116,7 +1271,7 @@ class SingleTileDestripeStep:
 
                     # Replace any remaining NaNs with the median
                     med[~np.isfinite(med)] = np.nanmedian(med)
-                    noise = med - median_filter(med, scale, mode="reflect")
+                    noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
 
                     if use_mask:
                         data_quadrant = np.ma.array(
@@ -1136,7 +1291,7 @@ class SingleTileDestripeStep:
             else:
                 data_copy = copy.deepcopy(data)
 
-            for scale in self.median_filter_scales:
+            for scale in self.filter_scales:
                 if use_mask:
                     med = np.ma.median(data_copy, axis=1)
                     mask_idx = np.where(med.mask)
@@ -1145,7 +1300,7 @@ class SingleTileDestripeStep:
                 else:
                     med = np.nanmedian(data, axis=1)
                 med[~np.isfinite(med)] = 0
-                noise = med - median_filter(med, scale, mode="reflect")
+                noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
 
                 data_copy -= noise[:, np.newaxis]
 

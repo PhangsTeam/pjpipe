@@ -3,6 +3,9 @@
 
 - If not grouping dithers in ``get_wcs_adjust_step``, respect that in how the transforms are
   written out
+- Add ``smooth`` option to ``single_tile_destripe_step``, based on Dan Coe's smooth1overf
+  algorithm
+- Added control over how values are extended beyond array edge for filtering in ``single_tile_destripe_step``
 - Added median option to ``multi_tile_destripe_step`` to do a median rather than mean image
 - Added iterative option to ``multi_tile_destripe_step`` that will keep things going until
   sigma-based convergence
@@ -12,6 +15,8 @@
   IS NOW THE DEFAULT
 - Added a sigma-clipped ``do_large_scale`` method, as should be optimal in observations that aren't
   full of emission
+- Added a smooth convolution ``do_large_scale`` method, based on Dan Coe's smooth1overf algorithm
+- Added control over how values are extended beyond array edge for ``do_large_scale``
 - Added option in ``lv3_step`` to degroup dithers for tweakreg
 - Added option in ``lv3_step`` to degroup NIRCam modules, since the WCS is currently inconsistent
   between the two

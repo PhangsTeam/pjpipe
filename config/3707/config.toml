@@ -127,10 +127,12 @@ method = 'mask'
 [parameters.single_tile_destripe]
 quadrants = true
 vertical_subtraction = true
-filter_diffuse = true
 dilate_size = 7
+
+filter_diffuse = true
 destriping_method = 'median_filter'
-median_filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
+filter_extend_mode = "nearest"
+filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
 
 [parameters.multi_tile_destripe]
 quadrants = true
@@ -139,6 +141,7 @@ weight_type = 'ivm'
 
 # Do large scale filtering on everything # TODO: likely this will need tweaking
 do_large_scale = true
+large_scale_filter_extend_mode = "nearest"
 
 [parameters.level_match]
 do_sigma_clip = false
