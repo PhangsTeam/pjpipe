@@ -68,7 +68,7 @@ IN_STEP_EXTS = {
     "astrometric_catalog": "i2d",
     "astrometric_align": "i2d",
     "anchoring": "i2d_align",
-    "psf_matching": "anc",
+    "psf_matching": "i2d_anchor",
     "release": None,
 }
 
@@ -78,7 +78,7 @@ IN_BAND_DIRS = {
     "astrometric_catalog": "lv3",
     "astrometric_align": "lv3",
     "anchoring": "lv3",
-    "psf_matching": "anchoring",
+    "psf_matching": "lv3",
     "release": "lv3",
 }
 
@@ -86,7 +86,6 @@ OUT_BAND_DIRS = {
     "astrometric_catalog": "lv3",
     "astrometric_align": "lv3",
     "anchoring": "anchoring",
-    "psf_matching": "psf_match",
     "release": None,
 }
 
@@ -146,8 +145,17 @@ class PJPipeline:
             self.version,
         )
         self.alignment_dir = local["alignment_dir"]
-        self.kernels_dir = local["kernels_dir"]
-        self.reference_dir = local["reference_dir"]
+
+        if "kernel_dir" in local:
+            self.kernel_dir = local["kernel_dir"]
+        else:
+            self.kernel_dir = None
+
+        if "anchor_ref_dir" in local:
+            self.anchor_ref_dir = local["anchor_ref_dir"]
+        else:
+            self.anchor_ref_dir = None
+
         if "processors" in local:
             procs = local["processors"]
         else:
@@ -262,22 +270,24 @@ class PJPipeline:
                     # anchoring is in the part operating for all bands because
                     # we need more control on the sequence (reference nircam and miri bands first)
                     elif step == "anchoring":
+
+                        in_subdir = IN_BAND_DIRS[step]
+                        out_subdir = OUT_BAND_DIRS[step]
+
                         anchoring = AnchoringStep(
-                            procs=self.procs,
-                            w_dir=target_dir,
-                            subdir_in=IN_BAND_DIRS[step],
-                            subdir_out=OUT_BAND_DIRS[step],
-                            reference_dir=self.reference_dir,
-                            kernels_dir=self.kernels_dir,
-                            step_ext_in=in_step_ext,
-                            step_ext_out='anc',
                             target=target,
-                            all_bands=[b for b in self.bands if 'bgr' not in b],  # exclude backgrounds
+                            bands=self.bands,
+                            in_dir=target_dir,
+                            in_subdir=in_subdir,
+                            out_subdir=out_subdir,
+                            ref_dir=self.anchor_ref_dir,
+                            kernel_dir=self.kernel_dir,
+                            in_step_ext=in_step_ext,
+                            out_step_ext='i2d_anchor',
+                            procs=self.procs,
                             **step_parameters,
                         )
                         step_result = anchoring.do_step()
-                        # we don't want to remove all target directory for this step. So, assume it is success
-                        step_result = True
 
                     elif step == "release":
                         release = ReleaseStep(
@@ -684,19 +694,16 @@ class PJPipeline:
                         elif step == "psf_matching":
 
                             psf_matching = PSFMatchingStep(
+                                target=target,
+                                band=band,
                                 in_dir=in_dir,
                                 out_dir=out_dir,
-                                step_ext_in=in_step_ext,
-                                target=target,
+                                kernel_dir=self.kernel_dir,
+                                in_step_ext=in_step_ext,
                                 procs=self.procs,
-                                kernels_dir=self.kernels_dir,
-                                band=band,
                                 **step_parameters,
                             )
                             step_result = psf_matching.do_step()
-                            # we don't want to remove all band directory if something wrong with this step.
-                            # So, assume here that it is successful
-                            step_result = True
 
                         else:
                             raise ValueError(

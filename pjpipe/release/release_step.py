@@ -22,12 +22,14 @@ class ReleaseStep:
         move_tweakback=False,
         move_backgrounds=False,
         move_individual_fields=False,
+        move_psf_matched=False,
         lv3_dir="lv3",
         tweakback_dir="lv3",
         tweakback_ext="tweakback",
         background_dir="lv2",
         background_ext="combinedbackground",
         individual_fields_dir="mosaic_individual_fields",
+        psf_matched_dir="psf_matching",
         overwrite=False,
     ):
         """Tidies up files, moves to a single directory for release
@@ -51,6 +53,8 @@ class ReleaseStep:
                 Defaults to False
             move_individual_fields: Whether to move individual field mosaics
                 or not. Defaults to False
+            move_psf_matched: Whether to move PSF matched images or not.
+                Defaults to False
             lv3_dir: Where level 3 files are located, relative
                 to the target directory structure. Defaults to "lv3"
             background_dir: Where tweakback files are located, relative
@@ -75,6 +79,7 @@ class ReleaseStep:
         self.move_tweakback = move_tweakback
         self.move_backgrounds = move_backgrounds
         self.move_individual_fields = move_individual_fields
+        self.move_psf_matched = move_psf_matched
         self.overwrite = overwrite
 
         self.hdu_ext_to_delete = [
@@ -90,6 +95,7 @@ class ReleaseStep:
             file_exts = [
                 "i2d.fits",
                 "i2d_align.fits",
+                "i2d_anchor.fits",
                 "i2d_align_table.fits",
                 "cat.ecsv",
                 "astro_cat.fits",
@@ -102,6 +108,7 @@ class ReleaseStep:
         self.background_dir = background_dir
         self.background_ext = background_ext
         self.individual_fields_dir = individual_fields_dir
+        self.psf_matched_dir = psf_matched_dir
 
     def do_step(self):
         """Run the release step"""
@@ -126,6 +133,20 @@ class ReleaseStep:
         if os.path.exists(step_complete_file):
             log.info("Step already run")
             return True
+
+        # Move the anchor tables, if they exist
+        anchor_tabs = glob.glob(
+            os.path.join(
+                self.in_dir,
+                f"*_anchor_tab.fits",
+            )
+        )
+        for anchor_tab in anchor_tabs:
+            out_name = os.path.join(
+                out_dir,
+                os.path.split(anchor_tab)[-1],
+            )
+            os.system(f"cp {anchor_tab} {out_name}")
 
         for band in tqdm(
             self.bands,
@@ -152,6 +173,10 @@ class ReleaseStep:
                 )
             if self.move_individual_fields:
                 self.do_move_individual_fields(
+                    band=band,
+                )
+            if self.move_psf_matched:
+                self.do_move_psf_matched(
                     band=band,
                 )
 
@@ -196,7 +221,10 @@ class ReleaseStep:
                 os.path.split(file)[-1],
             )
 
-            if file_ext in ["i2d.fits", "i2d_align.fits"] and self.remove_bloat:
+            if (
+                file_ext in ["i2d.fits", "i2d_align.fits", "i2d_anchor.fits"]
+                and self.remove_bloat
+            ):
                 # For these, we want to pull out only the data and error extensions. Everything else
                 # is just bloat
                 with fits.open(file, memmap=False) as hdu:
@@ -331,6 +359,48 @@ class ReleaseStep:
             files,
             ascii=True,
             desc="Individual fields",
+            leave=False,
+        ):
+            os.system(f"cp {file} {out_dir}")
+
+        return True
+
+    def do_move_psf_matched(
+        self,
+        band,
+    ):
+        """Move PSF matched images
+
+        Args:
+            band: Band to consider
+        """
+
+        files = glob.glob(
+            os.path.join(
+                self.in_dir,
+                band,
+                self.psf_matched_dir,
+                f"*.fits",
+            )
+        )
+
+        if len(files) == 0:
+            return True
+
+        files.sort()
+
+        out_dir = os.path.join(
+            self.out_dir,
+            self.target,
+            f"{band.lower()}_psf_matched",
+        )
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+
+        for file in tqdm(
+            files,
+            ascii=True,
+            desc="PSF Matched",
             leave=False,
         ):
             os.system(f"cp {file} {out_dir}")

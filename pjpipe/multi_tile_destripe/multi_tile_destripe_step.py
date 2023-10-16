@@ -220,6 +220,9 @@ class MultiTileDestripeStep:
         weight_type="exptime",
         min_area_frac=0.5,
         quadrants=True,
+        median_filter_scale=None,
+        median_filter_extend_mode="reflect",
+        do_vertical_subtraction=True,
         do_large_scale=False,
         large_scale_method="median",
         large_scale_filter_factor=4,
@@ -232,13 +235,13 @@ class MultiTileDestripeStep:
         """Subtracts large-scale stripes using dither information
 
         Create a weighted average image of all overlapping files, then do a sigma-clipped
-        median along columns and rows (optionally by quadrants), and finally a smoothed clip along
-        rows after boxcar filtering to remove persistent large-scale ripples in the data
+        median along columns and rows (optionally by quadrants), and finally (optionall) a
+        smoothed clip along rows after filtering to remove persistent large-scale ripples in
+        the data.
 
         The default settings should be fine in most circumstances. If you are seeing
         ripples in the data (particularly for short NIRCam observations), then you should set
-        do_large_scale to True, and use large_scale_method "median", since that seems to be more
-        robust than the boxcar
+        do_large_scale to True.
 
         Args:
             in_dir: Input directory
@@ -257,6 +260,14 @@ class MultiTileDestripeStep:
                 Should be one of 'mean', 'median'. Defaults to 'mean'
             weight_type: How to weight the stacked image.
                 Defaults to 'exptime'
+            min_area_frac: Areal fraction of overlap to consider in creating
+                the weighted average image. Defaults to 0.5
+            median_filter_scale: If not None, will smooth the stripes with a median
+                filter of this scale. Defaults to None
+            median_filter_extend_mode: How to extend values in the above median filter
+                beyond array edge. Default is "reflect". See the specific docs for more info
+            do_vertical_subtraction: Whether to also do a step of vertical stripe
+                subtraction. Defaults to True
             do_large_scale: Whether to do filtering to try and remove large,
                 consistent ripples between data. Defaults to False
             large_scale_method: Which method to use to try and filter out
@@ -271,6 +282,10 @@ class MultiTileDestripeStep:
             maxiters: Maximum number of sigma-clipping iterations. Defaults to None
             overwrite: Whether to overwrite or not. Defaults
                 to False
+
+        TODO:
+            min_area_frac=0.5 may be too conservative, and could cause problems with
+                overlaps at tile edges. ngc1087 seems to be a good test case here
         """
 
         if weight_method not in ALLOWED_WEIGHT_METHODS:
@@ -301,7 +316,10 @@ class MultiTileDestripeStep:
         self.weight_type = weight_type
         self.min_area_frac = min_area_frac
         self.quadrants = quadrants
+        self.median_filter_scale = median_filter_scale
+        self.median_filter_extend_mode = median_filter_extend_mode
         self.do_large_scale = do_large_scale
+        self.do_vertical_subtraction = do_vertical_subtraction
         self.large_scale_method = large_scale_method
         self.large_scale_filter_factor = large_scale_filter_factor
         self.large_scale_filter_extend_mode = large_scale_filter_extend_mode
@@ -773,20 +791,21 @@ class MultiTileDestripeStep:
             )
             mask_unsmoothed = mask_pos | mask_neg  # | dq_bit_mask1
 
-            # First, subtract the y
-            stripes_y = sigma_clipped_stats(
-                diff_unsmoothed - stripes_arr,
-                mask=mask_unsmoothed,
-                sigma=self.sigma,
-                maxiters=self.maxiters,
-                axis=0,
-            )[1]
+            if self.do_vertical_subtraction:
+                # First, subtract the y
+                stripes_y = sigma_clipped_stats(
+                    diff_unsmoothed - stripes_arr,
+                    mask=mask_unsmoothed,
+                    sigma=self.sigma,
+                    maxiters=self.maxiters,
+                    axis=0,
+                )[1]
 
-            # Centre around 0, replace NaNs
-            stripes_y -= np.nanmedian(stripes_y)
-            stripes_y[np.isnan(stripes_y)] = 0
+                # Centre around 0, replace NaNs
+                stripes_y -= np.nanmedian(stripes_y)
+                stripes_y[np.isnan(stripes_y)] = 0
 
-            stripes_arr += stripes_y[np.newaxis, :]
+                stripes_arr += stripes_y[np.newaxis, :]
 
             stripes_x_2d = np.zeros_like(stripes_arr)
 
@@ -815,6 +834,13 @@ class MultiTileDestripeStep:
                     stripes_x -= np.nanmedian(stripes_x)
                     stripes_x[np.isnan(stripes_x)] = 0
 
+                    # If we're smoothing, do it here
+                    if self.median_filter_scale is not None:
+                        stripes_x = median_filter(stripes_x,
+                                                  size=self.median_filter_scale,
+                                                  mode=self.median_filter_extend_mode,
+                                                  )
+
                     stripes_x_2d[:, idx_slice] += stripes_x[:, np.newaxis]
 
             else:
@@ -831,6 +857,13 @@ class MultiTileDestripeStep:
                 stripes_x -= np.nanmedian(stripes_x)
                 stripes_x[np.isnan(stripes_x)] = 0
 
+                # If we're smoothing, do it here
+                if self.median_filter_scale is not None:
+                    stripes_x = median_filter(stripes_x,
+                                              size=self.median_filter_scale,
+                                              mode=self.median_filter_extend_mode,
+                                              )
+
                 stripes_x_2d += stripes_x[:, np.newaxis]
 
             # Centre around 0 one last time
@@ -842,14 +875,12 @@ class MultiTileDestripeStep:
             stripes_arr[np.isnan(stripes_arr)] = 0
 
             if self.do_large_scale:
-
                 # Filter along the y-axis (to preserve the stripe noise) with some filter.
                 # This ideally flattens out the background, for any consistent large-scale ripples
                 # between images
 
                 # Boxcar filter
                 if self.large_scale_method == "boxcar":
-
                     # Centre data and replace NaN with 0 so boxcar don't catastrophically fail
                     data_avg -= np.nanmedian(data_avg)
                     data_avg[np.isnan(data_avg)] = 0
@@ -864,7 +895,6 @@ class MultiTileDestripeStep:
 
                 # Median filter
                 elif self.large_scale_method == "median":
-
                     # Centre data and replace NaN with 0 so median don't catastrophically fail
                     data_avg -= np.nanmedian(data_avg)
                     data_avg[np.isnan(data_avg)] = 0
@@ -889,7 +919,6 @@ class MultiTileDestripeStep:
                     diff_smoothed = data - stripes_arr - med
 
                 elif self.large_scale_method == "convolve_smooth":
-
                     # Centre data and replace NaN with 0 so median don't catastrophically fail
                     data_avg -= np.nanmedian(data_avg)
                     data_avg[np.isnan(data_avg)] = 0
@@ -937,6 +966,7 @@ class MultiTileDestripeStep:
                     )
 
                 diff_smoothed -= np.nanmedian(diff_smoothed)
+                diff_smoothed[np.isnan(diff_smoothed)] = 0
 
                 mask_pos = make_source_mask(
                     diff_smoothed,

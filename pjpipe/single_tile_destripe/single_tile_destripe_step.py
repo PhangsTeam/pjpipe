@@ -141,6 +141,7 @@ class SingleTileDestripeStep:
         quadrants=True,
         vertical_subtraction=True,
         destriping_method="row_median",
+        vertical_destriping_method="row_median",
         filter_diffuse=False,
         large_scale_subtraction=False,
         sigma=3,
@@ -167,6 +168,7 @@ class SingleTileDestripeStep:
                 separately. Defaults to True
             vertical_subtraction: Perform sigma-clipped median column subtraction? Defaults to True
             destriping_method: Method to use for destriping. Allowed options are given by DESTRIPING_METHODS
+            vertical_destriping_method: Method to use for vertical destriping. Allowed options are given by DESTRIPING_METHODS
             filter_diffuse: Whether to perform high-pass filter on data, to remove diffuse, extended
                 emission. Defaults to False, but should be set True for observations where emission fills the FOV
             large_scale_subtraction: Whether to mitigate for large-scale stripes remaining after the diffuse
@@ -187,6 +189,10 @@ class SingleTileDestripeStep:
             raise Warning(
                 f"destriping_method should be one of {DESTRIPING_METHODS}, not {destriping_method}"
             )
+        if vertical_destriping_method not in DESTRIPING_METHODS:
+            raise Warning(
+                f"vertical_destriping_method should be one of {DESTRIPING_METHODS}, not {vertical_destriping_method}"
+            )
 
         if filter_scales is None:
             filter_scales = [3, 7, 15, 31, 63, 127]
@@ -203,6 +209,7 @@ class SingleTileDestripeStep:
         self.quadrants = quadrants
         self.vertical_subtraction = vertical_subtraction
         self.destriping_method = destriping_method
+        self.vertical_destriping_method = vertical_destriping_method
         self.filter_diffuse = filter_diffuse
         self.large_scale_subtraction = large_scale_subtraction
         self.sigma = sigma
@@ -475,17 +482,32 @@ class SingleTileDestripeStep:
         # Use median filtering to avoid noise and boundary issues
         data = np.ma.array(copy.deepcopy(data), mask=copy.deepcopy(mask))
 
-        for scale in self.filter_scales:
+        # Centre around 0
+        data -= np.ma.median(data)
+
+        # Median filter method
+        if self.vertical_destriping_method == "median_filter":
+            for scale in self.filter_scales:
+                med = np.ma.median(data, axis=0)
+                mask_idx = np.where(med.mask)
+                med = med.data
+                med[mask_idx] = np.nan
+                med[~np.isfinite(med)] = 0
+                noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
+
+                data -= noise[np.newaxis, :]
+
+                vertical_noise_model += noise[np.newaxis, :]
+
+        # Row-by-row median
+        elif self.vertical_destriping_method == "row_median":
             med = np.ma.median(data, axis=0)
-            mask_idx = np.where(med.mask)
-            med = med.data
-            med[mask_idx] = np.nan
+            med -= np.nanmedian(med)
             med[~np.isfinite(med)] = 0
-            noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
 
-            data -= noise[np.newaxis, :]
-
-            vertical_noise_model += noise[np.newaxis, :]
+            vertical_noise_model += med[np.newaxis, :]
+        else:
+            raise NotImplementedError(f"vertical destriping method {self.vertical_destriping_method} not implemented")
 
         # Bring everything back up to the median level
         vertical_noise_model -= np.nanmedian(vertical_noise_model)

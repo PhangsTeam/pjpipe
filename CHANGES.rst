@@ -1,11 +1,18 @@
 0.9.3 (Unreleased)
 ==================
 
+- Add PSF matching routines (``psf_matching``)
+- Add anchoring routines (``anchoring``)
+- Include useful outputs from these in the ``release_step``
 - If not grouping dithers in ``get_wcs_adjust_step``, respect that in how the transforms are
   written out
+- Decoupled horizontal/vertical destriping methods in ``single_tile_destripe_step``, since the
+  noise properties are distinct in these two axes
 - Add ``smooth`` option to ``single_tile_destripe_step``, based on Dan Coe's smooth1overf
   algorithm
 - Added control over how values are extended beyond array edge for filtering in ``single_tile_destripe_step``
+- Make vertical stripe subtraction optional in ``multi_tile_destripe_step``
+- Make option to do median filtering for the horizontal stripes in ``multi_tile_destripe_step``
 - Added median option to ``multi_tile_destripe_step`` to do a median rather than mean image
 - Added iterative option to ``multi_tile_destripe_step`` that will keep things going until
   sigma-based convergence
@@ -22,6 +29,7 @@
   between the two
 - Fixed crash in ``lv3_step`` if one of the group/degroup parameters is not defined
 - Be smarter about keeping track of exposure numbers in ``lv3_step``
+- ``regress_against_previous`` will now search for files in priority order, for fallback between versions
 - Make sure backgrounds are included in label for ``regress_against_previous``
 - f-string fixes
 

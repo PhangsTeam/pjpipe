@@ -169,6 +169,7 @@ class LevelMatchStep:
 
         if not os.path.exists(self.out_dir):
             os.makedirs(self.out_dir)
+            os.makedirs(self.plot_dir)
 
         # Check if we've already run the step
         step_complete_file = os.path.join(

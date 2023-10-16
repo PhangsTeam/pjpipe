@@ -22,7 +22,7 @@ targets = [
 ]
 
 # Version for the reprocessing
-version = 'v0p9p2'
+version = 'v0p9p3'
 
 # Bands to consider
 bands = [
@@ -159,16 +159,17 @@ vertical_subtraction = true
 filter_diffuse = true
 dilate_size = 7
 destriping_method = 'median_filter'
-filter_extend_mode = "nearest"
+vertical_destriping_method = 'row_median'
+filter_extend_mode = "reflect"
 filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
 
 [parameters.multi_tile_destripe]
 quadrants = true
 sigma = 3
 weight_type = 'ivm'
-do_large_scale.nircam_long = true
-do_large_scale.nircam_short = false
-large_scale_filter_extend_mode = "nearest"
+do_large_scale = true
+large_scale_filter_extend_mode = "reflect"
+min_area_frac = 0.002
 
 [parameters.level_match]
 do_sigma_clip = false
@@ -322,72 +323,36 @@ sigma = 3
 
 [parameters.anchoring]
 
-[parameters.anchoring.reference.nircam]
-ic5332 = 'ic5332_irac1.fits'
-ngc0628 = 'ngc0628_irac1.fits'
-ngc1087 = 'ngc1087_irac1.fits'
-ngc1300 = 'ngc1300_irac1.fits'
-ngc1365 = 'ngc1365_irac1.fits'
-ngc1385 = 'ngc1385_irac1.fits'
-ngc1433 = 'ngc1433_irac1.fits'
-ngc1512 = 'ngc1512_irac1.fits'
-ngc1566 = 'ngc1566_irac1.fits'
-ngc1672 = 'ngc1672_irac1.fits'
-ngc2835 = 'ngc2835_irac1.fits'
-ngc3351 = 'ngc3351_irac1.fits'
-ngc3627 = 'ngc3627_irac1.fits'
-ngc4254 = 'ngc4254_irac1.fits'
-ngc4303 = 'ngc4303_irac1.fits'
-ngc4321 = 'ngc4321_irac1.fits'
-ngc4535 = 'ngc4535_irac1.fits'
-ngc5068 = 'ngc5068_irac1.fits'
-ngc7496 = 'ngc7496_irac1.fits'
+internal_conv_band = 'F2100W'
 
 [parameters.anchoring.ref_band]
 miri = 'F770W'
-nircam = 'F335M'
+nircam = 'F300M'
 
-[parameters.anchoring.external_band.miri]
-default = 'IRAC4'
-
-[parameters.anchoring.external_band.nircam]
-default = 'IRAC1'
-
-[parameters.anchoring.reference.miri]
-ic5332 = 'ic5332_irac4.fits'
-ngc0628 = 'ngc0628_irac4.fits'
-ngc1087 = 'ngc1087_irac4.fits'
-ngc1300 = 'ngc1300_irac4.fits'
-ngc1365 = 'ngc1365_irac4.fits'
-ngc1385 = 'ngc1385_irac4.fits'
-ngc1433 = 'ngc1433_irac4.fits'
-ngc1512 = 'ngc1512_irac4.fits'
-ngc1566 = 'ngc1566_irac4.fits'
-ngc1672 = 'ngc1672_irac4.fits'
-ngc2835 = 'ngc2835_irac4.fits'
-ngc3351 = 'ngc3351_irac4.fits'
-ngc3627 = 'ngc3627_irac4.fits'
-ngc4254 = 'ngc4254_irac4.fits'
-ngc4303 = 'ngc4303_irac4.fits'
-ngc4321 = 'ngc4321_irac4.fits'
-ngc4535 = 'ngc4535_irac4.fits'
-ngc5068 = 'ngc5068_irac4.fits'
-ngc7496 = 'ngc7496_irac4.fits'
+# List external bands in preference order
+[parameters.anchoring.external_bands]
+miri = [
+    'irac4_atgauss4',
+    'w3_atgauss15',
+]
+nircam = [
+    'irac1_atgauss4',
+    'w1_atgauss7p5',
+    'irac2_atgauss4',
+    'w2_atgauss7p5',
+]
 
 [parameters.psf_matching]
 
 target_bands = [
-    "F2100W",
-    "Gauss4",
-    "Gauss0p85",
-    "Gauss7p5",
-    "Gauss15"
+    "gauss0p85",
 ]
 
 [parameters.release]
 
 move_tweakback = true
 move_backgrounds = true
+move_psf_matched = true
 
 [parameters.regress_against_previous]
-prev_version = 'v0p9'
+prev_version = 'v0p9p2'

@@ -1,4 +1,6 @@
 from .utils import (
+    do_jwst_convolution,
+    get_pixscale,
     get_band_type,
     get_band_ext,
     get_obs_table,
@@ -18,6 +20,8 @@ from .utils import (
 
 __all__ = [
     "attribute_setter",
+    "do_jwst_convolution",
+    "get_pixscale",
     "get_band_type",
     "get_band_ext",
     "get_kws",

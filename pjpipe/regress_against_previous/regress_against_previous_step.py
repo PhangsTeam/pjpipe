@@ -20,7 +20,9 @@ def get_diff_image(
     filename,
     v_curr,
     v_prev,
+    curr_file_ext,
     percentiles=None,
+    file_exts=None,
 ):
     """Reproject images to get a difference image
 
@@ -28,15 +30,33 @@ def get_diff_image(
         filename: Name of file
         v_curr: Current version
         v_prev: Previous version
+        curr_file_ext: Current file extension
         percentiles: Percentiles for diff image. Defaults to None,
             which will be [1, 99]th percentiles
+        file_exts: List of file extensions to search for the previous
+            file in priority order. Defaults to None, which will go
+            anchor->align->pipeline.
     """
     if percentiles is None:
         percentiles = [1, 99]
+    if file_exts is None:
+        file_exts = [
+            "i2d_anchor.fits",
+            "i2d_align.fits",
+            "i2d.fits",
+        ]
 
     with fits.open(filename) as hdu1:
-        prev_filename = filename.replace(v_curr, v_prev)
-        if not os.path.exists(prev_filename):
+        prev_file_found = False
+
+        for file_ext in file_exts:
+            if not prev_file_found:
+                prev_filename = filename.replace(v_curr, v_prev)
+                prev_filename = prev_filename.replace(curr_file_ext, file_ext)
+                if os.path.exists(prev_filename):
+                    prev_file_found = True
+
+        if not prev_file_found:
             return None, None
 
         hdu1["SCI"].data[hdu1["SCI"].data == 0] = np.nan
@@ -71,6 +91,7 @@ class RegressAgainstPreviousStep:
         in_dir,
         curr_version,
         prev_version=None,
+        file_exts=None,
         overwrite=False,
     ):
         """Create diagnostic plots to regress against previous versions
@@ -79,7 +100,8 @@ class RegressAgainstPreviousStep:
             target: Target to consider
             in_dir: Input directory
             curr_version: Current version to compare to...
-            prev_version: Previous verion
+            prev_version: Previous version
+            file_exts: File extensions (in priority order) to search for
             overwrite: Whether to overwrite or not. Defaults to
                 False
         """
@@ -87,10 +109,18 @@ class RegressAgainstPreviousStep:
         if prev_version is None:
             raise ValueError("prev_version should be defined")
 
+        if file_exts is None:
+            file_exts = [
+                "i2d_anchor.fits",
+                "i2d_align.fits",
+                "i2d.fits",
+            ]
+
         self.target = target
         self.in_dir = in_dir
         self.curr_version = curr_version
         self.prev_version = prev_version
+        self.file_exts = file_exts
         self.overwrite = overwrite
 
         self.out_dir = os.path.join(
@@ -116,16 +146,53 @@ class RegressAgainstPreviousStep:
         if not os.path.exists(self.out_dir):
             os.makedirs(self.out_dir)
 
-        all_files = glob.glob(
-            os.path.join(self.in_dir, self.target, "*_align.fits"),
-        )
+        # Get list of appropriate best files
+        all_files = []
+        all_file_exts = []
+        for file_ext in self.file_exts:
+            # Get all the files that match
+            files = glob.glob(
+                os.path.join(self.in_dir, self.target, f"*_{file_ext}"),
+            )
+
+            # If they're already in the list, don't add them again
+            filtered_files = []
+
+            for file in files:
+                file_already_in_list = False
+
+                file_short = os.path.split(file)[-1]
+                file_short = "_".join(file_short.split("_")[:-2])
+
+                for list_file in all_files:
+                    if not file_already_in_list:
+                        if file_short in list_file:
+                            file_already_in_list = True
+
+                if not file_already_in_list:
+                    filtered_files.append(file)
+
+            # Add to the final list
+            all_files.extend(filtered_files)
+            all_file_exts.extend([file_ext] * len(filtered_files))
 
         file_dict = {}
 
         for key in ["nircam", "miri"]:
-            files = [file for file in all_files if key in os.path.split(file)[-1]]
-            files.sort()
-            file_dict[key] = files
+            idx = [
+                i
+                for i in range(len(all_files))
+                if key in os.path.split(all_files[i])[-1]
+            ]
+            files = [all_files[i] for i in idx]
+            file_exts = [all_file_exts[i] for i in idx]
+            sort_idx = np.argsort(files)
+            files = np.asarray(files)[sort_idx]
+            file_exts = np.asarray(file_exts)[sort_idx]
+            file_dict[key] = {
+                "files": files,
+                "file_exts": file_exts,
+            }
 
         for key in file_dict:
             success = self.regress_plot(
@@ -179,14 +246,14 @@ class RegressAgainstPreviousStep:
 
         log.info(f"Plotting up {key}")
 
-        files = copy.deepcopy(file_dict[key])
+        files = copy.deepcopy(file_dict[key]["files"])
+        file_exts = copy.deepcopy(file_dict[key]["file_exts"])
         if len(files) > 0:
             plot_name = os.path.join(self.out_dir, f"{self.target}_{key}_comparison")
 
             plt.subplots(nrows=1, ncols=len(files), figsize=(4 * len(files), 4))
 
             for i, file in enumerate(files):
-
                 file_short = os.path.split(file)[-1]
 
                 # Make sure we get bands right if it's a background obs
@@ -196,11 +263,14 @@ class RegressAgainstPreviousStep:
                     is_bgr = False
 
                 band = file_short.split("_")[3]
+                file_ext = file_exts[i]
 
                 diff, v = get_diff_image(
                     file,
                     v_curr=self.curr_version,
                     v_prev=self.prev_version,
+                    curr_file_ext=file_ext,
+                    file_exts=self.file_exts,
                 )
 
                 ax = plt.subplot(1, len(files), i + 1)
