@@ -7,6 +7,7 @@ photutils
 scipy
 astroquery
 jwst
+crds
 gwcs
 stwcs
 threadpoolctl

@@ -9,11 +9,14 @@ import shutil
 import warnings
 from functools import partial
 
+import crds
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.convolution import convolve
 from astropy.stats import sigma_clipped_stats
+from jwst.flatfield.flat_field import do_correction
+from jwst.pipeline import calwebb_image2
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.ndimage import median_filter
 from scipy.stats import median_abs_deviation
@@ -36,6 +39,37 @@ DESTRIPING_METHODS = [
     "smooth",
     "pca",
 ]
+
+
+def apply_flat_field(im):
+    """Apply flat field to an input image
+
+    Args:
+        im: Input JWST datamodel
+    """
+
+    # Get CRDS context
+    try:
+        crds_context = os.environ["CRDS_CONTEXT"]
+    except KeyError:
+        crds_context = crds.get_default_context()
+
+    crds_dict = {
+        "INSTRUME": "NIRCAM",
+        "DETECTOR": im.meta.instrument.detector,
+        "FILTER": im.meta.instrument.filter,
+        "PUPIL": im.meta.instrument.pupil,
+        "DATE-OBS": im.meta.observation.date,
+        "TIME-OBS": im.meta.observation.time,
+    }
+    flats = crds.getreferences(crds_dict, reftypes=["flat"], context=crds_context)
+    flatfile = flats["flat"]
+
+    with datamodels.FlatModel(flatfile) as flat:
+        # use the JWST Calibration Pipeline flat fielding Step
+        flat_field_im, _ = do_correction(im, flat)
+
+    return flat_field_im
 
 
 def get_dq_mask(data, err, dq):
@@ -141,7 +175,6 @@ class SingleTileDestripeStep:
         quadrants=True,
         vertical_subtraction=True,
         destriping_method="row_median",
-        vertical_destriping_method="row_median",
         filter_diffuse=False,
         large_scale_subtraction=False,
         sigma=3,
@@ -168,7 +201,6 @@ class SingleTileDestripeStep:
                 separately. Defaults to True
             vertical_subtraction: Perform sigma-clipped median column subtraction? Defaults to True
             destriping_method: Method to use for destriping. Allowed options are given by DESTRIPING_METHODS
-            vertical_destriping_method: Method to use for vertical destriping. Allowed options are given by DESTRIPING_METHODS
             filter_diffuse: Whether to perform high-pass filter on data, to remove diffuse, extended
                 emission. Defaults to False, but should be set True for observations where emission fills the FOV
             large_scale_subtraction: Whether to mitigate for large-scale stripes remaining after the diffuse
@@ -189,10 +221,6 @@ class SingleTileDestripeStep:
             raise Warning(
                 f"destriping_method should be one of {DESTRIPING_METHODS}, not {destriping_method}"
             )
-        if vertical_destriping_method not in DESTRIPING_METHODS:
-            raise Warning(
-                f"vertical_destriping_method should be one of {DESTRIPING_METHODS}, not {vertical_destriping_method}"
-            )
 
         if filter_scales is None:
             filter_scales = [3, 7, 15, 31, 63, 127]
@@ -209,7 +237,6 @@ class SingleTileDestripeStep:
         self.quadrants = quadrants
         self.vertical_subtraction = vertical_subtraction
         self.destriping_method = destriping_method
-        self.vertical_destriping_method = vertical_destriping_method
         self.filter_diffuse = filter_diffuse
         self.large_scale_subtraction = large_scale_subtraction
         self.sigma = sigma
@@ -221,6 +248,9 @@ class SingleTileDestripeStep:
         self.pca_components = pca_components
         self.pca_reconstruct_components = pca_reconstruct_components
         self.overwrite = overwrite
+
+        # To keep track of whether we're applying flat-fielding or not
+        self.are_rate_files = False
 
     def do_step(self):
         """Run single-tile destriping"""
@@ -250,6 +280,22 @@ class SingleTileDestripeStep:
             )
         )
         files.sort()
+
+        are_rate_files = False
+        for file in files:
+            if "rate.fits" in file:
+                are_rate_files = True
+
+        if are_rate_files:
+            log.info("Rate files detected. Will apply flats before measuring striping")
+            # Prefetch references so things don't break with parallelism
+            for file in files:
+                config = calwebb_image2.Image2Pipeline.get_config_from_reference(file)
+                im2 = calwebb_image2.Image2Pipeline.from_config_section(config)
+                im2._precache_references(file)
+                del im2
+
+        self.are_rate_files = are_rate_files
 
         # Ensure we're not wasting processes
         procs = np.nanmin([self.procs, len(files)])
@@ -437,7 +483,11 @@ class SingleTileDestripeStep:
             is_subarray: Whether the image is a subarray. Defaults to False
         """
 
+        im = copy.deepcopy(im)
+        if self.are_rate_files:
+            im = apply_flat_field(im)
         data = copy.deepcopy(im.data)
+
         full_noise_model = np.zeros_like(data)
 
         zero_idx = np.where(data == 0)
@@ -482,32 +532,17 @@ class SingleTileDestripeStep:
         # Use median filtering to avoid noise and boundary issues
         data = np.ma.array(copy.deepcopy(data), mask=copy.deepcopy(mask))
 
-        # Centre around 0
-        data -= np.ma.median(data)
-
-        # Median filter method
-        if self.vertical_destriping_method == "median_filter":
-            for scale in self.filter_scales:
-                med = np.ma.median(data, axis=0)
-                mask_idx = np.where(med.mask)
-                med = med.data
-                med[mask_idx] = np.nan
-                med[~np.isfinite(med)] = 0
-                noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
-
-                data -= noise[np.newaxis, :]
-
-                vertical_noise_model += noise[np.newaxis, :]
-
-        # Row-by-row median
-        elif self.vertical_destriping_method == "row_median":
+        for scale in self.filter_scales:
             med = np.ma.median(data, axis=0)
-            med -= np.nanmedian(med)
+            mask_idx = np.where(med.mask)
+            med = med.data
+            med[mask_idx] = np.nan
             med[~np.isfinite(med)] = 0
+            noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
 
-            vertical_noise_model += med[np.newaxis, :]
-        else:
-            raise NotImplementedError(f"vertical destriping method {self.vertical_destriping_method} not implemented")
+            data -= noise[np.newaxis, :]
+
+            vertical_noise_model += noise[np.newaxis, :]
 
         # Bring everything back up to the median level
         vertical_noise_model -= np.nanmedian(vertical_noise_model)
@@ -540,6 +575,9 @@ class SingleTileDestripeStep:
             quadrants: Whether to break out by quadrants. Defaults to True
         """
 
+        im = copy.deepcopy(im)
+        if self.are_rate_files:
+            im = apply_flat_field(im)
         im_data = copy.deepcopy(im.data)
 
         zero_idx = np.where(im_data == 0)
@@ -687,6 +725,9 @@ class SingleTileDestripeStep:
             quadrants: Whether to break out by quadrants. Defaults to False
         """
 
+        im = copy.deepcopy(im)
+        if self.are_rate_files:
+            im = apply_flat_field(im)
         im_data = copy.deepcopy(im.data)
 
         zero_idx = np.where(im_data == 0)
@@ -830,6 +871,9 @@ class SingleTileDestripeStep:
             quadrants: Whether to break out by quadrants. Defaults to True
         """
 
+        im = copy.deepcopy(im)
+        if self.are_rate_files:
+            im = apply_flat_field(im)
         im_data = copy.deepcopy(im.data)
 
         zero_idx = np.where(im_data == 0)
@@ -1136,6 +1180,9 @@ class SingleTileDestripeStep:
             quadrants: Whether to break out by quadrants. Defaults to True
         """
 
+        im = copy.deepcopy(im)
+        if self.are_rate_files:
+            im = apply_flat_field(im)
         im_data = copy.deepcopy(im.data)
 
         zero_idx = np.where(im_data == 0)
@@ -1235,6 +1282,9 @@ class SingleTileDestripeStep:
             quadrants: Whether to break out by quadrants. Defaults to True
         """
 
+        im = copy.deepcopy(im)
+        if self.are_rate_files:
+            im = apply_flat_field(im)
         im_data = copy.deepcopy(im.data)
 
         zero_idx = np.where(im_data == 0)
@@ -1293,7 +1343,9 @@ class SingleTileDestripeStep:
 
                     # Replace any remaining NaNs with the median
                     med[~np.isfinite(med)] = np.nanmedian(med)
-                    noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
+                    noise = med - median_filter(
+                        med, scale, mode=self.filter_extend_mode
+                    )
 
                     if use_mask:
                         data_quadrant = np.ma.array(
@@ -1522,6 +1574,11 @@ class SingleTileDestripeStep:
             out_name.split(os.path.sep)[-1].replace(".fits", "_noise_model"),
         )
 
+        if self.are_rate_files:
+            units = "DN/s"
+        else:
+            units = "MJy/sr"
+
         vmin, vmax = np.nanpercentile(noise_model, [1, 99])
         vmin_data, vmax_data = np.nanpercentile(data, [10, 90])
 
@@ -1542,7 +1599,7 @@ class SingleTileDestripeStep:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("bottom", size="5%", pad=0)
 
-        plt.colorbar(im, cax=cax, label="MJy/sr", orientation="horizontal")
+        plt.colorbar(im, cax=cax, label=units, orientation="horizontal")
 
         ax = plt.subplot(1, 3, 2)
         im = plt.imshow(
@@ -1559,7 +1616,7 @@ class SingleTileDestripeStep:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("bottom", size="5%", pad=0)
 
-        plt.colorbar(im, cax=cax, label="MJy/sr", orientation="horizontal")
+        plt.colorbar(im, cax=cax, label=units, orientation="horizontal")
 
         ax = plt.subplot(1, 3, 3)
         im = plt.imshow(
@@ -1576,7 +1633,7 @@ class SingleTileDestripeStep:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("bottom", size="5%", pad=0)
 
-        plt.colorbar(im, cax=cax, label="MJy/sr", orientation="horizontal")
+        plt.colorbar(im, cax=cax, label=units, orientation="horizontal")
 
         plt.subplots_adjust(hspace=0, wspace=0)
 
