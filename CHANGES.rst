@@ -6,11 +6,13 @@
 - Include useful outputs from these in the ``release_step``
 - If not grouping dithers in ``get_wcs_adjust_step``, respect that in how the transforms are
   written out
+- ``single_tile_destripe_step`` can now run on rate files (pre-flat fielding)
 - Decoupled horizontal/vertical destriping methods in ``single_tile_destripe_step``, since the
   noise properties are distinct in these two axes
 - Add ``smooth`` option to ``single_tile_destripe_step``, based on Dan Coe's smooth1overf
   algorithm
 - Added control over how values are extended beyond array edge for filtering in ``single_tile_destripe_step``
+- ``multi_tile_destripe_step`` can un-flat before correcting
 - Make vertical stripe subtraction optional in ``multi_tile_destripe_step``
 - Make option to do median filtering for the horizontal stripes in ``multi_tile_destripe_step``
 - Added median option to ``multi_tile_destripe_step`` to do a median rather than mean image

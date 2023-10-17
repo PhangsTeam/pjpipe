@@ -8,11 +8,13 @@ import shutil
 import warnings
 from functools import partial
 
+import crds
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from astropy.stats import sigma_clipped_stats
 from astropy.convolution import convolve
+from astropy.stats import sigma_clipped_stats
+from jwst.flatfield.flat_field import do_correction
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from reproject import reproject_interp
 from reproject.mosaicking import find_optimal_celestial_wcs
@@ -213,6 +215,7 @@ class MultiTileDestripeStep:
         out_dir,
         step_ext,
         procs,
+        apply_to_unflat=False,
         do_convergence=False,
         convergence_sigma=1,
         convergence_max_iterations=5,
@@ -249,6 +252,9 @@ class MultiTileDestripeStep:
             step_ext: .fits extension for the files going
                 into the step
             procs: Number of processes to run in parallel
+            apply_to_unflat: If True, will undo the flat-fielding
+                before applying the stripe model, and then
+                reapply it. Defaults to False
             do_convergence: Whether to loop this iteratively
                 until convergence, or just do a single run.
                 Defaults to False
@@ -309,6 +315,7 @@ class MultiTileDestripeStep:
         self.step_ext = step_ext
         self.procs = procs
 
+        self.apply_to_unflat = apply_to_unflat
         self.do_convergence = do_convergence
         self.convergence_sigma = convergence_sigma
         self.convergence_max_iterations = convergence_max_iterations
@@ -524,7 +531,48 @@ class MultiTileDestripeStep:
                 )
 
                 with datamodels.open(in_file) as im:
-                    im.data -= stripes
+
+                    zero_idx = np.where(im.data == 0)
+                    nan_idx = np.where(np.isnan(im.data))
+
+                    if self.apply_to_unflat:
+
+                        # Get CRDS context
+                        try:
+                            crds_context = os.environ["CRDS_CONTEXT"]
+                        except KeyError:
+                            crds_context = crds.get_default_context()
+
+                        crds_dict = {
+                            "INSTRUME": "NIRCAM",
+                            "DETECTOR": im.meta.instrument.detector,
+                            "FILTER": im.meta.instrument.filter,
+                            "PUPIL": im.meta.instrument.pupil,
+                            "DATE-OBS": im.meta.observation.date,
+                            "TIME-OBS": im.meta.observation.time,
+                        }
+                        flats = crds.getreferences(crds_dict, reftypes=["flat"], context=crds_context)
+                        flatfile = flats["flat"]
+
+                        with datamodels.FlatModel(flatfile) as flat:
+
+                            flat_inverse = copy.deepcopy(flat)
+                            flat_inverse.data = flat_inverse.data ** -1
+
+                            # First, unapply the flat fielding to the image and subtract stripes
+                            unflattened_im, _ = do_correction(im, flat_inverse)
+                            unflattened_im.data -= stripes
+
+                            # Reflatten and save into the original data array
+                            reflattened_im, _ = do_correction(unflattened_im, flat)
+                            im.data = copy.deepcopy(reflattened_im.data)
+
+                    else:
+                        im.data -= stripes
+
+                    im.data[zero_idx] = 0
+                    im.data[nan_idx] = np.nan
+
                     im.save(out_file)
 
                     # Find the right index, since multiprocessing doesn't

@@ -499,6 +499,11 @@ class PJPipeline:
                                 band=band,
                             )
 
+                            # If we're going from lv1, then this will be a rate file,
+                            # otherwise a cal
+                            if os.path.split(in_dir)[-1] == "lv1":
+                                in_step_ext = "rate"
+
                             destripe = SingleTileDestripeStep(
                                 in_dir=in_dir,
                                 out_dir=out_dir,
