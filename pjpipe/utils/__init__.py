@@ -16,6 +16,7 @@ from .utils import (
     sigma_clip,
     get_default_args,
     reproject_image,
+    level_data,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "sigma_clip",
     "get_default_args",
     "reproject_image",
+    "level_data",
 ]

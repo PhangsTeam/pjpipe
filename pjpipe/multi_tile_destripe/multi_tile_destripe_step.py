@@ -22,14 +22,14 @@ from scipy.ndimage import uniform_filter1d, median_filter
 from stdatamodels.jwst import datamodels
 from tqdm import tqdm
 
-from ..utils import get_dq_bit_mask, make_source_mask, reproject_image
+from ..utils import get_dq_bit_mask, make_source_mask, reproject_image, level_data
 
 matplotlib.use("agg")
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
 
 ALLOWED_WEIGHT_METHODS = ["mean", "median"]
-ALLOWED_WEIGHT_TYPES = ["exptime", "ivm"]
+ALLOWED_WEIGHT_TYPES = ["exptime", "ivm", "equal"]
 ALLOWED_LARGE_SCALE_METHODS = ["boxcar", "median", "convolve_smooth", "sigma_clip"]
 
 # Global variables, to speed up multiprocessing
@@ -160,6 +160,7 @@ def parallel_reproject_weight(
     optimal_wcs,
     optimal_shape,
     weight_type="exptime",
+    do_level_data=True,
 ):
     """Function to parallelise reprojecting with associated weights
 
@@ -170,6 +171,7 @@ def parallel_reproject_weight(
         optimal_shape: Optimal shape for image shape
         weight_type: How to weight the average image. Defaults
             to exptime, the exposure time
+        do_level_data: Whether to level data or not. Defaults to True
     """
 
     file = files[idx]
@@ -178,6 +180,7 @@ def parallel_reproject_weight(
         file,
         optimal_wcs=optimal_wcs,
         optimal_shape=optimal_shape,
+        do_level_data=do_level_data,
     )
     # Set any bad data to 0
     data_array.array[np.isnan(data_array.array)] = 0
@@ -202,6 +205,12 @@ def parallel_reproject_weight(
         weight_array.array = weight_array.array**-1
         weight_array.array[np.isnan(weight_array.array)] = 0
 
+    elif weight_type == "equal":
+
+        weight_array = copy.deepcopy(data_array)
+        weight_array.array[np.isfinite(weight_array.array)] = 1
+        weight_array.array[data_array.array == 0] = 0
+
     else:
         raise ValueError(f"weight_type should be one of {ALLOWED_WEIGHT_TYPES}")
 
@@ -223,10 +232,9 @@ class MultiTileDestripeStep:
         weight_type="exptime",
         min_area_frac=0.5,
         quadrants=True,
-        median_filter_scale=None,
-        median_filter_extend_mode="reflect",
         do_vertical_subtraction=True,
         do_large_scale=False,
+        large_scale_quadrants=False,
         large_scale_method="median",
         large_scale_filter_factor=4,
         large_scale_filter_extend_mode="reflect",
@@ -268,14 +276,13 @@ class MultiTileDestripeStep:
                 Defaults to 'exptime'
             min_area_frac: Areal fraction of overlap to consider in creating
                 the weighted average image. Defaults to 0.5
-            median_filter_scale: If not None, will smooth the stripes with a median
-                filter of this scale. Defaults to None
-            median_filter_extend_mode: How to extend values in the above median filter
-                beyond array edge. Default is "reflect". See the specific docs for more info
+            quadrants: Whether to split up stripes per-amplifier. Defaults to True
             do_vertical_subtraction: Whether to also do a step of vertical stripe
                 subtraction. Defaults to True
             do_large_scale: Whether to do filtering to try and remove large,
                 consistent ripples between data. Defaults to False
+            quadrants: Whether to split up stripes per-amplifier for large-scale
+                filtering. Defaults to False
             large_scale_method: Which method to use to try and filter out
                 remaining large-scale stripes. Defaults to 'median'
             large_scale_filter_factor: Factor by which we smooth in terms of the array
@@ -323,9 +330,8 @@ class MultiTileDestripeStep:
         self.weight_type = weight_type
         self.min_area_frac = min_area_frac
         self.quadrants = quadrants
-        self.median_filter_scale = median_filter_scale
-        self.median_filter_extend_mode = median_filter_extend_mode
         self.do_large_scale = do_large_scale
+        self.large_scale_quadrants = large_scale_quadrants
         self.do_vertical_subtraction = do_vertical_subtraction
         self.large_scale_method = large_scale_method
         self.large_scale_filter_factor = large_scale_filter_factor
@@ -463,6 +469,7 @@ class MultiTileDestripeStep:
                         optimal_wcs=self.optimal_wcs,
                         optimal_shape=self.optimal_shape,
                         weight_type=self.weight_type,
+                        do_level_data=True,
                     ),
                     range(len(files)),
                 ),
@@ -570,6 +577,11 @@ class MultiTileDestripeStep:
                     else:
                         im.data -= stripes
 
+                    # If we're not in subarray mode, here we want to level out between amplifiers
+                    # for safety
+                    if "sub" not in im.meta.subarray.name.lower():
+                        im.data = level_data(im)
+
                     im.data[zero_idx] = 0
                     im.data[nan_idx] = np.nan
 
@@ -647,12 +659,12 @@ class MultiTileDestripeStep:
 
         # Get the number of pixels, so that we can remove any small overlaps
         # later
-        valid_idx = np.where(
-            np.logical_and(
+        valid_pix = np.logical_and(
                 weighted_file_data != 0,
                 np.isfinite(weighted_file_data),
             )
-        )
+
+        valid_idx = np.where(valid_pix)
         npix_file = len(valid_idx[0])
 
         file_imin, file_imax = file_data.imin, file_data.imax
@@ -793,8 +805,16 @@ class MultiTileDestripeStep:
                 file_name = model.meta.filename
 
                 quadrants = copy.deepcopy(self.quadrants)
+                large_scale_quadrants = copy.deepcopy(self.large_scale_quadrants)
+
+                # If we're in subarray mode, turn off quadrants
                 if "sub" in model.meta.subarray.name.lower():
                     quadrants = False
+                    large_scale_quadrants = False
+
+                # If we're not in subarray mode, level everything out
+                else:
+                    model.data = level_data(model)
 
                 dq_bit_mask = get_dq_bit_mask(model.dq)
 
@@ -811,13 +831,6 @@ class MultiTileDestripeStep:
                 wcs,
                 return_footprint=False,
             )
-
-            # Replace NaNd data with column median, so the boxcar
-            # doesn't catastrophically fail later
-            data_avg_col = np.nanmedian(data_avg, axis=1)
-            for col in range(data_avg.shape[0]):
-                col_idx = np.where(np.isnan(data_avg[col, :]))
-                data_avg[col, col_idx[0]] = data_avg_col[col]
 
             diff_unsmoothed = data - data_avg
             diff_unsmoothed -= np.nanmedian(diff_unsmoothed)
@@ -849,9 +862,16 @@ class MultiTileDestripeStep:
                     axis=0,
                 )[1]
 
-                # Centre around 0, replace NaNs
+                # Centre around 0, replace NaNs with nearest value
                 stripes_y -= np.nanmedian(stripes_y)
-                stripes_y[np.isnan(stripes_y)] = 0
+
+                mask = np.isnan(stripes_y)
+                # Only interp if we have a) some NaNs but not b) all NaNs
+                if 0 < np.sum(mask) < len(stripes_y):
+                    stripes_y[mask] = np.interp(np.flatnonzero(mask),
+                                                np.flatnonzero(~mask),
+                                                stripes_y[~mask],
+                                                )
 
                 stripes_arr += stripes_y[np.newaxis, :]
 
@@ -878,16 +898,16 @@ class MultiTileDestripeStep:
                         axis=1,
                     )[1]
 
-                    # Centre around 0, replace NaNs
-                    stripes_x -= np.nanmedian(stripes_x)
-                    stripes_x[np.isnan(stripes_x)] = 0
+                    # Replace NaNs with nearest values, but don't centre here to keep any
+                    # residual shifts between amplifiers
 
-                    # If we're smoothing, do it here
-                    if self.median_filter_scale is not None:
-                        stripes_x = median_filter(stripes_x,
-                                                  size=self.median_filter_scale,
-                                                  mode=self.median_filter_extend_mode,
-                                                  )
+                    mask = np.isnan(stripes_x)
+                    # Only interp if we have a) some NaNs but not b) all NaNs
+                    if 0 < np.sum(mask) < len(stripes_x):
+                        stripes_x[mask] = np.interp(np.flatnonzero(mask),
+                                                    np.flatnonzero(~mask),
+                                                    stripes_x[~mask],
+                                                    )
 
                     stripes_x_2d[:, idx_slice] += stripes_x[:, np.newaxis]
 
@@ -901,37 +921,45 @@ class MultiTileDestripeStep:
                     axis=1,
                 )[1]
 
-                # Centre around 0, replace NaNs
+                # Centre around 0, replace NaNs with nearest values
                 stripes_x -= np.nanmedian(stripes_x)
-                stripes_x[np.isnan(stripes_x)] = 0
 
-                # If we're smoothing, do it here
-                if self.median_filter_scale is not None:
-                    stripes_x = median_filter(stripes_x,
-                                              size=self.median_filter_scale,
-                                              mode=self.median_filter_extend_mode,
-                                              )
+                mask = np.isnan(stripes_x)
+
+                # Only interp if we have a) some NaNs but not b) all NaNs
+                if 0 < np.sum(mask) < len(stripes_x):
+                    stripes_x[mask] = np.interp(np.flatnonzero(mask),
+                                                np.flatnonzero(~mask),
+                                                stripes_x[~mask],
+                                                )
 
                 stripes_x_2d += stripes_x[:, np.newaxis]
 
             # Centre around 0 one last time
             stripes_x_2d -= np.nanmedian(stripes_x_2d)
-            stripes_x_2d[np.isnan(stripes_x_2d)] = 0
 
             stripes_arr += stripes_x_2d
             stripes_arr -= np.nanmedian(stripes_arr)
-            stripes_arr[np.isnan(stripes_arr)] = 0
 
             if self.do_large_scale:
                 # Filter along the y-axis (to preserve the stripe noise) with some filter.
                 # This ideally flattens out the background, for any consistent large-scale ripples
                 # between images
 
+                # To avoid weirdness in the filters, replace any NaN values per-column with the
+                # nearest not NaN. This should only really be an issue for small rows at the sides
+                for col in range(data_avg.shape[1]):
+                    data_col = copy.deepcopy(data_avg[:, col])
+                    mask = np.isnan(data_col)
+
+                    # Only interp if we have a) some NaNs but not b) all NaNs
+                    if 0 < np.sum(mask) < len(data_col):
+                        data_col[mask] = np.interp(np.flatnonzero(mask), np.flatnonzero(~mask), data_col[~mask])
+
+                    data_avg[:, col] = copy.deepcopy(data_col)
+
                 # Boxcar filter
                 if self.large_scale_method == "boxcar":
-                    # Centre data and replace NaN with 0 so boxcar don't catastrophically fail
-                    data_avg -= np.nanmedian(data_avg)
-                    data_avg[np.isnan(data_avg)] = 0
 
                     boxcar = uniform_filter1d(
                         data_avg,
@@ -943,9 +971,6 @@ class MultiTileDestripeStep:
 
                 # Median filter
                 elif self.large_scale_method == "median":
-                    # Centre data and replace NaN with 0 so median don't catastrophically fail
-                    data_avg -= np.nanmedian(data_avg)
-                    data_avg[np.isnan(data_avg)] = 0
 
                     # TODO: For now this doesn't work, since JWST requires older scipy versions
                     # med = median_filter(
@@ -967,9 +992,6 @@ class MultiTileDestripeStep:
                     diff_smoothed = data - stripes_arr - med
 
                 elif self.large_scale_method == "convolve_smooth":
-                    # Centre data and replace NaN with 0 so median don't catastrophically fail
-                    data_avg -= np.nanmedian(data_avg)
-                    data_avg[np.isnan(data_avg)] = 0
 
                     # Create kernel
                     kernel_scale = data_avg.shape[0] // self.large_scale_filter_factor
@@ -1014,7 +1036,6 @@ class MultiTileDestripeStep:
                     )
 
                 diff_smoothed -= np.nanmedian(diff_smoothed)
-                diff_smoothed[np.isnan(diff_smoothed)] = 0
 
                 mask_pos = make_source_mask(
                     diff_smoothed,
@@ -1031,24 +1052,71 @@ class MultiTileDestripeStep:
                 )
                 mask_smoothed = mask_pos | mask_neg  # | dq_bit_mask1
 
-                # Pass through the smoothed data, but across the whole image to avoid the bright noisy bits
-                stripes_x = sigma_clipped_stats(
-                    diff_smoothed,
-                    mask=mask_smoothed,
-                    sigma=self.sigma,
-                    maxiters=self.maxiters,
-                    axis=1,
-                )[1]
+                stripes_x_2d = np.zeros_like(stripes_arr)
 
-                # Centre around 0, replace NaNs
-                stripes_x -= np.nanmedian(stripes_x)
-                stripes_x[np.isnan(stripes_x)] = 0
+                if large_scale_quadrants:
 
-                stripes_arr += stripes_x[:, np.newaxis]
+                    quadrant_size = stripes_arr.shape[1] // 4
+
+                    for quadrant in range(4):
+                        idx_slice = slice(
+                            quadrant * quadrant_size, (quadrant + 1) * quadrant_size
+                        )
+
+                        # Do a pass at the smoothed data
+                        diff_quadrants = (
+                                diff_smoothed[:, idx_slice]
+                        )
+                        mask_quadrants = mask_smoothed[:, idx_slice]
+                        stripes_x = sigma_clipped_stats(
+                            diff_quadrants,
+                            mask=mask_quadrants,
+                            sigma=self.sigma,
+                            maxiters=self.maxiters,
+                            axis=1,
+                        )[1]
+
+                        # Replace NaNs with nearest values, but don't centre here to keep any
+                        # residual shifts between amplifiers
+                        mask = np.isnan(stripes_x)
+
+                        # Only interp if we have a) some NaNs but not b) all NaNs
+                        if 0 < np.sum(mask) < len(stripes_x):
+                            stripes_x[mask] = np.interp(np.flatnonzero(mask),
+                                                        np.flatnonzero(~mask),
+                                                        stripes_x[~mask],
+                                                        )
+
+                        stripes_x_2d[:, idx_slice] += stripes_x[:, np.newaxis]
+
+                else:
+                    # Do a pass at the smoothed
+                    stripes_x = sigma_clipped_stats(
+                        diff_smoothed,
+                        mask=mask_smoothed,
+                        sigma=self.sigma,
+                        maxiters=self.maxiters,
+                        axis=1,
+                    )[1]
+
+                    # Centre around 0, replace NaNs with nearest value
+                    stripes_x -= np.nanmedian(stripes_x)
+
+                    mask = np.isnan(stripes_x)
+                    # Only interp if we have a) some NaNs but not b) all NaNs
+                    if 0 < np.sum(mask) < len(stripes_x):
+                        stripes_x[mask] = np.interp(np.flatnonzero(mask),
+                                                    np.flatnonzero(~mask),
+                                                    stripes_x[~mask],
+                                                    )
+
+                    stripes_x_2d += stripes_x[:, np.newaxis]
+
+                stripes_x_2d -= np.nanmedian(stripes_x_2d)
+                stripes_arr += stripes_x_2d
 
                 # Centre around 0 for luck
                 stripes_arr -= np.nanmedian(stripes_arr)
-                stripes_arr[np.isnan(stripes_arr)] = 0
 
             # Make diagnostic plot. Use different names if
             # we're iterating

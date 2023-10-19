@@ -49,8 +49,8 @@ bands = [
 steps = [
     'download',
     'lv1',
-    'lv2',
     'single_tile_destripe.nircam',
+    'lv2',
     'get_wcs_adjust',
     'apply_wcs_adjust',
     'lyot_separate.miri',
@@ -164,12 +164,14 @@ filter_extend_mode = "reflect"
 filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
 
 [parameters.multi_tile_destripe]
-quadrants = true
+apply_to_unflat = true
+do_vertical_subtraction = false
+quadrants = false
+do_large_scale = true
+large_scale_quadrants = false
 sigma = 3
 weight_type = 'ivm'
-do_large_scale = true
 large_scale_filter_extend_mode = "reflect"
-min_area_frac = 0.002
 
 [parameters.level_match]
 do_sigma_clip = false
