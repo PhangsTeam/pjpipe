@@ -26,7 +26,7 @@ from tqdm import tqdm
 
 from . import vwpca as vw
 from . import vwpca_normgappy as gappy
-from ..utils import make_source_mask, get_dq_bit_mask
+from ..utils import make_source_mask, get_dq_bit_mask, level_data
 
 matplotlib.use("agg")
 log = logging.getLogger("stpipe")
@@ -89,10 +89,10 @@ def get_dq_mask(data, err, dq):
 
 
 def butterworth_filter(
-    data,
-    data_std=None,
-    dq_mask=None,
-    return_high_sn_mask=False,
+        data,
+        data_std=None,
+        dq_mask=None,
+        return_high_sn_mask=False,
 ):
     """Butterworth filter data, accounting for bad data
 
@@ -130,16 +130,16 @@ def butterworth_filter(
     # Pad out the data by reflection to avoid ringing at boundaries
     data_pad = np.zeros([data.shape[0] * 2, data.shape[1] * 2])
     data_pad[: data.shape[0], : data.shape[1]] = copy.deepcopy(data)
-    data_pad[-data.shape[0] :, -data.shape[1] :] = copy.deepcopy(data[::-1, ::-1])
-    data_pad[-data.shape[0] :, : data.shape[1]] = copy.deepcopy(data[::-1, :])
-    data_pad[: data.shape[0], -data.shape[1] :] = copy.deepcopy(data[:, ::-1])
+    data_pad[-data.shape[0]:, -data.shape[1]:] = copy.deepcopy(data[::-1, ::-1])
+    data_pad[-data.shape[0]:, : data.shape[1]] = copy.deepcopy(data[::-1, :])
+    data_pad[: data.shape[0], -data.shape[1]:] = copy.deepcopy(data[:, ::-1])
     data_pad = np.roll(
         data_pad, axis=[0, 1], shift=[data.shape[0] // 2, data.shape[1] // 2]
     )
     data_pad = data_pad[
-        data.shape[0] // 4 : -data.shape[0] // 4,
-        data.shape[1] // 4 : -data.shape[1] // 4,
-    ]
+               data.shape[0] // 4: -data.shape[0] // 4,
+               data.shape[1] // 4: -data.shape[1] // 4,
+               ]
 
     # Filter the image to remove any large scale structure.
     data_filter = filters.butterworth(
@@ -147,9 +147,9 @@ def butterworth_filter(
         high_pass=True,
     )
     data_filter = data_filter[
-        data.shape[0] // 4 : -data.shape[0] // 4,
-        data.shape[1] // 4 : -data.shape[1] // 4,
-    ]
+                  data.shape[0] // 4: -data.shape[0] // 4,
+                  data.shape[1] // 4: -data.shape[1] // 4,
+                  ]
     # data_filter[idx] = np.random.normal(loc=0, scale=data_std, size=len(idx[0]))
 
     # Get rid of the high S/N stuff, replace with median
@@ -167,25 +167,26 @@ def butterworth_filter(
 
 class SingleTileDestripeStep:
     def __init__(
-        self,
-        in_dir,
-        out_dir,
-        step_ext,
-        procs,
-        quadrants=True,
-        vertical_subtraction=True,
-        destriping_method="row_median",
-        filter_diffuse=False,
-        large_scale_subtraction=False,
-        sigma=3,
-        npixels=3,
-        dilate_size=11,
-        max_iters=20,
-        filter_scales=None,
-        filter_extend_mode="reflect",
-        pca_components=50,
-        pca_reconstruct_components=10,
-        overwrite=False,
+            self,
+            in_dir,
+            out_dir,
+            step_ext,
+            procs,
+            quadrants=True,
+            vertical_subtraction=True,
+            destriping_method="row_median",
+            vertical_destriping_method="row_median",
+            filter_diffuse=False,
+            large_scale_subtraction=False,
+            sigma=3,
+            npixels=3,
+            dilate_size=11,
+            max_iters=20,
+            filter_scales=None,
+            filter_extend_mode="reflect",
+            pca_components=50,
+            pca_reconstruct_components=10,
+            overwrite=False,
     ):
         """NIRCAM Destriping routines
 
@@ -201,6 +202,7 @@ class SingleTileDestripeStep:
                 separately. Defaults to True
             vertical_subtraction: Perform sigma-clipped median column subtraction? Defaults to True
             destriping_method: Method to use for destriping. Allowed options are given by DESTRIPING_METHODS
+            vertical_destriping_method: Method to use for vertical destriping. Allowed options are given by DESTRIPING_METHODS
             filter_diffuse: Whether to perform high-pass filter on data, to remove diffuse, extended
                 emission. Defaults to False, but should be set True for observations where emission fills the FOV
             large_scale_subtraction: Whether to mitigate for large-scale stripes remaining after the diffuse
@@ -221,6 +223,10 @@ class SingleTileDestripeStep:
             raise Warning(
                 f"destriping_method should be one of {DESTRIPING_METHODS}, not {destriping_method}"
             )
+        if vertical_destriping_method not in DESTRIPING_METHODS:
+            raise Warning(
+                f"vertical_destriping_method should be one of {DESTRIPING_METHODS}, not {vertical_destriping_method}"
+            )
 
         if filter_scales is None:
             filter_scales = [3, 7, 15, 31, 63, 127]
@@ -237,6 +243,7 @@ class SingleTileDestripeStep:
         self.quadrants = quadrants
         self.vertical_subtraction = vertical_subtraction
         self.destriping_method = destriping_method
+        self.vertical_destriping_method = vertical_destriping_method
         self.filter_diffuse = filter_diffuse
         self.large_scale_subtraction = large_scale_subtraction
         self.sigma = sigma
@@ -316,9 +323,9 @@ class SingleTileDestripeStep:
         return True
 
     def run_step(
-        self,
-        files,
-        procs=1,
+            self,
+            files,
+            procs=1,
     ):
         """Wrap paralellism around the destriping
 
@@ -334,15 +341,15 @@ class SingleTileDestripeStep:
             successes = []
 
             for success in tqdm(
-                pool.imap_unordered(
-                    partial(
-                        self.parallel_destripe,
+                    pool.imap_unordered(
+                        partial(
+                            self.parallel_destripe,
+                        ),
+                        files,
                     ),
-                    files,
-                ),
-                ascii=True,
-                desc="Destriping",
-                total=len(files),
+                    ascii=True,
+                    desc="Destriping",
+                    total=len(files),
             ):
                 successes.append(success)
 
@@ -353,8 +360,8 @@ class SingleTileDestripeStep:
         return successes
 
     def parallel_destripe(
-        self,
-        file,
+            self,
+            file,
     ):
         """Parallel destriping function
 
@@ -379,8 +386,10 @@ class SingleTileDestripeStep:
                 # Force off quadrants if we're in subarray mode
                 quadrants = False
 
-            if quadrants:
-                im.data = self.level_data(im)
+            # Only level if we're not doing vertical subtraction, otherwise this should
+            # be taken care of
+            if quadrants and not self.vertical_subtraction:
+                im.data = level_data(im)
 
             full_noise_model = np.zeros_like(im.data)
 
@@ -469,10 +478,10 @@ class SingleTileDestripeStep:
             return True
 
     def run_vertical_subtraction(
-        self,
-        im,
-        prev_noise_model,
-        is_subarray=False,
+            self,
+            im,
+            prev_noise_model,
+            is_subarray=False,
     ):
         """Median filter subtraction of columns (optional diffuse emission filtering)
 
@@ -529,20 +538,51 @@ class SingleTileDestripeStep:
                 dq_mask=dq_mask,
             )
 
-        # Use median filtering to avoid noise and boundary issues
         data = np.ma.array(copy.deepcopy(data), mask=copy.deepcopy(mask))
 
-        for scale in self.filter_scales:
+        # Centre around 0
+        data -= np.ma.median(data)
+
+        # Median filter method
+        if self.vertical_destriping_method == "median_filter":
+            for scale in self.filter_scales:
+                med = np.ma.median(data, axis=0)
+                mask_idx = np.where(med.mask)
+                med = med.data
+                med[mask_idx] = np.nan
+
+                mask = np.isnan(med)
+
+                # Only interp if we have a) some NaNs but not b) all NaNs
+                if 0 < np.sum(mask) < len(med):
+                    med[mask] = np.interp(np.flatnonzero(mask),
+                                          np.flatnonzero(~mask),
+                                          med[~mask],
+                                          )
+
+                noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
+
+                data -= noise[np.newaxis, :]
+
+                vertical_noise_model += noise[np.newaxis, :]
+
+        # Row-by-row median
+        elif self.vertical_destriping_method == "row_median":
             med = np.ma.median(data, axis=0)
-            mask_idx = np.where(med.mask)
-            med = med.data
-            med[mask_idx] = np.nan
-            med[~np.isfinite(med)] = 0
-            noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
+            med -= np.nanmedian(med)
 
-            data -= noise[np.newaxis, :]
+            mask = np.isnan(med)
 
-            vertical_noise_model += noise[np.newaxis, :]
+            # Only interp if we have a) some NaNs but not b) all NaNs
+            if 0 < np.sum(mask) < len(med):
+                med[mask] = np.interp(np.flatnonzero(mask),
+                                      np.flatnonzero(~mask),
+                                      med[~mask],
+                                      )
+
+            vertical_noise_model += med[np.newaxis, :]
+        else:
+            raise NotImplementedError(f"vertical destriping method {self.vertical_destriping_method} not implemented")
 
         # Bring everything back up to the median level
         vertical_noise_model -= np.nanmedian(vertical_noise_model)
@@ -555,12 +595,12 @@ class SingleTileDestripeStep:
         return full_noise_model
 
     def run_remstriping(
-        self,
-        im,
-        prev_noise_model,
-        out_name,
-        is_subarray=False,
-        quadrants=True,
+            self,
+            im,
+            prev_noise_model,
+            out_name,
+            is_subarray=False,
+            quadrants=True,
     ):
         """Destriping based on the CEERS remstripe routine
 
@@ -702,12 +742,12 @@ class SingleTileDestripeStep:
         return full_noise_model
 
     def run_smooth(
-        self,
-        im,
-        prev_noise_model,
-        out_name,
-        is_subarray=False,
-        quadrants=False,
+            self,
+            im,
+            prev_noise_model,
+            out_name,
+            is_subarray=False,
+            quadrants=False,
     ):
         """Smoothing-based de-noising
 
@@ -806,7 +846,7 @@ class SingleTileDestripeStep:
 
                     # Add to the noise model, centre around 0
                     trimmed_noise_model[:, idx_slice] += (
-                        med[:, np.newaxis] - med_conv[:, np.newaxis]
+                            med[:, np.newaxis] - med_conv[:, np.newaxis]
                     )
                     trimmed_noise_model[:, idx_slice] -= np.nanmedian(
                         trimmed_noise_model[:, idx_slice]
@@ -846,13 +886,13 @@ class SingleTileDestripeStep:
         return full_noise_model
 
     def run_pca_denoise(
-        self,
-        im,
-        prev_noise_model,
-        pca_file,
-        out_name,
-        is_subarray=False,
-        quadrants=True,
+            self,
+            im,
+            prev_noise_model,
+            pca_file,
+            out_name,
+            is_subarray=False,
+            quadrants=True,
     ):
         """PCA-based de-noising
 
@@ -975,8 +1015,8 @@ class SingleTileDestripeStep:
                 for col in range(data_quadrant.shape[0]):
                     idx = np.where(np.isnan(data_quadrant[col, :]))
                     data_quadrant[col, idx[0]] = (
-                        data_med[col] - norm_median
-                    ) / norm_factor + 1
+                                                         data_med[col] - norm_median
+                                                 ) / norm_factor + 1
 
                 # For places where this is all NaN, just 0 to avoid errors
                 data_quadrant[np.isnan(data_quadrant)] = 0
@@ -1033,8 +1073,8 @@ class SingleTileDestripeStep:
             for col in range(data_train.shape[0]):
                 idx = np.where(np.isnan(data_train[col, :]))
                 data_train[col, idx[0]] = (
-                    data_med[col] - norm_median
-                ) / norm_factor + 1
+                                                  data_med[col] - norm_median
+                                          ) / norm_factor + 1
 
             # For places where this is all NaN, just 0 to avoid errors
             data_train[np.isnan(data_train)] = 0
@@ -1080,12 +1120,12 @@ class SingleTileDestripeStep:
         return full_noise_model
 
     def fit_robust_pca(
-        self,
-        data,
-        err,
-        mask,
-        mask_column_frac=0.25,
-        min_column_frac=0.5,
+            self,
+            data,
+            err,
+            mask,
+            mask_column_frac=0.25,
+            min_column_frac=0.5,
     ):
         """Fits the robust PCA algorithm
 
@@ -1129,7 +1169,7 @@ class SingleTileDestripeStep:
             amount_of_eigen=self.pca_components,
             save_extra_param=False,
             number_of_iterations=3,
-            c_sq=0.787**2,
+            c_sq=0.787 ** 2,
         )
 
         return eigen_system_dict
@@ -1163,11 +1203,11 @@ class SingleTileDestripeStep:
         return noise_model
 
     def run_row_median(
-        self,
-        im,
-        out_name,
-        prev_noise_model,
-        quadrants=True,
+            self,
+            im,
+            out_name,
+            prev_noise_model,
+            quadrants=True,
     ):
         """Calculate sigma-clipped median for each row. From Tom Williams.
 
@@ -1221,8 +1261,8 @@ class SingleTileDestripeStep:
 
             # Calculate medians and apply
             for i in range(4):
-                data_quadrants = data[:, i * quadrant_size : (i + 1) * quadrant_size]
-                mask_quadrants = mask[:, i * quadrant_size : (i + 1) * quadrant_size]
+                data_quadrants = data[:, i * quadrant_size: (i + 1) * quadrant_size]
+                mask_quadrants = mask[:, i * quadrant_size: (i + 1) * quadrant_size]
 
                 median_quadrants = sigma_clipped_stats(
                     data_quadrants,
@@ -1233,10 +1273,10 @@ class SingleTileDestripeStep:
                 )[1]
 
                 full_noise_model[
-                    :, i * quadrant_size : (i + 1) * quadrant_size
+                :, i * quadrant_size: (i + 1) * quadrant_size
                 ] += median_quadrants[:, np.newaxis]
                 full_noise_model[
-                    :, i * quadrant_size : (i + 1) * quadrant_size
+                :, i * quadrant_size: (i + 1) * quadrant_size
                 ] -= np.nanmedian(median_quadrants)
 
         else:
@@ -1264,12 +1304,12 @@ class SingleTileDestripeStep:
         return full_noise_model
 
     def run_median_filter(
-        self,
-        im,
-        prev_noise_model,
-        out_name,
-        use_mask=True,
-        quadrants=True,
+            self,
+            im,
+            prev_noise_model,
+            out_name,
+            use_mask=True,
+            quadrants=True,
     ):
         """Run a series of filters over the row medians. From Mederic Boquien.
 
@@ -1325,12 +1365,12 @@ class SingleTileDestripeStep:
             # Calculate medians and apply
             for i in range(4):
                 if use_mask:
-                    data_quadrant = data[:, i * quadrant_size : (i + 1) * quadrant_size]
-                    mask_quadrant = mask[:, i * quadrant_size : (i + 1) * quadrant_size]
+                    data_quadrant = data[:, i * quadrant_size: (i + 1) * quadrant_size]
+                    mask_quadrant = mask[:, i * quadrant_size: (i + 1) * quadrant_size]
 
                     data_quadrant = np.ma.array(data_quadrant, mask=mask_quadrant)
                 else:
-                    data_quadrant = data[:, i * quadrant_size : (i + 1) * quadrant_size]
+                    data_quadrant = data[:, i * quadrant_size: (i + 1) * quadrant_size]
 
                 for scale in self.filter_scales:
                     if use_mask:
@@ -1356,7 +1396,7 @@ class SingleTileDestripeStep:
                         data_quadrant -= noise[:, np.newaxis]
 
                     full_noise_model[
-                        :, i * quadrant_size : (i + 1) * quadrant_size
+                    :, i * quadrant_size: (i + 1) * quadrant_size
                     ] += noise[:, np.newaxis]
 
         else:
@@ -1373,7 +1413,16 @@ class SingleTileDestripeStep:
                     med[mask_idx] = np.nan
                 else:
                     med = np.nanmedian(data, axis=1)
-                med[~np.isfinite(med)] = 0
+
+                mask = np.isnan(med)
+
+                # Only interp if we have a) some NaNs but not b) all NaNs
+                if 0 < np.sum(mask) < len(med):
+                    med[mask] = np.interp(np.flatnonzero(mask),
+                                          np.flatnonzero(~mask),
+                                          med[~mask],
+                                          )
+
                 noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
 
                 data_copy -= noise[:, np.newaxis]
@@ -1390,59 +1439,11 @@ class SingleTileDestripeStep:
 
         return full_noise_model
 
-    def level_data(
-        self,
-        im,
-    ):
-        """Level overlaps in NIRCAM amplifiers
-
-        Args:
-            im: Input datamodel
-        """
-
-        data = copy.deepcopy(im.data)
-
-        quadrant_size = data.shape[1] // 4
-
-        dq_mask = get_dq_mask(
-            data=im.data,
-            err=im.err,
-            dq=im.dq,
-        )
-
-        for i in range(3):
-            quad_1 = data[:, i * quadrant_size : (i + 1) * quadrant_size][
-                :, quadrant_size - 20 :
-            ]
-            dq_1 = dq_mask[:, i * quadrant_size : (i + 1) * quadrant_size][
-                :, quadrant_size - 20 :
-            ]
-            quad_2 = data[:, (i + 1) * quadrant_size : (i + 2) * quadrant_size][:, :20]
-            dq_2 = dq_mask[:, (i + 1) * quadrant_size : (i + 2) * quadrant_size][:, :20]
-
-            quad_1[dq_1] = np.nan
-            quad_2[dq_2] = np.nan
-
-            med_1 = np.nanmedian(
-                quad_1,
-                axis=1,
-            )
-            med_2 = np.nanmedian(
-                quad_2,
-                axis=1,
-            )
-            diff = med_1 - med_2
-
-            delta = sigma_clipped_stats(diff, maxiters=None)[1]
-            data[:, (i + 1) * quadrant_size : (i + 2) * quadrant_size] += delta
-
-        return data
-
     def get_filter_diffuse(
-        self,
-        data,
-        mask,
-        dq_mask,
+            self,
+            data,
+            mask,
+            dq_mask,
     ):
         """Filter out diffuse emission using Butterworth filter
 
@@ -1492,11 +1493,11 @@ class SingleTileDestripeStep:
         return data, mask
 
     def make_mask_plot(
-        self,
-        data,
-        mask,
-        out_name,
-        filter_diffuse=False,
+            self,
+            data,
+            mask,
+            out_name,
+            filter_diffuse=False,
     ):
         """Create mask diagnostic plot
 
@@ -1548,10 +1549,10 @@ class SingleTileDestripeStep:
         plt.close()
 
     def make_destripe_plot(
-        self,
-        in_im,
-        noise_model,
-        out_name,
+            self,
+            in_im,
+            noise_model,
+            out_name,
     ):
         """Create diagnostic plot for the destriping
 

@@ -7,17 +7,22 @@
 - If not grouping dithers in ``get_wcs_adjust_step``, respect that in how the transforms are
   written out
 - ``single_tile_destripe_step`` can now run on rate files (pre-flat fielding)
+- Bugfixing in ``single_tile_destripe_step``
 - Decoupled horizontal/vertical destriping methods in ``single_tile_destripe_step``, since the
   noise properties are distinct in these two axes
 - Add ``smooth`` option to ``single_tile_destripe_step``, based on Dan Coe's smooth1overf
   algorithm
 - Added control over how values are extended beyond array edge for filtering in ``single_tile_destripe_step``
+- Lots of bugfixing in ``multi_tile_destripe_step``
 - ``multi_tile_destripe_step`` can un-flat before correcting
+- Level between amplifiers in ``multi_tile_destripe_step``
 - Make vertical stripe subtraction optional in ``multi_tile_destripe_step``
-- Make option to do median filtering for the horizontal stripes in ``multi_tile_destripe_step``
 - Added median option to ``multi_tile_destripe_step`` to do a median rather than mean image
 - Added iterative option to ``multi_tile_destripe_step`` that will keep things going until
   sigma-based convergence
+- Added sigma-clip median option for creating stacked images
+- ``do_large_scale`` now works completely differently in ``multi_tile_destripe_step``, instead
+  attempting to clean up the average image
 - Added support for different ``do_large_scale`` methods in ``multi_tile_destripe_step``,
   which may work better in certain situations
 - Added a median filter ``do_large_scale`` method, which may be more robust than the boxcar. THIS
