@@ -20,7 +20,9 @@
 - Added median option to ``multi_tile_destripe_step`` to do a median rather than mean image
 - Added iterative option to ``multi_tile_destripe_step`` that will keep things going until
   sigma-based convergence
-- ``do_large_scale`` in ``multi_tile_destripe_step`` now can operate per-amplifier
+- Added sigma-clip median option for creating stacked images
+- ``do_large_scale`` now works completely differently in ``multi_tile_destripe_step``, instead
+  attempting to clean up the average image
 - Added support for different ``do_large_scale`` methods in ``multi_tile_destripe_step``,
   which may work better in certain situations
 - Added a median filter ``do_large_scale`` method, which may be more robust than the boxcar. THIS

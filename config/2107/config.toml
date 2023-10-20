@@ -164,14 +164,14 @@ filter_extend_mode = "reflect"
 filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
 
 [parameters.multi_tile_destripe]
-apply_to_unflat = true
+apply_to_unflat = false
 do_vertical_subtraction = false
-quadrants = false
-do_large_scale = true
-large_scale_quadrants = false
+quadrants = true
 sigma = 3
-weight_type = 'ivm'
+weight_type = 'equal'
+do_large_scale = false
 large_scale_filter_extend_mode = "reflect"
+weight_method = "sigma_clip"
 
 [parameters.level_match]
 do_sigma_clip = false
