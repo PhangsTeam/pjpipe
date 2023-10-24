@@ -1,4 +1,4 @@
-0.9.3 (Unreleased)
+0.9.3 (2023-10-24)
 ==================
 
 - Add PSF matching routines (``psf_matching``)
