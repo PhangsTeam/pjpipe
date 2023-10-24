@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='pjpipe',
-    version='0.9.2',
+    version='0.9.3',
     packages=[''],
     url='phangs.org',
     license='GNU General Public License v3 or later (GPLv3+) (GNU)',

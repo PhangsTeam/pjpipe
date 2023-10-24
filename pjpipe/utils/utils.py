@@ -7,6 +7,7 @@ import os
 import warnings
 
 import numpy as np
+from astropy.convolution import convolve_fft
 from astropy.io import fits
 from astropy.nddata.bitmask import interpret_bit_flags, bitfield_to_boolean_mask
 from astropy.stats import sigma_clipped_stats, SigmaClip
@@ -15,6 +16,7 @@ from astropy.wcs import WCS
 from photutils.segmentation import detect_threshold, detect_sources
 from reproject import reproject_interp
 from reproject.mosaicking.subset_array import ReprojectedArraySubset
+from scipy.interpolate import RegularGridInterpolator
 from stdatamodels.jwst import datamodels
 from stdatamodels.jwst.datamodels.dqflags import pixel
 
@@ -24,6 +26,8 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 # Useful values
+
+PIXEL_SCALE_NAMES = ["XPIXSIZE", "CDELT1", "CD1_1", "PIXELSCL"]
 
 # Pixel scales
 jwst_pixel_scales = {
@@ -127,8 +131,33 @@ band_exts = {
     "miri": "mirimage",
 }
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
+
+
+def get_pixscale(hdu):
+    """Get pixel scale from header.
+
+    Checks HDU header and returns a pixel scale
+
+    Args:
+        hdu: hdu to get pixel scale for
+    """
+
+    for pixel_keyword in PIXEL_SCALE_NAMES:
+        try:
+            try:
+                pix_scale = np.abs(float(hdu.header[pixel_keyword]))
+            except ValueError:
+                continue
+            if pixel_keyword in ["CDELT1", "CD1_1"]:
+                pix_scale = WCS(hdu.header).proj_plane_pixel_scales()[0].value * 3600
+                # pix_scale *= 3600
+            return pix_scale
+        except KeyError:
+            pass
+
+    raise Warning("No pixel scale found")
 
 
 def load_toml(filename):
@@ -145,8 +174,8 @@ def load_toml(filename):
 
 
 def get_band_type(
-    band,
-    short_long_nircam=False,
+        band,
+        short_long_nircam=False,
 ):
     """Get the instrument type from the band name
 
@@ -200,11 +229,11 @@ def get_default_args(func):
 
 
 def get_kws(
-    parameters,
-    func,
-    band,
-    target,
-    max_level=None,
+        parameters,
+        func,
+        band,
+        target,
+        max_level=None,
 ):
     """Set up kwarg dict for a function, looping over band and target
 
@@ -240,11 +269,11 @@ def get_kws(
 
 
 def parse_parameter_dict(
-    parameters,
-    key,
-    band,
-    target,
-    max_level=None,
+        parameters,
+        key,
+        band,
+        target,
+        max_level=None,
 ):
     """Pull values out of a parameter dictionary
 
@@ -310,10 +339,10 @@ def parse_parameter_dict(
 
 
 def attribute_setter(
-    pipeobj,
-    parameters,
-    band,
-    target,
+        pipeobj,
+        parameters,
+        band,
+        target,
 ):
     """Set attributes for a function
 
@@ -361,10 +390,10 @@ def attribute_setter(
 
 
 def recursive_setattr(
-    f,
-    attribute,
-    value,
-    protected=False,
+        f,
+        attribute,
+        value,
+        protected=False,
 ):
     """Set potentially recursive function attributes.
 
@@ -390,9 +419,9 @@ def recursive_setattr(
 
 
 def recursive_getattr(
-    f,
-    attribute,
-    *args,
+        f,
+        attribute,
+        *args,
 ):
     """Get potentially recursive function attributes.
 
@@ -411,10 +440,10 @@ def recursive_getattr(
 
 
 def get_obs_table(
-    files,
-    check_bgr=False,
-    check_type="parallel_off",
-    background_name="off",
+        files,
+        check_bgr=False,
+        check_type="parallel_off",
+        background_name="off",
 ):
     """Pull necessary info out of fits headers"""
 
@@ -457,10 +486,10 @@ def get_obs_table(
 
 
 def parse_fits_to_table(
-    file,
-    check_bgr=False,
-    check_type="parallel_off",
-    background_name="off",
+        file,
+        check_bgr=False,
+        check_type="parallel_off",
+        background_name="off",
 ):
     """Pull necessary info out of fits headers
 
@@ -525,12 +554,12 @@ def get_dq_bit_mask(dq):
 
 
 def make_source_mask(
-    data,
-    mask=None,
-    nsigma=3,
-    npixels=3,
-    dilate_size=11,
-    sigclip_iters=5,
+        data,
+        mask=None,
+        nsigma=3,
+        npixels=3,
+        dilate_size=11,
+        sigclip_iters=5,
 ):
     """Make a source mask from segmentation image"""
 
@@ -561,11 +590,11 @@ def make_source_mask(
 
 
 def sigma_clip(
-    data,
-    dq_mask=None,
-    sigma=1.5,
-    n_pixels=5,
-    max_iterations=20,
+        data,
+        dq_mask=None,
+        sigma=1.5,
+        n_pixels=5,
+        max_iterations=20,
 ):
     """Get sigma-clipped statistics for data"""
 
@@ -582,12 +611,13 @@ def sigma_clip(
 
 
 def reproject_image(
-    file,
-    optimal_wcs,
-    optimal_shape,
-    hdu_type="data",
-    do_sigma_clip=False,
-    stacked_image=False,
+        file,
+        optimal_wcs,
+        optimal_shape,
+        hdu_type="data",
+        do_sigma_clip=False,
+        stacked_image=False,
+        do_level_data=False,
 ):
     """Reproject an image to an optimal WCS
 
@@ -599,10 +629,22 @@ def reproject_image(
         do_sigma_clip: Whether to perform sigma-clipping or not.
             Defaults to False
         stacked_image: Stacked image or not? Defaults to False
+        do_level_data: Whether to level between amplifiers or not.
+            Defaults to False
     """
 
     if not stacked_image:
         with datamodels.open(file) as hdu:
+
+            dq_bit_mask = get_dq_bit_mask(hdu.dq)
+
+            wcs = hdu.meta.wcs.to_fits_sip()
+            w_in = WCS(wcs)
+
+            # Level data (but not in subarray mode)
+            if "sub" not in hdu.meta.subarray.name.lower() and do_level_data and hdu_type == "data":
+                hdu.data = level_data(hdu)
+
             if hdu_type == "data":
                 data = copy.deepcopy(hdu.data)
             elif hdu_type == "var_rnoise":
@@ -610,10 +652,6 @@ def reproject_image(
             else:
                 raise Warning(f"Unsure how to deal with hdu_type {hdu_type}")
 
-            dq_bit_mask = get_dq_bit_mask(hdu.dq)
-
-            wcs = hdu.meta.wcs.to_fits_sip()
-            w_in = WCS(wcs)
     else:
         with fits.open(file) as hdu:
             data = copy.deepcopy(hdu["SCI"].data)
@@ -695,3 +733,189 @@ def reproject_image(
     gc.collect()
 
     return data_array
+
+
+def do_jwst_convolution(
+        file_in,
+        file_out,
+        file_kernel,
+        blank_zeros=True,
+        output_grid=None,
+):
+    """
+    Convolves input image with an input kernel, and writes to disk.
+
+    Will also process errors and do reprojection, if specified
+
+    Args:
+        file_in: Path to image file
+        file_out: Path to output file
+        file_kernel: Path to kernel for convolution
+        blank_zeros: If True, then all zero values will be set to NaNs. Defaults to True
+        output_grid: None (no reprojection to be done) or tuple (wcs, shape) defining the grid for reprojection.
+            Defaults to None
+
+    """
+    with fits.open(file_kernel) as kernel_hdu:
+        kernel_pix_scale = get_pixscale(kernel_hdu[0])
+        # Note the shape and grid of the kernel as input
+        kernel_data = kernel_hdu[0].data
+        kernel_hdu_length = kernel_hdu[0].data.shape[0]
+        original_central_pixel = (kernel_hdu_length - 1) / 2
+        original_grid = (
+                                np.arange(kernel_hdu_length) - original_central_pixel
+                        ) * kernel_pix_scale
+
+    with fits.open(file_in) as image_hdu:
+        if blank_zeros:
+            # make sure that all zero values were set to NaNs, which
+            # astropy convolution handles with interpolation
+            image_hdu["ERR"].data[(image_hdu["SCI"].data == 0)] = np.nan
+            image_hdu["SCI"].data[(image_hdu["SCI"].data == 0)] = np.nan
+
+        image_pix_scale = get_pixscale(image_hdu["SCI"])
+
+        # Calculate kernel size after interpolating to the image pixel
+        # scale. Because sometimes there's a little pixel scale rounding
+        # error, subtract a little bit off the optimum size (Tom
+        # Williams).
+
+        interpolate_kernel_size = (
+                np.floor(kernel_hdu_length * kernel_pix_scale / image_pix_scale) - 2
+        )
+
+        # Ensure the kernel has a central pixel
+
+        if interpolate_kernel_size % 2 == 0:
+            interpolate_kernel_size -= 1
+
+        # Define a new coordinate grid onto which to project the kernel
+        # but using the pixel scale of the image
+
+        new_central_pixel = (interpolate_kernel_size - 1) / 2
+        new_grid = (
+                           np.arange(interpolate_kernel_size) - new_central_pixel
+                   ) * image_pix_scale
+        x_coords_new, y_coords_new = np.meshgrid(new_grid, new_grid)
+
+        # Do the reprojection from the original kernel grid onto the new
+        # grid with pixel scale matched to the image
+
+        grid_interpolated = RegularGridInterpolator(
+            (original_grid, original_grid),
+            kernel_data,
+            bounds_error=False,
+            fill_value=0.0,
+        )
+        kernel_interp = grid_interpolated(
+            (x_coords_new.flatten(), y_coords_new.flatten())
+        )
+        kernel_interp = kernel_interp.reshape(x_coords_new.shape)
+
+        # Ensure the interpolated kernel is normalized to 1
+        kernel_interp = kernel_interp / np.nansum(kernel_interp)
+
+        # Now with the kernel centered and matched in pixel scale to the
+        # input image use the FFT convolution routine from astropy to
+        # convolve.
+
+        conv_im = convolve_fft(
+            image_hdu["SCI"].data,
+            kernel_interp,
+            allow_huge=True,
+            preserve_nan=True,
+            fill_value=np.nan,
+        )
+
+        # Convolve errors (with kernel**2, do not normalize it).
+        # This, however, doesn't account for covariance between pixels
+        conv_err = np.sqrt(
+            convolve_fft(
+                image_hdu["ERR"].data ** 2,
+                kernel_interp ** 2,
+                preserve_nan=True,
+                allow_huge=True,
+                normalize_kernel=False,
+            )
+        )
+
+        image_hdu["SCI"].data = conv_im
+        image_hdu["ERR"].data = conv_err
+
+        if output_grid is None:
+            image_hdu.writeto(file_out, overwrite=True)
+        else:
+            # Reprojection to target wcs grid define in output_grid
+            target_wcs, target_shape = output_grid
+            hdulist_out = fits.HDUList([fits.PrimaryHDU(header=image_hdu[0].header)])
+
+            repr_data, fp = reproject_interp(
+                (conv_im, image_hdu["SCI"].header),
+                output_projection=target_wcs,
+                shape_out=target_shape,
+            )
+            fp = fp.astype(bool)
+            repr_data[~fp] = np.nan
+            header = image_hdu["SCI"].header
+            header.update(target_wcs.to_header())
+            hdulist_out.append(fits.ImageHDU(data=repr_data, header=header, name="SCI"))
+
+            # Note - this ignores the errors of interpolation and thus the resulting errors might be underestimated
+            repr_err = reproject_interp(
+                (conv_err, image_hdu["SCI"].header),
+                output_projection=target_wcs,
+                shape_out=target_shape,
+                return_footprint=False,
+            )
+            repr_err[~fp] = np.nan
+            header = image_hdu["ERR"].header
+            hdulist_out.append(fits.ImageHDU(data=repr_err, header=header, name="ERR"))
+
+            hdulist_out.writeto(file_out, overwrite=True)
+
+
+def level_data(
+        im,
+):
+    """Level overlaps in NIRCAM amplifiers
+
+    Args:
+        im: Input datamodel
+    """
+
+    data = copy.deepcopy(im.data)
+
+    quadrant_size = data.shape[1] // 4
+
+    dq_mask = get_dq_bit_mask(dq=im.dq)
+    dq_mask = dq_mask | ~np.isfinite(im.data) | ~np.isfinite(im.err) | (im.data == 0)
+
+    for i in range(3):
+        quad_1 = data[:, i * quadrant_size: (i + 1) * quadrant_size][
+                 :, quadrant_size - 20:
+                 ]
+        dq_1 = dq_mask[:, i * quadrant_size: (i + 1) * quadrant_size][
+               :, quadrant_size - 20:
+               ]
+        quad_2 = data[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size][:, :20]
+        dq_2 = dq_mask[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size][:, :20]
+
+        quad_1[dq_1] = np.nan
+        quad_2[dq_2] = np.nan
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            med_1 = np.nanmedian(
+                quad_1,
+                axis=1,
+            )
+            med_2 = np.nanmedian(
+                quad_2,
+                axis=1,
+            )
+            diff = med_1 - med_2
+            delta = sigma_clipped_stats(diff, maxiters=None)[1]
+
+        data[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size] += delta
+
+    return data

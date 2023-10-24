@@ -20,6 +20,8 @@ from .move_raw_obs import MoveRawObsStep
 from .multi_tile_destripe import MultiTileDestripeStep
 from .single_tile_destripe import SingleTileDestripeStep
 from .get_wcs_adjust import GetWCSAdjustStep
+from .anchoring import AnchoringStep
+from .psf_matching import PSFMatchingStep
 from .release import ReleaseStep
 from .regress_against_previous import RegressAgainstPreviousStep
 from .utils import *
@@ -41,6 +43,8 @@ ALLOWED_STEPS = [
     "astrometric_catalog",
     "astrometric_align",
     "mosaic_individual_fields",
+    "anchoring",
+    "psf_matching",
     "release",
     "regress_against_previous",
 ]
@@ -50,6 +54,7 @@ COMBINED_BAND_STEPS = [
     "download",
     "gaia_query",
     "get_wcs_adjust",
+    "anchoring",
     "release",
     "regress_against_previous",
 ]
@@ -62,6 +67,8 @@ IN_STEP_EXTS = {
     "lv2": "rate",
     "astrometric_catalog": "i2d",
     "astrometric_align": "i2d",
+    "anchoring": "i2d_align",
+    "psf_matching": "i2d_anchor",
     "release": None,
 }
 
@@ -70,12 +77,15 @@ IN_BAND_DIRS = {
     "lv2": "lv1",
     "astrometric_catalog": "lv3",
     "astrometric_align": "lv3",
+    "anchoring": "lv3",
+    "psf_matching": "lv3",
     "release": "lv3",
 }
 
 OUT_BAND_DIRS = {
     "astrometric_catalog": "lv3",
     "astrometric_align": "lv3",
+    "anchoring": "anchoring",
     "release": None,
 }
 
@@ -135,6 +145,17 @@ class PJPipeline:
             self.version,
         )
         self.alignment_dir = local["alignment_dir"]
+
+        if "kernel_dir" in local:
+            self.kernel_dir = local["kernel_dir"]
+        else:
+            self.kernel_dir = None
+
+        if "anchor_ref_dir" in local:
+            self.anchor_ref_dir = local["anchor_ref_dir"]
+        else:
+            self.anchor_ref_dir = None
+
         if "processors" in local:
             procs = local["processors"]
         else:
@@ -245,6 +266,28 @@ class PJPipeline:
                             **step_parameters,
                         )
                         step_result = get_wcs_adjust.do_step()
+
+                    # anchoring is in the part operating for all bands because
+                    # we need more control on the sequence (reference nircam and miri bands first)
+                    elif step == "anchoring":
+
+                        in_subdir = IN_BAND_DIRS[step]
+                        out_subdir = OUT_BAND_DIRS[step]
+
+                        anchoring = AnchoringStep(
+                            target=target,
+                            bands=self.bands,
+                            in_dir=target_dir,
+                            in_subdir=in_subdir,
+                            out_subdir=out_subdir,
+                            ref_dir=self.anchor_ref_dir,
+                            kernel_dir=self.kernel_dir,
+                            in_step_ext=in_step_ext,
+                            out_step_ext='i2d_anchor',
+                            procs=self.procs,
+                            **step_parameters,
+                        )
+                        step_result = anchoring.do_step()
 
                     elif step == "release":
                         release = ReleaseStep(
@@ -456,6 +499,11 @@ class PJPipeline:
                                 band=band,
                             )
 
+                            # If we're going from lv1, then this will be a rate file,
+                            # otherwise a cal
+                            if os.path.split(in_dir)[-1] == "lv1":
+                                in_step_ext = "rate"
+
                             destripe = SingleTileDestripeStep(
                                 in_dir=in_dir,
                                 out_dir=out_dir,
@@ -647,6 +695,20 @@ class PJPipeline:
                                 **kws,
                             )
                             step_result = mosaic_individual_fields.do_step()
+
+                        elif step == "psf_matching":
+
+                            psf_matching = PSFMatchingStep(
+                                target=target,
+                                band=band,
+                                in_dir=in_dir,
+                                out_dir=out_dir,
+                                kernel_dir=self.kernel_dir,
+                                in_step_ext=in_step_ext,
+                                procs=self.procs,
+                                **step_parameters,
+                            )
+                            step_result = psf_matching.do_step()
 
                         else:
                             raise ValueError(

@@ -1,4 +1,6 @@
 from .utils import (
+    do_jwst_convolution,
+    get_pixscale,
     get_band_type,
     get_band_ext,
     get_obs_table,
@@ -14,10 +16,13 @@ from .utils import (
     sigma_clip,
     get_default_args,
     reproject_image,
+    level_data,
 )
 
 __all__ = [
     "attribute_setter",
+    "do_jwst_convolution",
+    "get_pixscale",
     "get_band_type",
     "get_band_ext",
     "get_kws",
@@ -32,4 +37,5 @@ __all__ = [
     "sigma_clip",
     "get_default_args",
     "reproject_image",
+    "level_data",
 ]

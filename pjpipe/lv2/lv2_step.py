@@ -271,13 +271,6 @@ class Lv2Step:
         if self.band_type in self.bgr_observation_types:
             for product in json_content["products"]:
                 for row in bgr_tab:
-                    # TODO: Issue #7807 (https://github.com/spacetelescope/jwst/issues/7807)
-                    # Things will crash in the background step if the
-                    # arrays aren't the same. May be intended behaviour
-                    # or a bug, but skip for now
-                    # if row["Array"] != product["array"]:
-                    #     continue
-
                     product["members"].append(
                         {
                             "expname": row["File"],

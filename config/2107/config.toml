@@ -22,7 +22,7 @@ targets = [
 ]
 
 # Version for the reprocessing
-version = 'v0p9p2'
+version = 'v0p9p3'
 
 # Bands to consider
 bands = [
@@ -49,8 +49,8 @@ bands = [
 steps = [
     'download',
     'lv1',
-    'lv2',
     'single_tile_destripe.nircam',
+    'lv2',
     'get_wcs_adjust',
     'apply_wcs_adjust',
     'lyot_separate.miri',
@@ -60,6 +60,8 @@ steps = [
     'lv3',
     'astrometric_catalog.miri',
     'astrometric_align',
+    'anchoring',
+    'psf_matching',
     'release',
     'regress_against_previous',
 ]
@@ -157,16 +159,19 @@ vertical_subtraction = true
 filter_diffuse = true
 dilate_size = 7
 destriping_method = 'median_filter'
-filter_extend_mode = "nearest"
+vertical_destriping_method = 'row_median'
+filter_extend_mode = "reflect"
 filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
 
 [parameters.multi_tile_destripe]
+apply_to_unflat = false
+do_vertical_subtraction = false
 quadrants = true
 sigma = 3
-weight_type = 'ivm'
-do_large_scale.nircam_long = true
-do_large_scale.nircam_short = false
-large_scale_filter_extend_mode = "nearest"
+weight_type = 'equal'
+do_large_scale = false
+large_scale_filter_extend_mode = "reflect"
+weight_method = "sigma_clip"
 
 [parameters.level_match]
 do_sigma_clip = false
@@ -318,10 +323,38 @@ fitgeom = 'shift'
 nclip = 5
 sigma = 3
 
+[parameters.anchoring]
+
+internal_conv_band = 'F2100W'
+
+[parameters.anchoring.ref_band]
+miri = 'F770W'
+nircam = 'F300M'
+
+# List external bands in preference order
+[parameters.anchoring.external_bands]
+miri = [
+    'irac4_atgauss4',
+    'w3_atgauss15',
+]
+nircam = [
+    'irac1_atgauss4',
+    'w1_atgauss7p5',
+    'irac2_atgauss4',
+    'w2_atgauss7p5',
+]
+
+[parameters.psf_matching]
+
+target_bands = [
+    "gauss0p85",
+]
+
 [parameters.release]
 
 move_tweakback = true
 move_backgrounds = true
+move_psf_matched = true
 
 [parameters.regress_against_previous]
-prev_version = 'v0p9'
+prev_version = 'v0p9p2'

@@ -123,21 +123,19 @@ enforce_user_order = false
 [parameters.single_tile_destripe]
 quadrants = true
 vertical_subtraction = true
-
-# Generally, filter diffuse. F090W is high enough res we don't have to
-filter_diffuse.nircam = true
-
+filter_diffuse = true
 dilate_size = 7
 destriping_method = 'median_filter'
-filter_extend_mode = "nearest"
+vertical_destriping_method = 'row_median'
+filter_extend_mode = "reflect"
 filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
 
 [parameters.multi_tile_destripe]
 quadrants = true
 sigma = 3
 weight_type = 'ivm'
-do_large_scale = false
-large_scale_filter_extend_mode = "nearest"
+do_large_scale = true
+large_scale_filter_extend_mode = "reflect"
 
 [parameters.level_match]
 do_sigma_clip = false

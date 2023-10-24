@@ -169,6 +169,7 @@ class LevelMatchStep:
 
         if not os.path.exists(self.out_dir):
             os.makedirs(self.out_dir)
+            os.makedirs(self.plot_dir)
 
         # Check if we've already run the step
         step_complete_file = os.path.join(
@@ -249,7 +250,11 @@ class LevelMatchStep:
                 log.info(f"{short_file}, delta={delta + local_delta:.2f}")
 
                 with datamodels.open(dither_file) as im:
+
+                    zero_idx = np.where(im.data == 0)
+
                     im.data -= delta + local_delta
+                    im.data[zero_idx] = 0
                     im.save(out_file)
                 del im
 
@@ -307,7 +312,11 @@ class LevelMatchStep:
                     log.info(f"{short_dither_file}, delta={delta:.2f}")
 
                     with datamodels.open(dither_file) as im:
+
+                        zero_idx = np.where(im.data == 0)
+
                         im.data -= delta
+                        im.data[zero_idx] = 0
                         im.save(dither_file)
                     del im
 
