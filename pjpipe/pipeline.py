@@ -22,6 +22,7 @@ from .single_tile_destripe import SingleTileDestripeStep
 from .get_wcs_adjust import GetWCSAdjustStep
 from .anchoring import AnchoringStep
 from .psf_matching import PSFMatchingStep
+from .psf_model import PSFModelStep
 from .release import ReleaseStep
 from .regress_against_previous import RegressAgainstPreviousStep
 from .utils import *
@@ -34,11 +35,12 @@ ALLOWED_STEPS = [
     "lv2",
     "single_tile_destripe",
     "get_wcs_adjust",
+    "apply_wcs_adjust",
     "lyot_mask",
     "lyot_separate",
     "multi_tile_destripe",
     "level_match",
-    "apply_wcs_adjust",
+    "psf_model",
     "lv3",
     "astrometric_catalog",
     "astrometric_align",
@@ -125,6 +127,14 @@ class PJPipeline:
             local = copy.deepcopy(local_file)
         else:
             raise ValueError("local_file should be one of str, dict")
+
+        if "webb_psf_data" in local:
+            os.environ["WEBBPSF_PATH"] = local["webb_psf_data"]
+
+        if "WEBBPSF_PATH" not in os.environ:
+            log.warning(
+                "WEBBPSF_PATH not set. If trying to PSF model, this will cause an error"
+            )
 
         log.info("Starting PHANGS-JWST pipeline")
 
@@ -604,6 +614,23 @@ class PJPipeline:
                                 **kws,
                             )
                             step_result = level_match.do_step()
+
+                        elif step == "psf_model":
+                            kws = get_kws(
+                                parameters=step_parameters,
+                                func=PSFModelStep,
+                                target=target,
+                                band=band,
+                            )
+
+                            psf_model = PSFModelStep(
+                                in_dir=in_dir,
+                                out_dir=out_dir,
+                                step_ext=in_step_ext,
+                                procs=self.procs,
+                                **kws,
+                            )
+                            step_result = psf_model.do_step()
 
                         elif step == "lv3":
                             kws = get_kws(
