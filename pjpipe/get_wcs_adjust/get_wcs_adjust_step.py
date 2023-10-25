@@ -5,6 +5,7 @@ import os
 import shutil
 
 import numpy as np
+from astropy.table import Table, QTable
 from jwst.datamodels import ModelContainer
 from jwst.tweakreg import TweakRegStep
 from stdatamodels.jwst import datamodels
@@ -18,8 +19,8 @@ RAD_TO_ARCSEC = 3600 * np.rad2deg(1)
 
 
 def write_visit_transforms(
-    visit_transforms,
-    out_file,
+        visit_transforms,
+        out_file,
 ):
     """Write out table of WCS transforms
 
@@ -68,14 +69,16 @@ def write_visit_transforms(
 
 class GetWCSAdjustStep:
     def __init__(
-        self,
-        directory,
-        progress_dict,
-        target,
-        bands=None,
-        group_dithers=None,
-        tweakreg_parameters=None,
-        overwrite=False,
+            self,
+            directory,
+            progress_dict,
+            target,
+            alignment_dir,
+            bands=None,
+            alignment_catalogs=None,
+            group_dithers=None,
+            tweakreg_parameters=None,
+            overwrite=False,
     ):
         """Gets a table of WCS corrections to apply to visit groups
 
@@ -93,7 +96,10 @@ class GetWCSAdjustStep:
             progress_dict: The progress dictionary the pipeline builds up.
                 This is used to figure out what subdirectories we should
                 be looking in
+            target: Target to consider
+            alignment_dir: Directory for alignment catalogs
             bands: List of target bands to pull corrections out for
+            alignment_catalogs: Dictionary mapping targets to alignment catalogs
             group_dithers: Which band type (e.g. nircam) to group
                 up dithers for and find a single correction. Defaults
                 to None, which won't group up anything
@@ -109,11 +115,15 @@ class GetWCSAdjustStep:
             group_dithers = []
         if tweakreg_parameters is None:
             tweakreg_parameters = {}
+        if alignment_catalogs is None:
+            alignment_catalogs = {}
 
         self.directory = directory
         self.progress_dict = progress_dict
         self.target = target
+        self.alignment_dir = alignment_dir
         self.bands = bands
+        self.alignment_catalogs = alignment_catalogs
         self.group_dithers = group_dithers
         self.tweakreg_parameters = tweakreg_parameters
         self.overwrite = overwrite
@@ -221,6 +231,23 @@ class GetWCSAdjustStep:
             tweakreg.save_results = True
             tweakreg.suffix = out_ext
             tweakreg.kernel_fwhm = fwhm_pix * 2
+
+            # Sort this into a format that tweakreg is happy with
+            if self.target in self.alignment_catalogs:
+                in_catalog = os.path.join(self.alignment_dir,
+                                          self.alignment_catalogs[self.target],
+                                          )
+                align_table = QTable.read(in_catalog, format="fits")
+                abs_tab = Table()
+
+                abs_tab["RA"] = align_table["ra"]
+                abs_tab["DEC"] = align_table["dec"]
+
+                abs_ref_catalog = os.path.join(self.directory,
+                                               f"{self.target}_ref_catalog.fits",
+                                               )
+                abs_tab.write(abs_ref_catalog)
+                tweakreg.abs_refcat = abs_ref_catalog
 
             for tweakreg_key in self.tweakreg_parameters:
                 value = parse_parameter_dict(

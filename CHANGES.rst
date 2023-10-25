@@ -2,6 +2,7 @@
 ==================
 
 - Added PSF modelling routines. These are currently very preliminary, but at least exist
+- Allow for external, absolute catalog in ``get_wcs_adjust_step``
 
 0.9.3 (2023-10-24)
 ==================
