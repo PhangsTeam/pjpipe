@@ -21,6 +21,7 @@ from .lyot_mask import LyotMaskStep
 from .lyot_separate import LyotSeparateStep
 from .mosaic_individual_fields import MosaicIndividualFieldsStep
 from .move_raw_obs import MoveRawObsStep
+from .psf_model import PSFModelStep
 from .release import ReleaseStep
 from .regress_against_previous import RegressAgainstPreviousStep
 from .pipeline import PJPipeline
@@ -47,6 +48,7 @@ __all__ = [
     "MoveRawObsStep",
     "PJPipeline",
     "PSFMatchingStep",
+    "PSFModelStep",
     "ReleaseStep",
     "RegressAgainstPreviousStep",
     "SingleTileDestripeStep",

@@ -541,10 +541,18 @@ def parse_fits_to_table(
     )
 
 
-def get_dq_bit_mask(dq):
-    """Get a DQ bit mask from an input image"""
+def get_dq_bit_mask(
+    dq,
+    bit_flags="~DO_NOT_USE+NON_SCIENCE",
+):
+    """Get a DQ bit mask from an input image
 
-    dq_bits = interpret_bit_flags("~DO_NOT_USE+NON_SCIENCE", flag_name_map=pixel)
+    Args:
+        dq: DQ array
+        bit_flags: Bit flags to get mask for. Defaults to only get science pixels
+    """
+
+    dq_bits = interpret_bit_flags(bit_flags=bit_flags, flag_name_map=pixel)
 
     dq_bit_mask = bitfield_to_boolean_mask(
         dq.astype(np.uint8), dq_bits, good_mask_value=0, dtype=np.uint8

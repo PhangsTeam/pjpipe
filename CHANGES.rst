@@ -1,3 +1,8 @@
+0.9.4 (Unreleased)
+==================
+
+- Added PSF modelling routines. These are currently very preliminary, but at least exist
+
 0.9.3 (2023-10-24)
 ==================
 

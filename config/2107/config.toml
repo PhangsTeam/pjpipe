@@ -22,7 +22,7 @@ targets = [
 ]
 
 # Version for the reprocessing
-version = 'v0p9p3'
+version = 'v0p9p4'
 
 # Bands to consider
 bands = [
@@ -53,10 +53,10 @@ steps = [
     'lv2',
     'get_wcs_adjust',
     'apply_wcs_adjust',
-    'lyot_separate.miri',
     'multi_tile_destripe.nircam',
+    'psf_model',
+    'lyot_separate.miri',
     'level_match',
-#    'psf_model',  # TODO
     'lv3',
     'astrometric_catalog.miri',
     'astrometric_align',
