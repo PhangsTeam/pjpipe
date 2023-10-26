@@ -273,6 +273,7 @@ class PJPipeline:
                             directory=target_dir,
                             progress_dict=progress_dict[target],
                             target=target,
+                            alignment_dir=self.alignment_dir,
                             **step_parameters,
                         )
                         step_result = get_wcs_adjust.do_step()
