@@ -1,3 +1,18 @@
+0.10.1 (Unreleased)
+===================
+
+- Can specify CRDS context at the pipeline level
+- median_filter is now the default in ``single_tile_destripe_step``
+- Added fallback for median_filter in ``single_tile_destripe_step`` when too much data is masked
+- Remove mask option in median_filter in ``single_tile_destripe_step``, since it's always used
+  anyway
+- Changed up how ``do_large_scale`` works in ``multi_tile_destripe_step``,
+  which seems significantly improved and simplified
+- Added fallback for in ``multi_tile_destripe_step`` when too much data is masked in quadrants
+- Changed how tweakreg grouping is done in ``get_wcs_adjust_step`` and ``lv3_step`` to account
+  for code changes in the pipeline
+- Added option to decouple the short NIRCam chips for tweakreg in ``lv3_step``
+  
 0.10.0 (2023-11-14)
 ===================
 

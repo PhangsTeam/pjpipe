@@ -138,6 +138,12 @@ class PJPipeline:
 
         log.info("Starting PHANGS-JWST pipeline")
 
+        if "crds_context" in local:
+            crds_context = local["crds_context"]
+            os.environ['CRDS_CONTEXT'] = copy.deepcopy(crds_context)
+        else:
+            crds_context = "Default"
+
         # Pull in needed values from the configs
         self.targets = config["targets"]
         self.bands = config["bands"]
@@ -175,6 +181,7 @@ class PJPipeline:
         # Log the environment variables that should be set
         log.info(f"Using CRDS_SERVER_URL: {os.environ['CRDS_SERVER_URL']}")
         log.info(f"Using CRDS_PATH: {os.environ['CRDS_PATH']}")
+        log.info(f"Using CRDS_CONTEXT: {crds_context}")
         log.info(f"Using {self.procs} processes")
 
         # Log targets/band/steps out

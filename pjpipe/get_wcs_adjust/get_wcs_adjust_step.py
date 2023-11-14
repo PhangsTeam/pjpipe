@@ -219,10 +219,11 @@ class GetWCSAdjustStep:
             if band_type in self.group_dithers:
                 for model in asn_file._models:
                     model.meta.observation.exposure_number = "1"
+                    model.meta.group_id = ""
 
             # If we only have one group, this won't do anything so just skip
-            if len(asn_file.models_grouped) == 1:
-                log.info(f"Only one group. Skipping")
+            if len(asn_file.models_grouped) == 1 and self.target not in self.alignment_catalogs:
+                log.info(f"Only one group and no absolute alignment happening. Skipping")
                 continue
 
             tweakreg_config = TweakRegStep.get_config_from_reference(asn_file)
@@ -234,19 +235,22 @@ class GetWCSAdjustStep:
 
             # Sort this into a format that tweakreg is happy with
             if self.target in self.alignment_catalogs:
-                in_catalog = os.path.join(self.alignment_dir,
-                                          self.alignment_catalogs[self.target],
-                                          )
-                align_table = QTable.read(in_catalog, format="fits")
-                abs_tab = Table()
-
-                abs_tab["RA"] = align_table["ra"]
-                abs_tab["DEC"] = align_table["dec"]
 
                 abs_ref_catalog = os.path.join(self.directory,
                                                f"{self.target}_ref_catalog.fits",
                                                )
-                abs_tab.write(abs_ref_catalog)
+                if not os.path.exists(abs_ref_catalog):
+
+                    in_catalog = os.path.join(self.alignment_dir,
+                                              self.alignment_catalogs[self.target],
+                                              )
+                    align_table = QTable.read(in_catalog, format="fits")
+                    abs_tab = Table()
+
+                    abs_tab["RA"] = align_table["ra"]
+                    abs_tab["DEC"] = align_table["dec"]
+                    abs_tab.write(abs_ref_catalog, overwrite=True)
+
                 tweakreg.abs_refcat = abs_ref_catalog
 
             for tweakreg_key in self.tweakreg_parameters:
