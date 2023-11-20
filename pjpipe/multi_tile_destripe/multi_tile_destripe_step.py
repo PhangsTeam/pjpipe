@@ -8,17 +8,19 @@ import shutil
 import warnings
 from functools import partial
 
+import astropy.units as u
 import crds
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from astropy.convolution import convolve
 from astropy.stats import sigma_clipped_stats
+from astropy.wcs import WCS
 from jwst.flatfield.flat_field import do_correction
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from reproject import reproject_interp
 from reproject.mosaicking import find_optimal_celestial_wcs
-from scipy.ndimage import uniform_filter1d, median_filter
+from reproject.mosaicking.background import determine_offset_matrix, solve_corrections_sgd
+from scipy.ndimage import uniform_filter, median_filter
 from stdatamodels.jwst import datamodels
 from tqdm import tqdm
 
@@ -30,11 +32,23 @@ log.addHandler(logging.NullHandler())
 
 ALLOWED_WEIGHT_METHODS = ["mean", "median", "sigma_clip"]
 ALLOWED_WEIGHT_TYPES = ["exptime", "ivm", "equal"]
-ALLOWED_LARGE_SCALE_METHODS = ["boxcar", "median", "convolve_smooth", "sigma_clip"]
 
-# Global variables, to speed up multiprocessing
-data_reproj = []
-weight_reproj = []
+
+def get_rotation_angle(wcs):
+    """Get rotation from a WCS instance
+
+    Args:
+        wcs: WCS instance
+    """
+
+    pc = np.dot(np.diag(wcs.wcs.get_cdelt()), wcs.wcs.get_pc())
+
+    north = np.arctan2(-pc[0, 1],
+                       pc[0, 0],
+                       )
+    angle = (north * u.rad).to(u.deg).value
+
+    return angle
 
 
 def make_diagnostic_plot(
@@ -229,14 +243,13 @@ class MultiTileDestripeStep:
             convergence_sigma=1,
             convergence_max_iterations=5,
             weight_method="mean",
-            weight_type="exptime",
-            min_area_frac=0.5,
+            weight_type="ivm",
+            do_level_match=False,
             quadrants=True,
-            do_vertical_subtraction=True,
-            do_large_scale=False,
-            large_scale_sigma=5,
-            large_scale_method="median",
-            large_scale_filter_factor=4,
+            min_mask_frac=0.2,
+            do_vertical_subtraction=False,
+            do_large_scale=True,
+            large_scale_filter_scale=None,
             large_scale_filter_extend_mode="reflect",
             sigma=3,
             dilate_size=7,
@@ -245,14 +258,13 @@ class MultiTileDestripeStep:
     ):
         """Subtracts large-scale stripes using dither information
 
-        Create a weighted average image of all overlapping files, then do a sigma-clipped
-        median along columns and rows (optionally by quadrants), and finally (optionall) a
-        smoothed clip along rows after filtering to remove persistent large-scale ripples in
-        the data.
+        Create a weighted average image, then do a sigma-clipped median along (optionally)
+        columns and rows (optionally by quadrants), after optionally smoothing the stacked
+        image to attempt to remove persistent large-scale ripples.
 
-        The default settings should be fine in most circumstances. If you are seeing
-        ripples in the data (particularly for short NIRCam observations), then you should set
-        do_large_scale to True.
+        If you see clear oversubtraction in the data, you should set do_large_scale to False.
+        In most cases, it appears to work well but there may be some edge cases where it doesn't
+        work well.
 
         Args:
             in_dir: Input directory
@@ -274,21 +286,18 @@ class MultiTileDestripeStep:
                 Should be one of 'mean', 'median', 'sigma_clip'. Defaults
                 to 'mean'
             weight_type: How to weight the stacked image.
-                Defaults to 'exptime'
-            min_area_frac: Areal fraction of overlap to consider in creating
-                the weighted average image. Defaults to 0.5
+                Defaults to 'ivm', inverse readnoise
+            do_level_match: Whether to do a simple match between tiles. Should be set
+                to False if this is run after level_match_step. Defaults to False
             quadrants: Whether to split up stripes per-amplifier. Defaults to True
+            min_mask_frac: Minimum fraction of unmasked data in quadrants to calculate a median.
+                Defaults to 0.2 (i.e. 20% unmasked)
             do_vertical_subtraction: Whether to also do a step of vertical stripe
-                subtraction. Defaults to True
+                subtraction. Defaults to False
             do_large_scale: Whether to do filtering to try and remove large,
-                consistent ripples between data. Defaults to False
-            large_scale_sigma: sigma value for sigma-clipped statistics when correcting
-                for remaining large-scale ripples in the average data. Defaults to 5
-            large_scale_method: Which method to use to try and filter out
-                remaining large-scale stripes. Defaults to 'median'
-            large_scale_filter_factor: Factor by which we smooth in terms of the array
-                size for large scale methods that use this. Defaults to 4, i.e. smoothing
-                scale is 1/4th the array size
+                consistent ripples between data. Defaults to True
+            large_scale_filter_scale: Factor by which we smooth for large scale persistent
+                ripple removal. Defaults to None, which will use a scale ~10% of the data shape
             large_scale_filter_extend_mode: How to extend values in the filter beyond
                 array edge. Default is "reflect". See the specific docs for more info
             sigma: sigma value for sigma-clipped statistics. Defaults to 3
@@ -296,10 +305,6 @@ class MultiTileDestripeStep:
             maxiters: Maximum number of sigma-clipping iterations. Defaults to None
             overwrite: Whether to overwrite or not. Defaults
                 to False
-
-        TODO:
-            min_area_frac=0.5 may be too conservative, and could cause problems with
-                overlaps at tile edges. ngc1087 seems to be a good test case here
         """
 
         if weight_method not in ALLOWED_WEIGHT_METHODS:
@@ -329,13 +334,12 @@ class MultiTileDestripeStep:
         self.convergence_max_iterations = convergence_max_iterations
         self.weight_method = weight_method
         self.weight_type = weight_type
-        self.min_area_frac = min_area_frac
+        self.do_level_match = do_level_match
         self.quadrants = quadrants
+        self.min_mask_frac = min_mask_frac
         self.do_large_scale = do_large_scale
-        self.large_scale_sigma = large_scale_sigma
         self.do_vertical_subtraction = do_vertical_subtraction
-        self.large_scale_method = large_scale_method
-        self.large_scale_filter_factor = large_scale_filter_factor
+        self.large_scale_filter_scale = large_scale_filter_scale
         self.large_scale_filter_extend_mode = large_scale_filter_extend_mode
         self.sigma = sigma
         self.dilate_size = dilate_size
@@ -343,6 +347,9 @@ class MultiTileDestripeStep:
         self.overwrite = overwrite
 
         self.files_reproj = None
+        self.data_avg = None
+        self.data_avg_smooth = None
+        self.data_avg_mask = None
         self.optimal_wcs = None
         self.optimal_shape = None
 
@@ -374,13 +381,18 @@ class MultiTileDestripeStep:
         )
         files.sort()
 
+        # files = files[:16:4]
+
         # Ensure we're not wasting processes
         procs = np.nanmin([self.procs, len(files)])
 
         # Get out the optimal WCS, since we only need to calculate this once
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            optimal_wcs, optimal_shape = find_optimal_celestial_wcs(files, hdu_in="SCI")
+            optimal_wcs, optimal_shape = find_optimal_celestial_wcs(files,
+                                                                    hdu_in="SCI",
+                                                                    auto_rotate=True,
+                                                                    )
 
         self.optimal_wcs = optimal_wcs
         self.optimal_shape = optimal_shape
@@ -396,6 +408,7 @@ class MultiTileDestripeStep:
             success = self.weighted_reproject_image(
                 files,
                 procs=procs,
+                do_large_scale=False,
             )
             if not success:
                 log.warning("Error in creating reproject stack")
@@ -404,7 +417,38 @@ class MultiTileDestripeStep:
             stripe_sigma = self.run_multi_tile_destripe(
                 procs=procs,
                 iteration=iteration,
+                do_large_scale=False,
             )
+
+            # Use the output files as potential further input
+            files = glob.glob(
+                os.path.join(
+                    self.out_dir,
+                    f"*_{self.step_ext}.fits",
+                )
+            )
+            files.sort()
+
+            # If doing large-scale we repeat, but using the output files
+            if self.do_large_scale:
+
+                log.info("Now doing large-scale smoothing for destriping")
+
+                # Create weighted images
+                success = self.weighted_reproject_image(
+                    files,
+                    procs=procs,
+                    do_large_scale=True,
+                )
+                if not success:
+                    log.warning("Error in creating reproject stack")
+                    return False
+
+                stripe_sigma = self.run_multi_tile_destripe(
+                    procs=procs,
+                    iteration=iteration,
+                    do_large_scale=True,
+                )
 
             # If we're not iterating, then say we've converged
             if not self.do_convergence:
@@ -426,15 +470,6 @@ class MultiTileDestripeStep:
                         log.info(f"{os.path.split(file)[-1]}: {stripe_sigma[i]}")
                     converged = True
 
-                # Use the output files to input into next iteration
-                files = glob.glob(
-                    os.path.join(
-                        self.out_dir,
-                        f"*_{self.step_ext}.fits",
-                    )
-                )
-                files.sort()
-
             iteration += 1
 
         with open(step_complete_file, "w+") as f:
@@ -446,15 +481,16 @@ class MultiTileDestripeStep:
             self,
             files,
             procs=1,
+            do_large_scale=False,
     ):
         """Get reprojected images (and weights)
 
         Args:
             files (list): Files to reproject
             procs (int): Number of processes to use. Defaults to 1.
+            do_large_scale: Is this a large-scale smoothed subtraction? Defaults to False
         """
 
-        global data_reproj, weight_reproj
         data_reproj = [None] * len(files)
         weight_reproj = [None] * len(files)
         files_reproj = [None] * len(files)
@@ -488,18 +524,96 @@ class MultiTileDestripeStep:
 
         self.files_reproj = files_reproj
 
+        # Create the weighted average image here
+
+        log.info("Creating average image")
+
+        self.data_avg = self.create_weighted_avg_image(data_reproj,
+                                                       weight_reproj,
+                                                       )
+
+        # Smooth out the data for large-scale correction
+        if do_large_scale:
+
+            log.info("Figuring out rotation between input images and stack")
+
+            ref_rot = get_rotation_angle(self.optimal_wcs)
+            indiv_rots = []
+
+            for file in self.files_reproj:
+                with datamodels.open(file) as im:
+                    wcs = im.meta.wcs.to_fits_sip()
+                    w = WCS(wcs)
+
+                    indiv_rots.append(get_rotation_angle(w))
+
+                    # Also get the filter scale, if necessary
+                    if self.large_scale_filter_scale is None:
+                        large_scale_filter_scale = im.data.shape[0] // 10
+                        if large_scale_filter_scale % 2 == 0:
+                            large_scale_filter_scale -= 1
+                        self.large_scale_filter_scale = large_scale_filter_scale
+
+            indiv_rots = np.array(indiv_rots)
+
+            # Look for big differences between tiles
+            internal_diff = np.abs(indiv_rots - indiv_rots[0])
+            # Account for the quadrants of this space
+            internal_diff[internal_diff >= 180] -= 180
+            internal_diff = np.abs(internal_diff)
+            internal_diff[internal_diff >= 90] -= 180
+            internal_diff = np.abs(internal_diff)
+
+            # And differences wrt the reference WCS
+            ref_diff = np.abs(indiv_rots - ref_rot)
+            # Account for the quadrants of this space
+            ref_diff[ref_diff >= 180] -= 180
+            ref_diff = np.abs(ref_diff)
+            ref_diff[ref_diff >= 90] -= 180
+            ref_diff = np.abs(ref_diff)
+
+            # First case, we have a weird mix of rotations. In which case direction should be None
+            if not np.all(internal_diff < 10):
+                raise ValueError("Input images have a variety of rotations. Have not enocuntered this before")
+                direction = None
+                log.info("Input images have a variety of rotations. Defaulting to smoothing over both axes")
+
+            # Second case, they're all similar to the reference rotation, so stripes are horizontal
+            elif np.all(ref_diff < 10):
+                direction = "horizontal"
+                log.info("Stacked image is at same rotation as input images")
+
+            # Third case, they're perpendicular to the reference rotation, so stripes are vertical
+            elif np.all(np.logical_and(80 < ref_diff, ref_diff < 100)):
+                direction = "vertical"
+                log.info("Stacked image is perpendicular to input images")
+
+            # Final case, they're aligned but not along any particular axis in the image. In this case,
+            # direction should be None
+            else:
+                raise ValueError("Input images are aligned, but not along any particular direction. "
+                                 "Have not encountered this before")
+                direction = None
+                log.info("Stacked image does not align over a particular axis. Smoothing over both axes")
+
+            log.info("Creating smoothed image")
+
+            self.data_avg_smooth, self.data_avg_mask = self.get_data_avg_smooth(direction=direction)
+
         return True
 
     def run_multi_tile_destripe(
             self,
             procs=1,
             iteration=1,
+            do_large_scale=False,
     ):
         """Wrap parallelism around the multi-tile destriping
 
         Args:
             procs: Number of parallel processes. Defaults to 1
             iteration: What iteration are we on? Defaults to 1
+            do_large_scale: Is this a large-scale smoothed subtraction? Defaults to False
         """
 
         log.info("Running multi-tile destripe")
@@ -512,6 +626,7 @@ class MultiTileDestripeStep:
                         partial(
                             self.parallel_multi_tile_destripe,
                             iteration=iteration,
+                            do_large_scale=do_large_scale,
                         ),
                         range(len(self.files_reproj)),
                     ),
@@ -607,199 +722,92 @@ class MultiTileDestripeStep:
             self,
             idx,
             iteration=1,
+            do_large_scale=False,
     ):
         """Function to parallelise up multi-tile destriping
 
         Args:
             idx: Index of file to be destriped
             iteration: What iteration are we on? Defaults to 1
+            do_large_scale: Is this a large-scale smoothed subtraction? Defaults to False
         """
 
         file = self.files_reproj[idx]
 
-        data_avg, imin, imax, jmin, jmax = self.create_subset_reproj_image(
-            subset_idx=idx,
-        )
-
-        data_avg_wcs = self.optimal_wcs[jmin:jmax, imin:imax]
-
         result = self.multi_tile_destripe(
             file,
-            data_avg_array=data_avg,
-            data_avg_wcs=data_avg_wcs,
             iteration=iteration,
+            do_large_scale=do_large_scale,
         )
         return idx, result
 
-    def create_subset_reproj_image(
+    def create_weighted_avg_image(
             self,
-            subset_idx,
+            data,
+            weights,
+
     ):
-        """Create a subset average image from a bunch of reprojected ones
+        """Create an average image from a bunch of reprojected ones
 
         Args:
-            subset_idx: index of image to create the subset average image for
+            data: List of data arrays
+            weights: List of weights. Should be same length as data
         """
 
-        file_data = copy.deepcopy(data_reproj[subset_idx])
-        file_weight = copy.deepcopy(weight_reproj[subset_idx])
-
-        weighted_file_data = file_weight.array * file_data.array
-
-        test_arr = []
+        # Start by calculating corrections to match between tiles, if not
+        # already done
+        if self.do_level_match:
+            offset_matrix = determine_offset_matrix(data)
+            corrections = solve_corrections_sgd(offset_matrix)
+            for array, correction in zip(data, corrections):
+                zero_idx = np.where(array.array == 0)
+                array.array -= correction
+                array.array[zero_idx] = 0
 
         # First, put the original image in
         if self.weight_method == "mean":
-            data = np.zeros_like(file_data.array)
-            weights = np.zeros_like(file_weight.array)
-            data += weighted_file_data
-            weights += file_weight.array
+            output_array = np.zeros(self.optimal_shape)
         elif self.weight_method in ["median", "sigma_clip"]:
-            data = [copy.deepcopy(file_data.array)]
-            weights = [copy.deepcopy(file_weight.array)]
+            output_array = np.zeros([self.optimal_shape[0], self.optimal_shape[1], len(data)])
         else:
             raise ValueError(f"weight_method should be one of {ALLOWED_WEIGHT_METHODS}")
 
-        test_arr.append(copy.deepcopy(file_data.array))
+        output_weights = np.zeros_like(output_array)
 
-        # Get the number of pixels, so that we can remove any small overlaps
-        # later
-        valid_pix = np.logical_and(
-            weighted_file_data != 0,
-            np.isfinite(weighted_file_data),
-        )
+        for i, (array, weight) in enumerate(zip(data, weights)):
 
-        valid_idx = np.where(valid_pix)
-        npix_file = len(valid_idx[0])
-
-        input_pixels = np.zeros_like(file_data.array)
-        input_pixels[valid_pix] += 1
-
-        file_imin, file_imax = file_data.imin, file_data.imax
-        file_jmin, file_jmax = file_data.jmin, file_data.jmax
-
-        for idx in range(len(data_reproj)):
-            if subset_idx == idx:
-                continue
-
-            if not data_reproj[subset_idx].overlaps(data_reproj[idx]):
-                continue
-
-            data_idx = copy.deepcopy(data_reproj[idx])
-            weight_idx = copy.deepcopy(weight_reproj[idx])
-
-            data_i = data_idx.array
-            weight_i = weight_idx.array
-
-            # Before putting these in, we need to make sure they're on the same level.
-            # Do this by subtracting the median of the difference for the first file
-            diff = data_idx - data_reproj[subset_idx]
-            diff_weight = weight_idx * weight_reproj[subset_idx]
-
-            diff = diff.array[diff_weight.array > 0]
-            diff[diff == 0] = np.nan
-            diff = diff[np.isfinite(diff)]
-
-            if len(diff) == 0:
-                continue
-
-            # Pull out indices we'll need later
-            idx_imin, idx_imax = data_idx.imin, data_idx.imax
-            idx_jmin, idx_jmax = data_idx.jmin, data_idx.jmax
-
-            # Subtract a difference to level things out, but keep 0s at 0
-            _, diff_med, _ = sigma_clipped_stats(diff, maxiters=10)
-            zero_idx = np.where(data_i == 0)
-            data_i -= diff_med
-            data_i[zero_idx] = 0
-
-            imin = max(file_imin, idx_imin)
-            imax = min(file_imax, idx_imax)
-            jmin = max(file_jmin, idx_jmin)
-            jmax = min(file_jmax, idx_jmax)
-
-            if imax < imin:
-                imax = imin
-
-            if jmax < jmin:
-                jmax = jmin
-
-            final_slice = (
-                slice(jmin - file_jmin, jmax - file_jmin),
-                slice(imin - file_imin, imax - file_imin),
-            )
-            reproj_slice = (
-                slice(jmin - idx_jmin, jmax - idx_jmin),
-                slice(imin - idx_imin, imax - idx_imin),
-            )
-
-            # Put data and weights into array
-            new_data = np.zeros_like(file_data.array)
-            new_weights = np.zeros_like(file_weight.array)
-            new_weighted_file_data = np.zeros_like(new_data)
-            new_weighted_file_data[final_slice] = (
-                    weight_i[reproj_slice] * data_i[reproj_slice]
-            )
-
-            # Check we have the required amount of overlap
-            valid_i = new_weighted_file_data[valid_idx]
-            valid_i = valid_i[np.logical_and(valid_i != 0, np.isfinite(valid_i))]
-
-            area_frac = len(valid_i) / npix_file
-
-            if area_frac < self.min_area_frac:
-                continue
-
-            # If we're using the mean, we can just add here. Otherwise, we need to append
-            # data and weights
+            # Put the reprojected data into the array. This will be different depending on
+            # the weight method
             if self.weight_method == "mean":
-                new_data += new_weighted_file_data
-                new_weights[final_slice] += weight_i[reproj_slice]
-                data += new_data
-                weights += new_weights
+                output_array[array.view_in_original_array] += array.array * weight.array
+                output_weights[weight.view_in_original_array] += weight.array
             elif self.weight_method in ["median", "sigma_clip"]:
-                new_data[final_slice] = copy.deepcopy(data_i[reproj_slice])
-                new_weights[final_slice] = copy.deepcopy(weight_i[reproj_slice])
-                data.append(new_data)
-                weights.append(new_weights)
+                output_array[array.view_in_original_array[0], array.view_in_original_array[1], i] = array.array
+                output_weights[weight.view_in_original_array[0], weight.view_in_original_array[1], i] = weight.array
             else:
                 raise ValueError(
                     f"weight_method should be one of {ALLOWED_WEIGHT_METHODS}"
                 )
 
-            # Add the number of pixels we're including
-            reproj_valid_idx = np.logical_and(new_weighted_file_data != 0,
-                                              np.isfinite(new_weighted_file_data),
-                                              )
-
-            input_pixels += reproj_valid_idx
+        output_array[output_weights == 0] = np.nan
 
         # Now we can calculate the average. For the mean, this is weighted
         if self.weight_method == "mean":
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                data_avg = data / weights
+                data_avg = output_array / output_weights
 
         # For the median, ignore weights (apart from 0s)
         elif self.weight_method == "median":
-            data = np.stack(data, axis=-1)
-            weights = np.stack(weights, axis=-1)
-            data[weights == 0] = np.nan
-
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 data_avg = np.nanmedian(data, axis=-1)
 
         # Sigma-clipped median (this will ignore weights)
         elif self.weight_method == "sigma_clip":
-
-            data = np.stack(data, axis=-1)
-            weights = np.stack(weights, axis=-1)
-            data[weights == 0] = np.nan
-
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                data_avg = sigma_clipped_stats(data,
+                data_avg = sigma_clipped_stats(output_array,
                                                sigma=self.sigma,
                                                maxiters=self.maxiters,
                                                axis=-1,
@@ -809,27 +817,136 @@ class MultiTileDestripeStep:
             raise ValueError(f"weight_method should be one of {ALLOWED_WEIGHT_METHODS}")
 
         data_avg[data_avg == 0] = np.nan
+        data_avg[~np.isfinite(data_avg)] = np.nan
 
-        return data_avg, file_imin, file_imax, file_jmin, file_jmax
+        return data_avg
+
+    def get_data_avg_smooth(self,
+                            direction=None,
+                            ):
+        """Filter data with a large scale filter
+
+        Will either perform a large-scale median filter over a specific axis,
+        or a mean filter over all axes. Also creates a mask
+
+        Args:
+            direction: Direction to smooth over, either "horizontal", "vertical", or None.
+                Defaults to None
+        """
+
+        data_avg = copy.deepcopy(self.data_avg)
+        nan_idx = np.where(np.isnan(data_avg))
+
+        if direction in ["horizontal", None]:
+            interp_order = [1, 0]
+        elif direction == "vertical":
+            interp_order = [0, 1]
+        else:
+            raise ValueError("direction should be horizontal, vertical, or None")
+
+        # Extrapolate over axes in order based on where the stripes are
+        for order in interp_order:
+            for ax in range(data_avg.shape[order]):
+
+                if order == 0:
+                    data_ax = copy.deepcopy(data_avg[ax, :])
+                else:
+                    data_ax = copy.deepcopy(data_avg[:, ax])
+
+                mask = np.isnan(data_ax)
+
+                # Only interp if we have a) some NaNs but not b) all NaNs
+                if 0 < np.sum(mask) < len(data_ax):
+                    data_ax[mask] = np.interp(np.flatnonzero(mask),
+                                              np.flatnonzero(~mask),
+                                              data_ax[~mask],
+                                              )
+
+                if order == 0:
+                    data_avg[ax, :] = copy.deepcopy(data_ax)
+                else:
+                    data_avg[:, ax] = copy.deepcopy(data_ax)
+
+        log.info(f"Smoothing with a filter scale of {self.large_scale_filter_scale}")
+
+        if direction is None:
+            data_smooth = uniform_filter(data_avg,
+                                         size=self.large_scale_filter_scale,
+                                         mode=self.large_scale_filter_extend_mode,
+                                         )
+        else:
+
+            data_smooth = np.zeros_like(data_avg)
+
+            if direction == "horizontal":
+
+                for row in range(data_avg.shape[1]):
+                    col = data_avg[:, row]
+                    col_smooth = median_filter(col,
+                                               size=self.large_scale_filter_scale,
+                                               mode=self.large_scale_filter_extend_mode,
+                                               )
+                    data_smooth[:, row] = copy.deepcopy(col_smooth)
+
+            elif direction == "vertical":
+
+                for col in range(data_avg.shape[0]):
+                    row = data_avg[col, :]
+                    row_smooth = median_filter(row,
+                                               size=self.large_scale_filter_scale,
+                                               mode=self.large_scale_filter_extend_mode,
+                                               )
+                    data_smooth[col, :] = copy.deepcopy(row_smooth)
+
+            else:
+                raise ValueError("direction should be one of horizontal, vertical")
+
+        data_smooth[nan_idx] = np.nan
+
+        mask = self.get_mask(self.data_avg - data_smooth)
+
+        return data_smooth, mask
+
+    def get_mask(self,
+                 data,
+                 ):
+        """Create positive/negative mask"""
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            mask_pos = make_source_mask(
+                data,
+                nsigma=self.sigma,
+                dilate_size=self.dilate_size,
+                sigclip_iters=self.maxiters,
+            )
+            mask_neg = make_source_mask(
+                -data,
+                mask=mask_pos,
+                nsigma=self.sigma,
+                dilate_size=self.dilate_size,
+                sigclip_iters=self.maxiters,
+            )
+        mask = mask_pos | mask_neg
+
+        return mask
 
     def multi_tile_destripe(
             self,
             file,
-            data_avg_array,
-            data_avg_wcs,
             iteration=1,
+            do_large_scale=False,
     ):
         """Do a row-by-row, column-by-column data subtraction using other dither information
 
-        Create a weighted average image of all overlapping files, then do a sigma-clipped
+        Reproject average image, optionally remove persistent large-scale stripes, then do a sigma-clipped
         median along columns and rows (optionally by quadrants), and finally a smoothed clip along
         rows after boxcar filtering to remove persistent large-scale ripples in the data
 
         Args:
             file (str): File to correct
-            data_avg_array (np.ndarray): Pre-calculated average image
-            data_avg_wcs: WCS for the average image
             iteration: What iteration are we on? Defaults to 1
+            do_large_scale: Is this a large-scale smoothed subtraction? Defaults to False
         """
 
         with warnings.catch_warnings():
@@ -839,10 +956,11 @@ class MultiTileDestripeStep:
 
                 quadrants = copy.deepcopy(self.quadrants)
 
-                # If we're in subarray mode, turn off quadrants
+                # If we're in subarray mode or doing large-scale, turn off quadrants
                 if "sub" in model.meta.subarray.name.lower():
                     quadrants = False
-                    large_scale_quadrants = False
+                if do_large_scale:
+                    quadrants = False
 
                 # If we're not in subarray mode, level everything out
                 else:
@@ -859,161 +977,64 @@ class MultiTileDestripeStep:
 
             # Reproject the average image
             data_avg = reproject_interp(
-                (data_avg_array, data_avg_wcs),
+                (self.data_avg, self.optimal_wcs),
                 wcs,
                 return_footprint=False,
             )
 
             # If we're also attempting to remove large-scale ripples, we filter the average
             # data here and correct the average image
-            if self.do_large_scale:
-                # Filter along the y-axis with some filter.
-                # This ideally flattens out the background, for any consistent large-scale ripples
-                # remaining in the average image
+            if do_large_scale:
 
-                # To avoid weirdness in the filters, replace any NaN values per-column with the
-                # nearest not NaN. This should only really be an issue for small rows at the sides
-                data_avg_fill = copy.deepcopy(data_avg)
-                for col in range(data_avg_fill.shape[1]):
-                    data_col = copy.deepcopy(data_avg_fill[:, col])
-                    mask = np.isnan(data_col)
-
-                    # Only interp if we have a) some NaNs but not b) all NaNs
-                    if 0 < np.sum(mask) < len(data_col):
-                        data_col[mask] = np.interp(np.flatnonzero(mask), np.flatnonzero(~mask), data_col[~mask])
-
-                    data_avg_fill[:, col] = copy.deepcopy(data_col)
-
-                # Boxcar filter
-                if self.large_scale_method == "boxcar":
-
-                    data_avg_smooth = uniform_filter1d(
-                        data_avg_fill,
-                        size=data_avg.shape[0] // self.large_scale_filter_factor,
-                        axis=0,
-                        mode=self.large_scale_filter_extend_mode,
-                    )
-
-                # Median filter
-                elif self.large_scale_method == "median":
-
-                    # TODO: For now this doesn't work, since JWST requires older scipy versions
-                    # med = median_filter(
-                    #     data_avg,
-                    #     size=data_avg.shape[0] // self.large_scale_filter_factor,
-                    #     axes=0,
-                    #     mode=self.large_scale_filter_extend_mode,
-                    # )
-
-                    # Loop to do the median filter
-                    data_avg_smooth = np.zeros_like(data_avg_fill)
-                    for i in range(data_avg_smooth.shape[1]):
-                        data_avg_smooth[:, i] = median_filter(
-                            data_avg_fill[:, i],
-                            size=data_avg_fill.shape[0] // self.large_scale_filter_factor,
-                            mode=self.large_scale_filter_extend_mode,
-                        )
-
-                elif self.large_scale_method == "convolve_smooth":
-
-                    # Create kernel
-                    kernel_scale = data_avg_fill.shape[0] // self.large_scale_filter_factor
-
-                    # Make sure scale is odd!
-                    if kernel_scale % 2 == 0:
-                        kernel_scale -= 1
-                    kernel = np.ones(kernel_scale) / float(kernel_scale)
-
-                    # Loop over the data and smooth down each column
-                    data_avg_smooth = np.zeros_like(data_avg_fill)
-                    for i in range(data_avg_smooth.shape[1]):
-                        data_avg_smooth[:, i] = convolve(data_avg_fill[:, i], kernel, boundary="extend")
-
-                # Sigma-clipping and subtracting (likely to break down in bright tiles)
-                elif self.large_scale_method == "sigma_clip":
-                    # Mask data and sigma-clip along the x-axis
-                    mask_data = make_source_mask(
-                        data_avg,
-                        nsigma=self.sigma,
-                        dilate_size=self.dilate_size,
-                        sigclip_iters=self.maxiters,
-                    )
-
-                    data_sig_clip = sigma_clipped_stats(
-                        data_avg,
-                        mask=mask_data,
-                        sigma=self.sigma,
-                        maxiters=self.maxiters,
-                        axis=1,
-                    )[1]
-
-                    data_avg_smooth = data_avg - data_sig_clip[:, np.newaxis]
-
-                else:
-                    raise ValueError(
-                        f"large_scale_method should be one of {ALLOWED_LARGE_SCALE_METHODS}"
-                    )
+                # Reproject the smoothed data
+                data_avg_smooth = reproject_interp(
+                    (self.data_avg_smooth, self.optimal_wcs),
+                    wcs,
+                    return_footprint=False,
+                )
 
                 diff_smooth = data_avg - data_avg_smooth
 
-                mask_pos = make_source_mask(
-                    diff_smooth,
-                    nsigma=self.large_scale_sigma,
-                    dilate_size=self.dilate_size,
-                    sigclip_iters=self.maxiters,
+                # Also reproject the mask, casting to bool
+                mask_smooth = reproject_interp(
+                    (self.data_avg_mask, self.optimal_wcs),
+                    wcs,
+                    order='nearest-neighbor',
+                    return_footprint=False,
                 )
-                mask_neg = make_source_mask(
-                    -diff_smooth,
-                    mask=mask_pos,
-                    nsigma=self.large_scale_sigma,
-                    dilate_size=self.dilate_size,
-                    sigclip_iters=self.maxiters,
-                )
-                mask_smooth = mask_pos | mask_neg
+                mask_smooth = np.array(mask_smooth, dtype=bool)
 
-                stripes_x = sigma_clipped_stats(
+                # Get the low-level stripes left in the data
+                stripes_smooth = sigma_clipped_stats(
                     diff_smooth,
                     mask=mask_smooth,
-                    sigma=self.large_scale_sigma,
+                    sigma=self.sigma,
                     maxiters=self.maxiters,
                     axis=1,
                 )[1]
 
-                mask = np.isnan(stripes_x)
+                mask = np.isnan(stripes_smooth)
                 # Only interp if we have a) some NaNs but not b) all NaNs
-                if 0 < np.sum(mask) < len(stripes_x):
-                    stripes_x[mask] = np.interp(np.flatnonzero(mask),
-                                                np.flatnonzero(~mask),
-                                                stripes_x[~mask],
-                                                )
+                if 0 < np.sum(mask) < len(stripes_smooth):
+                    stripes_smooth[mask] = np.interp(np.flatnonzero(mask),
+                                                     np.flatnonzero(~mask),
+                                                     stripes_smooth[~mask],
+                                                     )
 
-                data_avg = data_avg - stripes_x[:, np.newaxis]
+                data_avg = data_avg - stripes_smooth[:, np.newaxis]
 
             diff = data - data_avg
             diff -= np.nanmedian(diff)
 
             stripes_arr = np.zeros_like(diff)
 
-            mask_pos = make_source_mask(
-                diff,
-                nsigma=self.sigma,
-                dilate_size=self.dilate_size,
-                sigclip_iters=self.maxiters,
-            )
-            mask_neg = make_source_mask(
-                -diff,
-                mask=mask_pos,
-                nsigma=self.sigma,
-                dilate_size=self.dilate_size,
-                sigclip_iters=self.maxiters,
-            )
-            mask_diff = mask_pos | mask_neg  # | dq_bit_mask1
+            mask_diff = self.get_mask(diff)
 
             if self.do_vertical_subtraction:
                 # First, subtract the y
                 stripes_y = sigma_clipped_stats(
                     diff - stripes_arr,
-                    mask=mask,
+                    mask=mask_diff,
                     sigma=self.sigma,
                     maxiters=self.maxiters,
                     axis=0,
@@ -1033,6 +1054,16 @@ class MultiTileDestripeStep:
                 stripes_arr += stripes_y[np.newaxis, :]
 
             stripes_x_2d = np.zeros_like(stripes_arr)
+
+            # Sigma-clip the diff across the whole image
+            stripes_x_full = sigma_clipped_stats(
+                diff - stripes_arr,
+                mask=mask_diff,
+                sigma=self.sigma,
+                maxiters=self.maxiters,
+                axis=1,
+            )[1]
+            stripes_x_full[stripes_x_full == 0] = np.nan
 
             if quadrants:
                 quadrant_size = stripes_arr.shape[1] // 4
@@ -1054,10 +1085,16 @@ class MultiTileDestripeStep:
                         maxiters=self.maxiters,
                         axis=1,
                     )[1]
+                    stripes_x[stripes_x == 0] = np.nan
 
-                    # Replace NaNs with nearest values, but don't centre here to keep any
-                    # residual shifts between amplifiers
+                    mask_sum = np.nansum(~np.asarray(mask_quadrants, dtype=bool), axis=1)
+                    too_masked_idx = np.where(mask_sum < quadrant_size * self.min_mask_frac)
 
+                    # For anything with less than the requisite amount of unmasked pixels, fall
+                    # back to the full row median
+                    stripes_x[too_masked_idx] = stripes_x_full[too_masked_idx]
+
+                    # Replace NaNs with nearest values
                     mask = np.isnan(stripes_x)
                     # Only interp if we have a) some NaNs but not b) all NaNs
                     if 0 < np.sum(mask) < len(stripes_x):
@@ -1066,31 +1103,26 @@ class MultiTileDestripeStep:
                                                     stripes_x[~mask],
                                                     )
 
+                    # Centre around 0, since we've corrected for steps between amplifiers
+                    stripes_x -= np.nanmedian(stripes_x)
+
                     stripes_x_2d[:, idx_slice] += stripes_x[:, np.newaxis]
 
             else:
-                # Sigma-clip the diff
-                stripes_x = sigma_clipped_stats(
-                    diff - stripes_arr,
-                    mask=mask_diff,
-                    sigma=self.sigma,
-                    maxiters=self.maxiters,
-                    axis=1,
-                )[1]
 
                 # Centre around 0, replace NaNs with nearest values
-                stripes_x -= np.nanmedian(stripes_x)
+                stripes_x_full -= np.nanmedian(stripes_x_full)
 
-                mask = np.isnan(stripes_x)
+                mask = np.isnan(stripes_x_full)
 
                 # Only interp if we have a) some NaNs but not b) all NaNs
-                if 0 < np.sum(mask) < len(stripes_x):
-                    stripes_x[mask] = np.interp(np.flatnonzero(mask),
-                                                np.flatnonzero(~mask),
-                                                stripes_x[~mask],
-                                                )
+                if 0 < np.sum(mask) < len(stripes_x_full):
+                    stripes_x_full[mask] = np.interp(np.flatnonzero(mask),
+                                                     np.flatnonzero(~mask),
+                                                     stripes_x_full[~mask],
+                                                     )
 
-                stripes_x_2d += stripes_x[:, np.newaxis]
+                stripes_x_2d += stripes_x_full[:, np.newaxis]
 
             # Centre around 0 one last time
             stripes_x_2d -= np.nanmedian(stripes_x_2d)
@@ -1101,6 +1133,8 @@ class MultiTileDestripeStep:
             # Make diagnostic plot. Use different names if
             # we're iterating
             suffix = "_dither_stripe_sub"
+            if do_large_scale:
+                suffix += "_large_scale"
             if self.do_convergence:
                 suffix += f"_iter_{iteration}"
 

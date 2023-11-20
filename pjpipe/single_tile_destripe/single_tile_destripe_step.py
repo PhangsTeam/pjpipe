@@ -174,10 +174,10 @@ class SingleTileDestripeStep:
             procs,
             quadrants=True,
             vertical_subtraction=True,
-            destriping_method="row_median",
+            destriping_method="median_filter",
             vertical_destriping_method="row_median",
             filter_diffuse=False,
-            large_scale_subtraction=False,
+            min_mask_frac=0.2,
             sigma=3,
             npixels=3,
             dilate_size=11,
@@ -201,12 +201,14 @@ class SingleTileDestripeStep:
             quadrants: Whether to split the chip into 512 pixel segments, and destripe each (mostly)
                 separately. Defaults to True
             vertical_subtraction: Perform sigma-clipped median column subtraction? Defaults to True
-            destriping_method: Method to use for destriping. Allowed options are given by DESTRIPING_METHODS
-            vertical_destriping_method: Method to use for vertical destriping. Allowed options are given by DESTRIPING_METHODS
+            destriping_method: Method to use for destriping. Allowed options are given by DESTRIPING_METHODS. Defaults
+                to 'median_filter'
+            vertical_destriping_method: Method to use for vertical destriping. Allowed options are given by
+                DESTRIPING_METHODS. Defaults to 'row_median'
             filter_diffuse: Whether to perform high-pass filter on data, to remove diffuse, extended
                 emission. Defaults to False, but should be set True for observations where emission fills the FOV
-            large_scale_subtraction: Whether to mitigate for large-scale stripes remaining after the diffuse
-                filtering. Defaults to False
+            min_mask_frac: Minimum fraction of unmasked data in quadrants to calculate a median. Defaults to 0.2
+                (i.e. 20% unmasked)
             sigma: Sigma for sigma-clipping. Defaults to 3
             npixels: Pixels to grow for masking. Defaults to 5
             dilate_size: make_source_mask dilation size. Defaults to 11
@@ -245,7 +247,7 @@ class SingleTileDestripeStep:
         self.destriping_method = destriping_method
         self.vertical_destriping_method = vertical_destriping_method
         self.filter_diffuse = filter_diffuse
-        self.large_scale_subtraction = large_scale_subtraction
+        self.min_mask_frac = min_mask_frac
         self.sigma = sigma
         self.npixels = npixels
         self.dilate_size = dilate_size
@@ -1308,7 +1310,6 @@ class SingleTileDestripeStep:
             im,
             prev_noise_model,
             out_name,
-            use_mask=True,
             quadrants=True,
     ):
         """Run a series of filters over the row medians. From Mederic Boquien.
@@ -1318,7 +1319,6 @@ class SingleTileDestripeStep:
             prev_noise_model: Previously calculated noise model, to subtract before
                 destriping
             out_name: Output filename
-            use_mask: Whether to mask data or not. Defaults to True
             quadrants: Whether to break out by quadrants. Defaults to True
         """
 
@@ -1334,21 +1334,18 @@ class SingleTileDestripeStep:
 
         full_noise_model = np.zeros_like(im_data)
 
-        mask = None
-        dq_mask = None
-        if use_mask:
-            mask = make_source_mask(
-                im_data,
-                nsigma=self.sigma,
-                npixels=self.npixels,
-                dilate_size=self.dilate_size,
-            )
-            dq_mask = get_dq_mask(
-                data=im_data,
-                err=im.err,
-                dq=im.dq,
-            )
-            mask = mask | dq_mask
+        mask = make_source_mask(
+            im_data,
+            nsigma=self.sigma,
+            npixels=self.npixels,
+            dilate_size=self.dilate_size,
+        )
+        dq_mask = get_dq_mask(
+            data=im_data,
+            err=im.err,
+            dq=im.dq,
+        )
+        mask = mask | dq_mask
 
         if self.filter_diffuse:
             data, mask = self.get_filter_diffuse(
@@ -1364,55 +1361,61 @@ class SingleTileDestripeStep:
 
             # Calculate medians and apply
             for i in range(4):
-                if use_mask:
-                    data_quadrant = data[:, i * quadrant_size: (i + 1) * quadrant_size]
-                    mask_quadrant = mask[:, i * quadrant_size: (i + 1) * quadrant_size]
+                data_quadrant = data[:, i * quadrant_size: (i + 1) * quadrant_size]
+                mask_quadrant = mask[:, i * quadrant_size: (i + 1) * quadrant_size]
 
-                    data_quadrant = np.ma.array(data_quadrant, mask=mask_quadrant)
-                else:
-                    data_quadrant = data[:, i * quadrant_size: (i + 1) * quadrant_size]
+                mask_sum = np.nansum(~np.asarray(mask_quadrant, dtype=bool), axis=1)
+                too_masked_idx = np.where(mask_sum < quadrant_size * self.min_mask_frac)
+
+                data_quadrant = np.ma.array(data_quadrant, mask=mask_quadrant)
+
+                data_masked = np.ma.array(data, mask=mask)
 
                 for scale in self.filter_scales:
-                    if use_mask:
-                        med = np.ma.median(data_quadrant, axis=1)
-                        mask_idx = np.where(med.mask)
-                        med = med.data
-                        med[mask_idx] = np.nan
-                    else:
-                        med = np.nanmedian(data_quadrant, axis=1)
+                    med = np.ma.median(data_quadrant, axis=1)
+                    mask_idx = np.where(med.mask)
+                    med = med.data
+                    med[mask_idx] = np.nan
 
-                    # Replace any remaining NaNs with the median
-                    med[~np.isfinite(med)] = np.nanmedian(med)
+                    # Also replace stuff that is too masked with the full row median
+                    med_full = np.ma.median(data_masked, axis=1)
+                    med[too_masked_idx] = med_full[too_masked_idx]
+
+                    # Replace any remaining NaNs with the interpolated values
+                    nan_mask = ~np.isfinite(med)
+
+                    # Only interp if we have a) some NaNs but not b) all NaNs
+                    if 0 < np.sum(nan_mask) < len(med):
+                        med[nan_mask] = np.interp(np.flatnonzero(nan_mask),
+                                                  np.flatnonzero(~nan_mask),
+                                                  med[~nan_mask],
+                                                  )
+
                     noise = med - median_filter(
                         med, scale, mode=self.filter_extend_mode
                     )
 
-                    if use_mask:
-                        data_quadrant = np.ma.array(
-                            data_quadrant.data - noise[:, np.newaxis],
-                            mask=data_quadrant.mask,
-                        )
-                    else:
-                        data_quadrant -= noise[:, np.newaxis]
+                    data_quadrant = np.ma.array(
+                        data_quadrant.data - noise[:, np.newaxis],
+                        mask=data_quadrant.mask,
+                    )
+                    data_masked = np.ma.array(
+                        data_masked.data - noise[:, np.newaxis],
+                        mask=data_masked.mask,
+                    )
 
                     full_noise_model[
                     :, i * quadrant_size: (i + 1) * quadrant_size
                     ] += noise[:, np.newaxis]
 
         else:
-            if use_mask:
-                data_copy = np.ma.array(copy.deepcopy(data), mask=copy.deepcopy(mask))
-            else:
-                data_copy = copy.deepcopy(data)
+            data_mask = np.ma.array(copy.deepcopy(data), mask=copy.deepcopy(mask))
 
             for scale in self.filter_scales:
-                if use_mask:
-                    med = np.ma.median(data_copy, axis=1)
-                    mask_idx = np.where(med.mask)
-                    med = med.data
-                    med[mask_idx] = np.nan
-                else:
-                    med = np.nanmedian(data, axis=1)
+                med = np.ma.median(data_mask, axis=1)
+                mask_idx = np.where(med.mask)
+                med = med.data
+                med[mask_idx] = np.nan
 
                 mask = np.isnan(med)
 
@@ -1425,7 +1428,7 @@ class SingleTileDestripeStep:
 
                 noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
 
-                data_copy -= noise[:, np.newaxis]
+                data_mask -= noise[:, np.newaxis]
 
                 full_noise_model += noise[:, np.newaxis]
 

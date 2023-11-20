@@ -1,4 +1,5 @@
 crds_path = '/data/beegfs/astro-storage/groups/schinnerer/williams/crds/'
+crds_context = 'jwst_1147.pmap'
 raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw/2107/archive_20231015/'
 reprocess_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_phangs_reprocessed/'
 alignment_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_scripts/config/2107/alignment/'

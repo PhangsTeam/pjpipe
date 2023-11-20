@@ -22,7 +22,7 @@ targets = [
 ]
 
 # Version for the reprocessing
-version = 'v0p9p4'
+version = 'v0p10p1'
 
 # Bands to consider
 bands = [
@@ -53,10 +53,10 @@ steps = [
     'lv2',
     'get_wcs_adjust',
     'apply_wcs_adjust',
-    'multi_tile_destripe.nircam',
-#    'psf_model',
     'lyot_separate.miri',
     'level_match',
+    'multi_tile_destripe.nircam',
+#    'psf_model',
     'lv3',
     'astrometric_catalog.miri',
     'astrometric_align',
@@ -112,12 +112,9 @@ jwst_parameters.bkg_subtract.sigma = 1.5
 
 [parameters.get_wcs_adjust]
 
-overwrite = true
-
 bands = [
     'F300M',
     'F1000W',
-    'F1000W_bgr',
 ]
 
 group_dithers = [
@@ -183,7 +180,6 @@ abs_sigma = 3
 bkg_boxsize.nircam_short = 100
 bkg_boxsize.nircam_long = 100
 bkg_boxsize.miri = 25
-# TODO enforce_user_order = true
 
 [parameters.lyot_mask]
 method = 'mask'
@@ -199,14 +195,11 @@ filter_extend_mode = "reflect"
 filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
 
 [parameters.multi_tile_destripe]
-apply_to_unflat = false
-do_vertical_subtraction = false
+
 quadrants = true
-sigma = 3
-weight_type = 'equal'
-do_large_scale = false
-large_scale_filter_extend_mode = "reflect"
-weight_method = "sigma_clip"
+weight_type = 'ivm'
+do_large_scale = true
+weight_method = 'mean'
 
 [parameters.level_match]
 do_sigma_clip = false
@@ -264,7 +257,6 @@ use2dhist = false
 bkg_boxsize.nircam_short = 100
 bkg_boxsize.nircam_long = 100
 bkg_boxsize.miri = 25
-# TODO enforce_user_order = true
 
 [parameters.lv3.jwst_parameters.skymatch]
 
@@ -340,7 +332,7 @@ searchrad = 2
 separation = 1
 tolerance = 0.5
 use2dhist = false
-fitgeom = 'rshift' # TODO
+fitgeom = 'shift'  # TODO 'rshift'
 nclip = 5
 sigma = 3
 
@@ -378,4 +370,4 @@ move_backgrounds = true
 move_psf_matched = true
 
 [parameters.regress_against_previous]
-prev_version = 'v0p9p2'
+prev_version = 'v0p10p0'

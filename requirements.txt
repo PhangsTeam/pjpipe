@@ -21,3 +21,4 @@ cmocean
 pypdf
 setuptools
 stdatamodels
+shapely
