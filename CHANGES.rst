@@ -1,4 +1,4 @@
-0.10.1 (Unreleased)
+0.10.1 (2023-11-20)
 ===================
 
 - Can specify CRDS context at the pipeline level
