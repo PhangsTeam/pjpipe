@@ -12,6 +12,9 @@
 - Changed how tweakreg grouping is done in ``get_wcs_adjust_step`` and ``lv3_step`` to account
   for code changes in the pipeline
 - Added option to decouple the short NIRCam chips for tweakreg in ``lv3_step``
+- Added option to move the various diagnostic plots in ``release_step``
+- ``remove_bloat`` is now False by default in ``release step``, to maintain datamodels compatibility
+- ``remove_bloat`` also applies to PSF matched files in ``release_step``
   
 0.10.0 (2023-11-14)
 ===================

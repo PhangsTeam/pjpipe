@@ -619,6 +619,10 @@ class AnchoringStep:
                     np.isfinite(hdu["SCI"].data) & (hdu["SCI"].data != 0)
                 ] += offset
                 hdu[0].header["BKGRDVAL"] = offset
+
+                # TODO: We should also include an error term here. It's just a single number, but for internal
+                #   will be a quadrature sum
+
                 hdu.writeto(output_file, overwrite=True)
 
         log.info("Writing out anchor table")

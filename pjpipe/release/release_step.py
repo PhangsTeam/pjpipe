@@ -18,11 +18,12 @@ class ReleaseStep:
         target,
         bands,
         file_exts=None,
-        remove_bloat=True,
+        remove_bloat=False,
         move_tweakback=False,
         move_backgrounds=False,
         move_individual_fields=False,
         move_psf_matched=False,
+        move_diagnostic_plots=False,
         lv3_dir="lv3",
         tweakback_dir="lv3",
         tweakback_ext="tweakback",
@@ -30,6 +31,7 @@ class ReleaseStep:
         background_ext="combinedbackground",
         individual_fields_dir="mosaic_individual_fields",
         psf_matched_dir="psf_matching",
+        diagnostic_plot_dir="plots",
         overwrite=False,
     ):
         """Tidies up files, moves to a single directory for release
@@ -46,7 +48,7 @@ class ReleaseStep:
             file_exts: List of filetypes to move. Defaults to moving fits
                 files, plus any generated catalogues and segmentation maps
             remove_bloat: Will remove generally un-needed extensions from
-                fits files. Defaults to True
+                fits files. Defaults to False
             move_tweakback: Whether to move tweakback'd crf files or not.
                 Defaults to False
             move_backgrounds: Whether to move combined background files or not.
@@ -54,6 +56,8 @@ class ReleaseStep:
             move_individual_fields: Whether to move individual field mosaics
                 or not. Defaults to False
             move_psf_matched: Whether to move PSF matched images or not.
+                Defaults to False
+            move_diagnostic_plots: Whether to move various diagnostic plots or not.
                 Defaults to False
             lv3_dir: Where level 3 files are located, relative
                 to the target directory structure. Defaults to "lv3"
@@ -80,6 +84,7 @@ class ReleaseStep:
         self.move_backgrounds = move_backgrounds
         self.move_individual_fields = move_individual_fields
         self.move_psf_matched = move_psf_matched
+        self.move_diagnostic_plots = move_diagnostic_plots
         self.overwrite = overwrite
 
         self.hdu_ext_to_delete = [
@@ -109,6 +114,7 @@ class ReleaseStep:
         self.background_ext = background_ext
         self.individual_fields_dir = individual_fields_dir
         self.psf_matched_dir = psf_matched_dir
+        self.diagnostic_plot_dir = diagnostic_plot_dir
 
     def do_step(self):
         """Run the release step"""
@@ -177,6 +183,10 @@ class ReleaseStep:
                 )
             if self.move_psf_matched:
                 self.do_move_psf_matched(
+                    band=band,
+                )
+            if self.move_diagnostic_plots:
+                self.do_move_diagnostic_plots(
                     band=band,
                 )
 
@@ -403,6 +413,116 @@ class ReleaseStep:
             desc="PSF Matched",
             leave=False,
         ):
-            os.system(f"cp {file} {out_dir}")
+            out_name = os.path.join(
+                out_dir,
+                os.path.split(file)[-1],
+            )
+
+            if self.remove_bloat:
+                # For these, we want to pull out only the data and error extensions. Everything else
+                # is just bloat
+                with fits.open(file, memmap=False) as hdu:
+                    for hdu_ext in self.hdu_ext_to_delete:
+                        del hdu[hdu_ext]
+
+                    hdu.writeto(out_name, overwrite=True)
+                    del hdu
+            else:
+                os.system(f"cp {file} {out_name}")
+
+        return True
+
+    def do_move_diagnostic_plots(
+        self,
+        band,
+    ):
+        """Move various diagnostic plots
+
+        Args:
+            band: Band to consider
+        """
+
+        # We can start with the anchoring, since the plots there are a bit different
+        files_anchoring_png = glob.glob(
+            os.path.join(
+                self.in_dir,
+                band,
+                "anchoring",
+                f"*.png",
+            )
+        )
+        files_anchoring_pdf = glob.glob(
+            os.path.join(
+                self.in_dir,
+                band,
+                "anchoring",
+                f"*.pdf",
+            )
+        )
+
+        # Now for other step plots
+        files_png = glob.glob(
+            os.path.join(
+                self.in_dir,
+                band,
+                "*",
+                self.diagnostic_plot_dir,
+                f"*.png",
+            )
+        )
+        files_pdf = glob.glob(
+            os.path.join(
+                self.in_dir,
+                band,
+                "*",
+                self.diagnostic_plot_dir,
+                f"*.pdf",
+            )
+        )
+
+        files = files_anchoring_png + files_anchoring_pdf + files_png + files_pdf
+
+        if len(files) == 0:
+            return True
+
+        files.sort()
+
+        # Anchoring plots go elsewhere
+        out_anchoring_dir = os.path.join(
+            self.out_dir,
+            self.target,
+            f"anchoring_diagnostic_plots",
+        )
+        if not os.path.exists(out_anchoring_dir):
+            os.makedirs(out_anchoring_dir)
+
+        out_dir = os.path.join(
+            self.out_dir,
+            self.target,
+            f"{band.lower()}_diagnostic_plots",
+        )
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+
+        for file in tqdm(
+                files,
+                ascii=True,
+                desc="Diagnostic plots",
+                leave=False,
+        ):
+            # Split this out by step so the folders aren't crazy
+            file_split = file.split(os.path.sep)
+            if "anchoring" in file_split:
+                full_out_dir = os.path.join(out_anchoring_dir)
+            else:
+                full_out_dir = os.path.join(out_dir, file_split[-3])
+            if not os.path.exists(full_out_dir):
+                os.makedirs(full_out_dir)
+
+            out_name = os.path.join(
+                full_out_dir,
+                file_split[-1],
+            )
+            os.system(f"cp {file} {out_name}")
 
         return True
