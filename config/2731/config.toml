@@ -1,0 +1,215 @@
+# List of targets
+targets = [
+    'ngc3324',
+]
+
+# Version for the reprocessing
+version = 'v0p1'
+
+# Bands to consider
+bands = [
+    'F187N',
+    'F090W',
+    'F200W',
+    'F335M',
+    'F444W',
+    'F470N',
+    'F1130W',
+    'F770W',
+    'F1280W',
+    'F1800W',
+]
+
+# Steps. These can/should be different
+# for NIRCam and MIRI, and we can distinguish them here
+
+# We can also distinguish between steps that may be
+# different for science/background obs. This is something
+# like step.miri.sci/step.miri.bgr
+steps = [
+    'download',
+    'lv1',
+#    'single_tile_destripe.nircam',
+    'lv2',
+    'get_wcs_adjust',
+    'apply_wcs_adjust',
+    'lyot_separate.miri',
+    'level_match',
+#    'multi_tile_destripe.nircam',
+    'lv3',
+    'release',
+]
+
+# Parameters for downloading data. This just downloads
+# the raw science
+[parameters.download]
+
+prop_id = '2731'
+product_type = [
+    'SCIENCE',
+]
+calib_level = [
+    1,
+]
+
+[parameters.lv1]
+
+jwst_parameters.save_results = true
+jwst_parameters.ramp_fit.suppress_one_group = false
+jwst_parameters.refpix.use_side_ref_pixels = true
+
+[parameters.lv2]
+
+#bgr_check_type = 'parallel_off'
+#bgr_background_name = 'off'
+#bgr_observation_types = [
+#    'miri',
+#]
+
+jwst_parameters.save_results = true
+jwst_parameters.bkg_subtract.save_combined_background = true
+jwst_parameters.bkg_subtract.sigma = 1.5
+
+[parameters.get_wcs_adjust]
+
+bands = [
+    'F335M',
+    'F770W',
+]
+
+group_dithers = [
+    'nircam',
+    'miri',
+]
+
+[parameters.get_wcs_adjust.tweakreg_parameters]
+
+align_to_gaia = false
+brightest = 500
+snr_threshold = 3
+expand_refcat = true
+peakmax.nircam = 20
+roundlo.nircam = -0.5
+roundhi.nircam = 0.5
+
+# Parameters to get wcs_adjust shifts
+minobj = 3
+searchrad = 2
+separation.miri = 1
+tolerance.miri = 0.7
+separation.nircam = 2
+tolerance.nircam = 1
+use2dhist = true
+fitgeometry = 'shift'
+nclip = 5
+
+# Tweak boxsize, so we detect objects in diffuse emission
+bkg_boxsize.nircam_short = 100
+bkg_boxsize.nircam_long = 100
+bkg_boxsize.miri = 25
+
+[parameters.lyot_mask]
+method = 'mask'
+
+[parameters.level_match]
+do_sigma_clip = false
+weight_method = 'rms'
+
+[parameters.lv3]
+
+tweakreg_degroup_nircam_modules = true
+
+tweakreg_group_dithers = [
+    'nircam_short',
+    'nircam_long',
+    'miri',
+]
+skymatch_group_dithers = [
+    'miri',
+    'nircam_short',
+    'nircam_long',
+]
+
+bgr_check_type = 'parallel_off'
+
+[parameters.lv3.jwst_parameters]
+save_results = true
+
+[parameters.lv3.jwst_parameters.tweakreg]
+
+# Skip MIRI wavelengths, since we have already
+# solved for this and this can make things worse
+skip.F1130W = true
+skip.F770W = true
+skip.F1280W = true
+skip.F1800W = true
+
+align_to_gaia = false
+brightest.nircam_short = 125
+brightest.nircam_long = 500
+brightest.miri = 500
+snr_threshold = 3
+expand_refcat = true
+fitgeometry = 'shift'
+minobj = 3
+peakmax.nircam = 20
+roundlo.nircam = -0.5
+roundhi.nircam = 0.5
+
+# Take relatively tight tolerances since we've already shifted
+# close to the correct solution
+separation.miri = 1
+separation.nircam = 2
+tolerance.nircam_short = 0.3
+tolerance.nircam_long = 0.3
+tolerance.miri = 1
+use2dhist = false
+
+# Tweak boxsize, so we detect objects in diffuse emission
+bkg_boxsize.nircam_short = 100
+bkg_boxsize.nircam_long = 100
+bkg_boxsize.miri = 25
+
+[parameters.lv3.jwst_parameters.skymatch]
+
+# Turn off matching since we've done it already
+skymethod = 'global'
+subtract = true
+skystat = 'median'
+nclip.nircam = 20
+nclip.miri = 10
+lsigma.nircam = 3
+lsigma.miri = 1.5
+usigma.nircam = 3
+usigma.miri = 1.5
+
+[parameters.lv3.jwst_parameters.outlier_detection]
+in_memory = true
+
+[parameters.lv3.jwst_parameters.resample]
+rotation = 0.0
+in_memory = true
+
+[parameters.lv3.jwst_parameters.source_catalog]
+snr_threshold = 2
+npixels = 5
+bkg_boxsize = 25
+deblend = true
+
+[parameters.astrometric_catalog]
+snr = 10
+
+[parameters.astrometric_catalog.dao_parameters]
+sharplo = 0.2
+sharphi = 1.0
+roundlo = -0.5
+roundhi = 0.5
+
+[parameters.release]
+
+overwrite = true
+
+remove_bloat = true
+
+[parameters.regress_against_previous]
+prev_version = 'v0p0'
