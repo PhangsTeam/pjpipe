@@ -1,0 +1,5 @@
+crds_path = '/data/beegfs/astro-storage/groups/schinnerer/williams/crds/'
+raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw/1558/'
+reprocess_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_1558/'
+alignment_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_scripts/config/1558/alignment/'
+processors = 20

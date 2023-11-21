@@ -1,0 +1,276 @@
+# List of targets
+targets = [
+    'ngc6720',
+]
+
+# Version for the reprocessing
+version = 'v0p1'
+
+# Bands to consider
+bands = [
+#    'F162M',
+#    'F212N',
+    'F300M',
+#    'F335M',
+#    'F560W',
+#    'F770W',
+    'F1000W',
+#    'F1130W',
+#    'F1280W',
+#    'F1500W',
+#    'F1800W',
+#    'F2100W',
+#    'F2550W',
+]
+
+# Steps. These can/should be different
+# for NIRCam and MIRI, and we can distinguish them here
+
+# We can also distinguish between steps that may be
+# different for science/background obs. This is something
+# like step.miri.sci/step.miri.bgr
+steps = [
+    'download',
+    'gaia_query',
+    'lv1',
+    'single_tile_destripe.nircam',
+    'lv2',
+    'get_wcs_adjust',
+    'apply_wcs_adjust',
+    'lyot_separate.miri',
+    'level_match',
+    'multi_tile_destripe.nircam',
+    'lv3',
+    'astrometric_catalog.miri',
+    'astrometric_align',
+#    'anchoring',
+#    'psf_matching',
+    'release',
+    'regress_against_previous',
+]
+
+# Parameters for downloading data. This just downloads
+# the raw science
+[parameters.download]
+
+prop_id = '1558'
+product_type = [
+    'SCIENCE',
+]
+calib_level = [
+    1,
+]
+
+[parameters.lv1]
+
+jwst_parameters.save_results = true
+jwst_parameters.ramp_fit.suppress_one_group = false
+jwst_parameters.refpix.use_side_ref_pixels = true
+
+[parameters.lv2]
+
+bgr_check_type = 'parallel_off'
+bgr_background_name = 'off'
+bgr_observation_types = [
+#    'miri',
+]
+
+jwst_parameters.save_results = true
+jwst_parameters.bkg_subtract.save_combined_background = true
+jwst_parameters.bkg_subtract.sigma = 1.5
+
+[parameters.get_wcs_adjust]
+
+bands = [
+    'F300M',
+    'F1000W',
+]
+
+group_dithers = [
+    'nircam',
+    'miri',
+]
+
+[parameters.get_wcs_adjust.tweakreg_parameters]
+
+align_to_gaia = false
+brightest = 500
+snr_threshold = 3
+expand_refcat = true
+peakmax.nircam = 20
+roundlo.nircam = -0.5
+roundhi.nircam = 0.5
+
+# Parameters to get wcs_adjust shifts
+minobj = 3
+searchrad = 2
+separation.miri = 1
+tolerance.miri = 0.7
+separation.nircam = 2
+tolerance.nircam = 1
+use2dhist = true
+fitgeometry = 'shift'
+nclip = 5
+
+# Tweak boxsize, so we detect objects in diffuse emission
+bkg_boxsize.nircam_short = 100
+bkg_boxsize.nircam_long = 100
+bkg_boxsize.miri = 25
+
+[parameters.lyot_mask]
+method = 'mask'
+
+[parameters.single_tile_destripe]
+quadrants = true
+vertical_subtraction = true
+filter_diffuse = true
+dilate_size = 7
+destriping_method = 'median_filter'
+vertical_destriping_method = 'row_median'
+filter_extend_mode = "reflect"
+filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
+
+[parameters.multi_tile_destripe]
+
+quadrants = true
+weight_type = 'ivm'
+do_large_scale = true
+weight_method = 'mean'
+
+[parameters.level_match]
+do_sigma_clip = false
+weight_method = 'rms'
+
+[parameters.lv3]
+
+tweakreg_group_dithers = [
+    'nircam_short',
+    'nircam_long',
+    'miri',
+]
+skymatch_group_dithers = [
+    'miri',
+    'nircam_short',
+    'nircam_long',
+]
+tweakreg_degroup_nircam_modules = true
+
+bgr_check_type = 'check_in_name'
+
+[parameters.lv3.jwst_parameters]
+save_results = true
+
+[parameters.lv3.jwst_parameters.tweakreg]
+
+# Skip MIRI wavelengths, since we have already
+# solved for this
+skip.miri = true
+
+align_to_gaia = false
+brightest.nircam_short = 125
+brightest.nircam_long = 500
+brightest.miri = 500
+snr_threshold = 3
+expand_refcat = true
+fitgeometry = 'shift'
+minobj = 3
+peakmax.nircam = 20
+roundlo.nircam = -0.5
+roundhi.nircam = 0.5
+
+# Take relatively tight tolerances since we've already shifted
+# close to the correct solution
+separation.miri = 1
+separation.nircam = 2
+tolerance.nircam_short = 0.3
+tolerance.nircam_long = 0.3
+tolerance.miri = 1
+use2dhist = false
+
+# Tweak boxsize, so we detect objects in diffuse emission
+bkg_boxsize.nircam_short = 100
+bkg_boxsize.nircam_long = 100
+bkg_boxsize.miri = 25
+
+[parameters.lv3.jwst_parameters.skymatch]
+
+# Turn off matching since we've done it already
+skymethod = 'global'
+subtract = true
+skystat = 'median'
+nclip.nircam = 20
+nclip.miri = 10
+lsigma.nircam = 3
+lsigma.miri = 1.5
+usigma.nircam = 3
+usigma.miri = 1.5
+
+[parameters.lv3.jwst_parameters.outlier_detection]
+in_memory = true
+
+[parameters.lv3.jwst_parameters.resample]
+rotation = 0.0
+in_memory = true
+
+[parameters.lv3.jwst_parameters.source_catalog]
+snr_threshold = 2
+npixels = 5
+bkg_boxsize = 25
+deblend = true
+
+[parameters.astrometric_catalog]
+snr = 10
+
+[parameters.astrometric_catalog.dao_parameters]
+sharplo = 0.2
+sharphi = 1.0
+roundlo = -0.5
+roundhi = 0.5
+
+[parameters.astrometric_align]
+
+[parameters.astrometric_align.align_mapping]
+# Map everything to F1000W, since it has the most point sources
+F770W = 'F1000W'
+F1130W = 'F1000W'
+F1280W = 'F1000W'
+F1500W = 'F1000W'
+F1800W = 'F1000W'
+F2100W = 'F1000W'
+F2550W = 'F1000W'
+
+[parameters.astrometric_align.catalogs]
+ngc6720 = 'Gaia_DR3_ngc6720.fits'
+
+# Initial pass to get decent shifts for absolute astrometry
+[parameters.astrometric_align.tweakreg_parameters.iteration1]
+
+# Set quite a large search radius
+searchrad.miri = 10
+searchrad.nircam_long = 20
+searchrad.nircam_short = 40
+separation = 1
+tolerance = 1
+use2dhist = true
+fitgeom = 'shift'
+nclip = 5
+sigma = 3
+
+# Second iteration with tightened up parameters to figure out any residual shifts left
+[parameters.astrometric_align.tweakreg_parameters.iteration2]
+searchrad = 2
+separation = 1
+tolerance = 0.5
+use2dhist = false
+fitgeom = 'shift'
+nclip = 5
+sigma = 3
+
+[parameters.release]
+
+remove_bloat = true
+move_tweakback = false
+move_backgrounds = false
+
+[parameters.regress_against_previous]
+prev_version = 'v0p0'
