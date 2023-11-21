@@ -24,6 +24,7 @@ class ReleaseStep:
         move_individual_fields=False,
         move_psf_matched=False,
         move_diagnostic_plots=False,
+        compress_diagnostic_plots=True,
         lv3_dir="lv3",
         tweakback_dir="lv3",
         tweakback_ext="tweakback",
@@ -59,6 +60,8 @@ class ReleaseStep:
                 Defaults to False
             move_diagnostic_plots: Whether to move various diagnostic plots or not.
                 Defaults to False
+            compress_diagnostic_plots: Whether to compress the diagnostic plot folder
+                to limit file number. Defaults to True
             lv3_dir: Where level 3 files are located, relative
                 to the target directory structure. Defaults to "lv3"
             background_dir: Where tweakback files are located, relative
@@ -85,6 +88,7 @@ class ReleaseStep:
         self.move_individual_fields = move_individual_fields
         self.move_psf_matched = move_psf_matched
         self.move_diagnostic_plots = move_diagnostic_plots
+        self.compress_diagnostic_plots = compress_diagnostic_plots
         self.overwrite = overwrite
 
         self.hdu_ext_to_delete = [
@@ -189,6 +193,9 @@ class ReleaseStep:
                 self.do_move_diagnostic_plots(
                     band=band,
                 )
+
+        if self.move_diagnostic_plots and self.compress_diagnostic_plots:
+            self.do_compress_diagnostic_plots()
 
         with open(step_complete_file, "w+") as f:
             f.close()
@@ -524,5 +531,29 @@ class ReleaseStep:
                 file_split[-1],
             )
             os.system(f"cp {file} {out_name}")
+
+        return True
+
+    def do_compress_diagnostic_plots(self):
+        """Compress diagnostic plot directories"""
+
+        orig_dir = os.getcwd()
+
+        out_dir = os.path.join(self.out_dir, self.target)
+
+        os.chdir(out_dir)
+
+        plot_dirs = glob.glob("*_diagnostic_plots")
+
+        for plot_dir in tqdm(
+                plot_dirs,
+                ascii=True,
+                desc="Compressing diagnostic plots",
+                leave=False,
+        ):
+            os.system(f"tar -czf {plot_dir}.tar.gz {plot_dir}")
+            os.system(f"rm -rf {plot_dir}")
+
+        os.chdir(orig_dir)
 
         return True
