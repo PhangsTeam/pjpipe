@@ -1,6 +1,8 @@
 0.10.2 (Unreleased)
 ===================
 
+- Remove an error in ``multi_tile_destripe_step`` stripes in stacked image don't align with any particular
+  axis of the array
 - Fix crash where quadrants are turned off in median filtering in ``single_tile_destripe_step``
 - Diagnostic plots are compressed by default in ``release_step``
 

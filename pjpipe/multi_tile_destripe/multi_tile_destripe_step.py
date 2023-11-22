@@ -574,7 +574,7 @@ class MultiTileDestripeStep:
 
             # First case, we have a weird mix of rotations. In which case direction should be None
             if not np.all(internal_diff < 10):
-                raise ValueError("Input images have a variety of rotations. Have not enocuntered this before")
+                raise ValueError("Input images have a variety of rotations. Have not encountered this before")
                 direction = None
                 log.info("Input images have a variety of rotations. Defaulting to smoothing over both axes")
 
@@ -591,8 +591,6 @@ class MultiTileDestripeStep:
             # Final case, they're aligned but not along any particular axis in the image. In this case,
             # direction should be None
             else:
-                raise ValueError("Input images are aligned, but not along any particular direction. "
-                                 "Have not encountered this before")
                 direction = None
                 log.info("Stacked image does not align over a particular axis. Smoothing over both axes")
 
