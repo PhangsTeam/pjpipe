@@ -1417,14 +1417,14 @@ class SingleTileDestripeStep:
                 med = med.data
                 med[mask_idx] = np.nan
 
-                mask = np.isnan(med)
+                med_mask = np.isnan(med)
 
                 # Only interp if we have a) some NaNs but not b) all NaNs
-                if 0 < np.sum(mask) < len(med):
-                    med[mask] = np.interp(np.flatnonzero(mask),
-                                          np.flatnonzero(~mask),
-                                          med[~mask],
-                                          )
+                if 0 < np.sum(med_mask) < len(med):
+                    med[med_mask] = np.interp(np.flatnonzero(med_mask),
+                                              np.flatnonzero(~med_mask),
+                                              med[~med_mask],
+                                              )
 
                 noise = med - median_filter(med, scale, mode=self.filter_extend_mode)
 

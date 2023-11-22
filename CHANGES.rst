@@ -1,6 +1,7 @@
 0.10.2 (Unreleased)
 ===================
 
+- Fix crash where quadrants are turned off in median filtering in ``single_tile_destripe_step``
 - Diagnostic plots are compressed by default in ``release_step``
 
 0.10.1 (2023-11-20)
