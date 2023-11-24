@@ -65,5 +65,5 @@ dependencies = [
 where = ["pjpipe"]
 
 [build-system]
-requires = ["setuptools>=43.0.0", "wheel"]
+requires = ["setuptools>=43.0.0", "wheel", "setuptools_scm"]
 build-backend = "setuptools.build_meta"
