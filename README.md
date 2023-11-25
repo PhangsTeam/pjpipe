@@ -2,7 +2,7 @@
 
 [![](https://img.shields.io/pypi/v/pjpipe.svg?label=PyPI&style=flat-square)](https://pypi.org/pypi/pjpipe/)
 [![](https://img.shields.io/pypi/pyversions/pjpipe.svg?label=Python&color=yellow&style=flat-square)](https://pypi.org/pypi/pjpipe/)
-[![Actions](https://img.shields.io/github/actions/workflow/status/phangsTeam/pjpipe/build_test.yml?branch=main)](https://github.com/phangsTeam/pjpipe/actions)
+[![Actions](https://img.shields.io/github/actions/workflow/status/phangsTeam/pjpipe/build_test.yaml?branch=main)](https://github.com/phangsTeam/pjpipe/actions)
 [![License](https://img.shields.io/badge/license-GNUv3-blue.svg?label=License&style=flat-square)](LICENSE)
 
 **Note that this pipeline requires Python 3.9 or above**
