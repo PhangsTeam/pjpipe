@@ -1,5 +1,10 @@
 # PJPipe
 
+[![](https://img.shields.io/pypi/v/pjpipe.svg?label=PyPI&style=flat-square)](https://pypi.org/pypi/pjpipe/)
+[![](https://img.shields.io/pypi/pyversions/pjpipe.svg?label=Python&color=yellow&style=flat-square)](https://pypi.org/pypi/pjpipe/)
+[![Actions](https://img.shields.io/github/actions/workflow/status/phangsTeam/pjpipe/build_test.yml?branch=main)](https://github.com/phangsTeam/pjpipe/actions)
+[![License](https://img.shields.io/badge/license-GNUv3-blue.svg?label=License&style=flat-square)](LICENSE)
+
 **Note that this pipeline requires Python 3.9 or above**
 
 PJPipe (the PHANGS-JWST-Pipeline) is a wrapper around the official 
@@ -19,15 +24,16 @@ a simple, high-level interface via configuration files.
 
 If you make use of PJPipe in your work, please cite the PHANGS-JWST survey 
 papers (Lee et al., 2022; Williams et al., in prep.), and do not hesitate to
-get in touch for help! The `/config` directory has examples, but different
-datasets may need more specific tailoring.
+get in touch for help! The `/config` directory on the 
+[GitHub repository](https://github.com/phangsTeam/pjpipe) has examples, 
+but different datasets may need more specific tailoring.
 
 ## Installation
 
 The easiest way to install PJPipe is via pip: 
 
 ```bash
-pip install -e . -r requirements.txt
+pip install pjpipe
 ```
 
 ## Setting up config files
