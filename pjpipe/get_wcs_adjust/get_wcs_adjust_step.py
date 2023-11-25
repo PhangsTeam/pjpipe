@@ -224,6 +224,7 @@ class GetWCSAdjustStep:
             # If we only have one group, this won't do anything so just skip
             if len(asn_file.models_grouped) == 1 and self.target not in self.alignment_catalogs:
                 log.info(f"Only one group and no absolute alignment happening. Skipping")
+                del input_models, asn_file
                 continue
 
             tweakreg_config = TweakRegStep.get_config_from_reference(asn_file)
@@ -268,6 +269,8 @@ class GetWCSAdjustStep:
 
             tweakreg.run(asn_file)
 
+        del input_models, asn_file
+
         output_files = glob.glob(
             os.path.join(
                 out_dir,
@@ -277,36 +280,37 @@ class GetWCSAdjustStep:
 
         for output_file in output_files:
             # Get matrix and (x, y) shifts from the output file, if they exist
-            aligned_model = datamodels.open(output_file)
-            try:
-                transform = aligned_model.meta.wcs.forward_transform["tp_affine"]
-                matrix = transform.matrix.value
-                xy_shift = RAD_TO_ARCSEC * transform.translation.value
+            with datamodels.open(output_file) as aligned_model:
+                try:
+                    transform = aligned_model.meta.wcs.forward_transform["tp_affine"]
+                    matrix = transform.matrix.value
+                    xy_shift = RAD_TO_ARCSEC * transform.translation.value
 
-                # Pull out a visit name. This will be different if the band is having
-                # dithers grouped or not
-                out_split = os.path.split(output_file)[-1]
+                    # Pull out a visit name. This will be different if the band is having
+                    # dithers grouped or not
+                    out_split = os.path.split(output_file)[-1]
 
-                band_type = aligned_model.meta.instrument.name.strip().lower()
-                if band_type in self.group_dithers:
-                    visit = out_split.split("_")[0]
-                else:
-                    visit = "_".join(out_split.split("_")[:3])
+                    band_type = aligned_model.meta.instrument.name.strip().lower()
+                    if band_type in self.group_dithers:
+                        visit = out_split.split("_")[0]
+                    else:
+                        visit = "_".join(out_split.split("_")[:3])
 
-                if visit in visit_transforms:
-                    visit_transforms[visit]["shift"] = np.vstack(
-                        (visit_transforms[visit]["shift"], xy_shift)
-                    )
-                    visit_transforms[visit]["matrix"] = np.dstack(
-                        (visit_transforms[visit]["matrix"], matrix)
-                    )
-                else:
-                    visit_transforms[visit] = {}
-                    visit_transforms[visit]["shift"] = copy.deepcopy(xy_shift)
-                    visit_transforms[visit]["matrix"] = copy.deepcopy(matrix)
+                    if visit in visit_transforms:
+                        visit_transforms[visit]["shift"] = np.vstack(
+                            (visit_transforms[visit]["shift"], xy_shift)
+                        )
+                        visit_transforms[visit]["matrix"] = np.dstack(
+                            (visit_transforms[visit]["matrix"], matrix)
+                        )
+                    else:
+                        visit_transforms[visit] = {}
+                        visit_transforms[visit]["shift"] = copy.deepcopy(xy_shift)
+                        visit_transforms[visit]["matrix"] = copy.deepcopy(matrix)
 
-            except IndexError:
-                pass
+                except IndexError:
+                    pass
+            del aligned_model
 
         # Remove the temp directory
         shutil.rmtree(out_dir)

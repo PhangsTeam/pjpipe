@@ -148,60 +148,59 @@ class ApplyWCSAdjustStep:
         )
 
         # Set up the WCSCorrector per tweakreg
-        input_im = datamodels.open(file)
+        with datamodels.open(file) as input_im:
+            ref_wcs = input_im.meta.wcs
+            ref_wcsinfo = input_im.meta.wcsinfo.instance
 
-        ref_wcs = input_im.meta.wcs
-        ref_wcsinfo = input_im.meta.wcsinfo.instance
+            im = JWSTWCSCorrector(ref_wcs, ref_wcsinfo)
 
-        im = JWSTWCSCorrector(ref_wcs, ref_wcsinfo)
+            # Pull out the info we need to shift. If we have both
+            # dithers ungrouped and grouped, prefer the ungrouped
+            # ones
+            visit_grouped = file_short.split("_")[0]
+            visit_ungrouped = "_".join(file_short.split("_")[:3])
 
-        # Pull out the info we need to shift. If we have both
-        # dithers ungrouped and grouped, prefer the ungrouped
-        # ones
-        visit_grouped = file_short.split("_")[0]
-        visit_ungrouped = "_".join(file_short.split("_")[:3])
+            matrix = [[1, 0], [0, 1]]
+            shift = [0, 0]
 
-        matrix = [[1, 0], [0, 1]]
-        shift = [0, 0]
+            visit_found = False
+            for visit in [visit_ungrouped, visit_grouped]:
+                if not visit_found:
+                    if visit in self.wcs_adjust["wcs_adjust"]:
+                        wcs_adjust_vals = self.wcs_adjust["wcs_adjust"][visit]
 
-        visit_found = False
-        for visit in [visit_ungrouped, visit_grouped]:
+                        try:
+                            matrix = wcs_adjust_vals["matrix"]
+                        except KeyError:
+                            matrix = [[1, 0], [0, 1]]
+
+                        try:
+                            shift = wcs_adjust_vals["shift"]
+                        except KeyError:
+                            shift = [0, 0]
+
+                        visit_found = True
+
             if not visit_found:
-                if visit in self.wcs_adjust["wcs_adjust"]:
-                    wcs_adjust_vals = self.wcs_adjust["wcs_adjust"][visit]
+                log.info(f"No shifts found for {file_short}. Defaulting to no shift")
 
-                    try:
-                        matrix = wcs_adjust_vals["matrix"]
-                    except KeyError:
-                        matrix = [[1, 0], [0, 1]]
+            im.set_correction(matrix=matrix, shift=shift)
 
-                    try:
-                        shift = wcs_adjust_vals["shift"]
-                    except KeyError:
-                        shift = [0, 0]
+            input_im.meta.wcs = im.wcs
 
-                    visit_found = True
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                try:
+                    update_fits_wcsinfo(
+                        input_im,
+                    )
+                except (ValueError, RuntimeError) as e:
+                    log.warning(
+                        "Failed to update 'meta.wcsinfo' with FITS SIP "
+                        f"approximation. Reported error is:\n'{e.args[0]}'"
+                    )
 
-        if not visit_found:
-            log.info(f"No shifts found for {file_short}. Defaulting to no shift")
-
-        im.set_correction(matrix=matrix, shift=shift)
-
-        input_im.meta.wcs = im.wcs
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            try:
-                update_fits_wcsinfo(
-                    input_im,
-                )
-            except (ValueError, RuntimeError) as e:
-                log.warning(
-                    "Failed to update 'meta.wcsinfo' with FITS SIP "
-                    f"approximation. Reported error is:\n'{e.args[0]}'"
-                )
-
-        input_im.save(output_file)
+            input_im.save(output_file)
 
         del input_im
         del im
