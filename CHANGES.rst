@@ -4,6 +4,7 @@
 - Remove an error in ``multi_tile_destripe_step`` stripes in stacked image don't align with any particular
   axis of the array
 - Fix crash where quadrants are turned off in median filtering in ``single_tile_destripe_step``
+- Fix potential memory leaks in ``get_wcs_adjust_step`` and ``apply_wcs_adjust_step``
 - Diagnostic plots are compressed by default in ``release_step``
 
 0.10.1 (2023-11-20)
