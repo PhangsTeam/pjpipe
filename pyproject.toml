@@ -41,6 +41,7 @@ dependencies = [
     "numpy",
     "photutils",
     "pypdf",
+    "pytest",
     "reproject",
     "requests",
     "scikit-image",
@@ -54,6 +55,8 @@ dependencies = [
     "tqdm",
     "tweakwcs",
     "webbpsf",
+    "sphinx-automodapi",
+    "sphinx-rtd-theme",
 ]
 
 [project.urls]
