@@ -30,7 +30,7 @@ class MoveRawObsStep:
         """Move raw observations from the MAST folder into a specific target/band folder
 
         Because we may want to pull files for science images but not for backgrounds,
-        they can be distinguished at the config level, as:
+        they can be distinguished at the config level, as: ::
 
             [parameters.move_raw_obs.extra_obs_to_include]
             ic5332.sci.ngc7496 = 'jw02107041001_0?2'
