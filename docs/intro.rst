@@ -6,7 +6,7 @@ PJPipe
     :target: https://pypi.org/pypi/pjpipe/
 .. image:: https://img.shields.io/pypi/pyversions/pjpipe.svg?label=Python&color=yellow&style=flat-square
     :target: https://pypi.org/pypi/pjpipe/
-.. image:: https://img.shields.io/github/actions/workflow/status/phangsTeam/pjpipe/build_test.yaml?branch=main
+.. image:: https://img.shields.io/github/actions/workflow/status/phangsTeam/pjpipe/build_test.yaml?branch=main&style=flat-square
     :target: https://github.com/phangsTeam/pjpipe/actions
 .. image:: https://readthedocs.org/projects/pjpipe/badge/?version=latest&style=flat-square
    :target: https://pjpipe.readthedocs.io/en/latest/
