@@ -15,7 +15,7 @@ PJPipe
 **Note that this pipeline requires Python 3.9 or above**
 
 PJPipe (the PHANGS-JWST-Pipeline) is a wrapper around the official
-`STScI JWST Pipeline <https://github.com/spacetelescope/jwst>`_, with
+`STScI JWST Pipeline <https://jwst-pipeline.readthedocs.io/en/latest>`_, with
 edits specific to the reduction of large mosaics and nearby galaxies
 with extended, diffuse emission.
 
