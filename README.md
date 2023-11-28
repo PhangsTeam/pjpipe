@@ -5,6 +5,8 @@
 [![Actions](https://img.shields.io/github/actions/workflow/status/phangsTeam/pjpipe/build_test.yaml?branch=main)](https://github.com/phangsTeam/pjpipe/actions)
 [![License](https://img.shields.io/badge/license-GNUv3-blue.svg?label=License&style=flat-square)](LICENSE)
 
+![](docs/images/pjpipe_logo.jpg)
+
 **Note that this pipeline requires Python 3.9 or above**
 
 PJPipe (the PHANGS-JWST-Pipeline) is a wrapper around the official 

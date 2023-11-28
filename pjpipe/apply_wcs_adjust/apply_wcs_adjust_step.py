@@ -29,9 +29,6 @@ class ApplyWCSAdjustStep:
     ):
         """Apply WCS adjustments to images
 
-        TODO: This occasionally fails on compute nodes,
-            so figure that out
-
         Args:
             wcs_adjust: Dictionary for WCS adjustments
             in_dir: Input directory

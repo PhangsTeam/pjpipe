@@ -300,14 +300,9 @@ class AnchoringStep:
         for an offset between them. Can be used with external images to anchor to known fluxes,
         or JWST images for internal consistency.
 
-        N.B. for external files the naming scheme expects something like:
-            [target]_[resolution].fits
-
-        Where resolution can be something like 'irac1', or if pre-convolved, then maybe 'irac1_atgauss15'.
-        Kernels should be named something like:
-            [resolution]_to_[resolution].fits
-
-        This is non-negotiable!
+        N.B. for external files the naming scheme expects something like [target]_[resolution].fits,
+        where resolution can be something like 'irac1', or if pre-convolved, then maybe 'irac1_atgauss15'.
+        Kernels should be named something like [resolution]_to_[resolution].fits. This is non-negotiable!
 
         Args:
             target: Target to consider
@@ -363,7 +358,8 @@ class AnchoringStep:
         """Run anchoring step"""
 
         step_complete_file = os.path.join(
-            self.in_dir, "anchoring_to_external_step_complete.txt",
+            self.in_dir,
+            "anchoring_to_external_step_complete.txt",
         )
 
         if self.overwrite:
@@ -390,13 +386,18 @@ class AnchoringStep:
         for band in self.bands:
             cur_files = glob.glob(
                 os.path.join(
-                    self.in_dir, band, self.in_subdir, f"*_{self.in_step_ext}.fits",
+                    self.in_dir,
+                    band,
+                    self.in_subdir,
+                    f"*_{self.in_step_ext}.fits",
                 )
             )
             files.extend(cur_files)
         files.sort()
 
-        success = self.run_step(files,)
+        success = self.run_step(
+            files,
+        )
 
         if not success:
             log.warning("Failures detected in applying anchoring to external images")
@@ -408,7 +409,8 @@ class AnchoringStep:
         return True
 
     def run_step(
-        self, files,
+        self,
+        files,
     ):
         """Wrap paralellism around applying anchoring to external images
 
@@ -476,7 +478,14 @@ class AnchoringStep:
                 "slope",
                 "intercept",
             ],
-            dtype=[str, str, str, str, float, float,],
+            dtype=[
+                str,
+                str,
+                str,
+                str,
+                float,
+                float,
+            ],
         )
         offsets = {}
 
@@ -496,7 +505,11 @@ class AnchoringStep:
             desc="Applying anchoring to external images",
             total=len(files_for_external_w_ref),
         ):
-            offset = self.parallel_anchoring(f, external=True, internal_reference=None,)
+            offset = self.parallel_anchoring(
+                f,
+                external=True,
+                internal_reference=None,
+            )
             offset_tab_rows.append(offset)
 
         # Add these to the table
@@ -545,7 +558,9 @@ class AnchoringStep:
                 continue
 
             if len(files_for_internal[instrument]) == 0:
-                log.warning(f"No internal files found to anchor for {instrument}. Skipping")
+                log.warning(
+                    f"No internal files found to anchor for {instrument}. Skipping"
+                )
                 continue
 
             procs = np.nanmin([self.procs, len(files_for_internal[instrument])])
@@ -633,7 +648,10 @@ class AnchoringStep:
         return True
 
     def parallel_anchoring(
-        self, file, external=True, internal_reference=None,
+        self,
+        file,
+        external=True,
+        internal_reference=None,
     ):
         """Parallelize applying anchoring to external images
 
@@ -659,7 +677,8 @@ class AnchoringStep:
 
         if external:
             ref_file = os.path.join(
-                self.ref_dir, f"{self.target}_{external_band}.fits",
+                self.ref_dir,
+                f"{self.target}_{external_band}.fits",
             )
             ref_file_short = os.path.split(ref_file)[-1]
 
