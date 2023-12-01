@@ -1,7 +1,8 @@
-1.0.1 (2023-12-01)
+1.0.2 (2023-12-01)
 ==================
 
 - Fix packaging to minimise file size
+- Error in ``pyproject.toml``
 
 1.0.0 (2023-12-01)
 ==================
