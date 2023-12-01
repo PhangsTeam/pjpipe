@@ -1,5 +1,5 @@
-0.10.2 (Unreleased)
-===================
+1.0.0 (2023-12-01)
+==================
 
 - Added documentation
 - Ensure ``multi_tile_destripe_step`` is properly imported in the pipeline
