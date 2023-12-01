@@ -11,9 +11,9 @@
 **Note that this pipeline requires Python 3.9 or above**
 
 PJPipe (the PHANGS-JWST-Pipeline) is a wrapper around the official 
-[STScI JWST Pipeline](https://github.com/spacetelescope/jwst), with 
-edits specific to the reduction of large mosaics and nearby galaxies
-with extended, diffuse emission.
+[STScI JWST Pipeline](https://jwst-pipeline.readthedocs.io/en/latest) 
+for imaging data (not spectroscopy), with edits specific to the reduction 
+of large mosaics and nearby galaxies with extended, diffuse emission.
 
 Beyond the standard pipeline, PJPipe offers options for 
 
@@ -29,7 +29,8 @@ If you make use of PJPipe in your work, please cite the PHANGS-JWST survey
 papers (Lee et al., 2022; Williams et al., in prep.), and do not hesitate to
 get in touch for help! The `/config` directory on the 
 [GitHub repository](https://github.com/phangsTeam/pjpipe) has examples, 
-but different datasets may need more specific tailoring.
+but different datasets may need more specific tailoring. You can open an 
+[issue](https://github.com/PhangsTeam/pjpipe/issues) if you run into problems.
 
 ## Installation
 
