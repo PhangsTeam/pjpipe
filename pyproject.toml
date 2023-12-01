@@ -66,6 +66,7 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["pjpipe"]
+exclude = ["LEGACY/*"]
 
 [build-system]
 requires = ["setuptools>=43.0.0", "wheel", "setuptools_scm"]

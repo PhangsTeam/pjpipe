@@ -12,5 +12,8 @@ recursive-include scripts *
 prune build
 prune docs/_build
 prune docs/api
+prune */__pycache__
+prune LEGACY*
 
 global-exclude *.pyc *.o
+global-exclude LEGACY*
