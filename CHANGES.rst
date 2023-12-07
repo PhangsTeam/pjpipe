@@ -1,3 +1,8 @@
+1.0.3 (Unreleased)
+==================
+
+- Made plots more consistent and "publication ready" across the board
+
 1.0.2 (2023-12-01)
 ==================
 

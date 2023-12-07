@@ -9,9 +9,9 @@ import warnings
 from collections import OrderedDict
 from functools import partial
 
+import matplotlib
 import numpy as np
 from astropy.io import fits
-from astropy.stats import mad_std
 from astropy.table import Table
 from astropy.wcs import WCS
 from matplotlib import pyplot as plt
@@ -20,6 +20,11 @@ from scipy.optimize import curve_fit
 from tqdm import tqdm
 
 from ..utils import do_jwst_convolution, get_band_type
+
+matplotlib.use("agg")
+matplotlib.rcParams['mathtext.fontset'] = 'stix'
+matplotlib.rcParams['font.family'] = 'STIXGeneral'
+matplotlib.rcParams['font.size'] = 14
 
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
@@ -166,7 +171,9 @@ def solve_for_offset(
     binsize=0.1,
     xlim_plot=None,
     save_plot=None,
-    label_str="Comparison",
+    comp_band=None,
+    ref_band=None,
+    units="MJy/sr",
 ):
     """Solve for the offset between two images
 
@@ -189,7 +196,9 @@ def solve_for_offset(
         binsize: Size of the bins. Defaults to 0.1
         xlim_plot: Plot limits to avoid outliers. Defaults to None
         save_plot: If a string, will safe to that file. Defaults to None
-        label_str: String to put in text label. Defaults to 'comparison'
+        comp_band: If a string, will label axes appropriately. Defaults to None
+        ref_band: If a string, will label axes appropriately. Defaults to None
+        units: Units of the data. Defaults to MJy/sr
     """
 
     # Identify overlap used to solve for the offset
@@ -216,13 +225,13 @@ def solve_for_offset(
 
     # Optionally make diagnostic plots
     if save_plot:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(5, 4))
 
         ax.set_xlim(xlim_plot)
         ax.set_ylim(xlim_plot)
         ax.grid(True, linestyle="dotted", linewidth=0.5, color="black", zorder=2)
 
-        ax.scatter(ref_vec, comp_vec, marker=".", color="gray", s=1, zorder=1)
+        ax.scatter(ref_vec, comp_vec, marker=".", color="gray", s=1, zorder=1, rasterized=True)
 
         xbins = comp_bins["xmid"]
         ybins = comp_bins["50"]
@@ -230,7 +239,7 @@ def solve_for_offset(
         hi_ybins = comp_bins["84"]
 
         ax.scatter(
-            comp_bins["xmid"], comp_bins["50"], color="red", marker="o", s=50, zorder=5
+            comp_bins["xmid"], comp_bins["50"], color="red", marker="o", s=50, zorder=5,
         )
         ax.errorbar(
             xbins,
@@ -254,24 +263,37 @@ def solve_for_offset(
             linestyle="dashed",
         )
 
-        bbox_props = dict(boxstyle="round", fc="lightgray", ec="black", alpha=0.9)
-        yval = 0.95
-        va = "top"
+        # Get labels on as requested
+        if ref_band is not None:
+            ref_band_str = ref_band.replace("_", r"\_")
+            plt.xlabel(fr"$F_\mathregular{{{ref_band_str}}}$ ({units})")
+        else:
+            ref_band = "$x$"
+        if comp_band is not None:
+            comp_band_str = comp_band.replace("_", r"\_")
+            plt.ylabel(fr"$F_\mathregular{{{comp_band_str}}}$ ({units})")
+        else:
+            comp_band = "$y$"
 
-        this_label = f"{label_str}\n m={str(slope)} \n b={str(intercept)}"
+        if intercept < 0:
+            sign = "-"
+            intercept_str = copy.deepcopy(intercept * -1)
+        else:
+            sign = "+"
+            intercept_str = copy.deepcopy(intercept)
+
+        this_label = f"{comp_band} = {slope:.2f} $\\times$ {ref_band} {sign} {intercept_str:.2f}"
         ax.text(
-            0.04,
-            yval,
+            0.05,
+            0.95,
             this_label,
             ha="left",
-            va=va,
+            va="top",
+            bbox=dict(facecolor="white", edgecolor="black", alpha=0.7),
             transform=ax.transAxes,
-            size="small",
-            bbox=bbox_props,
-            zorder=5,
         )
-        plt.savefig(f"{save_plot}.png", bbox_inches="tight")
-        plt.savefig(f"{save_plot}.pdf", bbox_inches="tight")
+        plt.savefig(f"{save_plot}.png", bbox_inches="tight", dpi=300)
+        plt.savefig(f"{save_plot}.pdf", bbox_inches="tight", dpi=300)
 
     return slope, intercept
 
@@ -786,20 +808,29 @@ class AnchoringStep:
             xmin = 0.25
             xmax = 2.0
 
+        # Pull out a cleaned up name for the plots
+        if external:
+            ref_band_tidy = "_".join(ref_file_clean.split("_")[1:])
+        else:
+            ref_band_tidy = ref_file_clean.split("_")[3]
+            ref_band_tidy = ref_band_tidy.upper()
+
         saveplot_filename = os.path.join(
             self.in_dir,
             current_band.upper(),
             self.out_subdir,
-            f"{self.target}_{current_band}_vs_{ref_file_clean}_compar",
+            f"{self.target}_{current_band.lower()}_vs_{ref_band_tidy.lower()}_anchoring_to_external",
         )
         slope, intercept = solve_for_offset(
-            repr_image,
-            image_ref,
+            comp_data=repr_image,
+            ref_data=image_ref,
             xmin=xmin,
             xmax=xmax,
             binsize=0.1,
             save_plot=saveplot_filename,
-            label_str=f"{self.target}\n{current_band} vs. {ref_file_clean}",
+            comp_band=current_band.upper(),
+            ref_band=ref_band_tidy,
+            units="MJy/sr",
         )
 
         return self.target, ref_file_clean, file_short, current_band, slope, intercept

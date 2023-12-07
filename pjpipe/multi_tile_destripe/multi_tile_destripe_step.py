@@ -27,6 +27,10 @@ from tqdm import tqdm
 from ..utils import get_dq_bit_mask, make_source_mask, reproject_image, level_data
 
 matplotlib.use("agg")
+matplotlib.rcParams['mathtext.fontset'] = 'stix'
+matplotlib.rcParams['font.family'] = 'STIXGeneral'
+matplotlib.rcParams['font.size'] = 14
+
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
 
@@ -89,7 +93,7 @@ def make_diagnostic_plot(
     plt.text(
         0.05,
         0.95,
-        "Uncorr. data",
+        "Original",
         ha="left",
         va="top",
         fontweight="bold",
@@ -145,7 +149,7 @@ def make_diagnostic_plot(
     plt.text(
         0.05,
         0.95,
-        "Corr. data",
+        "Destriped",
         ha="left",
         va="top",
         fontweight="bold",
@@ -1130,7 +1134,7 @@ class MultiTileDestripeStep:
 
             # Make diagnostic plot. Use different names if
             # we're iterating
-            suffix = "_dither_stripe_sub"
+            suffix = "_multi_tile_destripe"
             if do_large_scale:
                 suffix += "_large_scale"
             if self.do_convergence:
