@@ -29,6 +29,10 @@ from . import vwpca_normgappy as gappy
 from ..utils import make_source_mask, get_dq_bit_mask, level_data
 
 matplotlib.use("agg")
+matplotlib.rcParams['mathtext.fontset'] = 'stix'
+matplotlib.rcParams['font.family'] = 'STIXGeneral'
+matplotlib.rcParams['font.size'] = 14
+
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
 
@@ -1513,39 +1517,65 @@ class SingleTileDestripeStep:
 
         plot_name = os.path.join(
             self.plot_dir,
-            out_name.split(os.path.sep)[-1].replace(".fits", "_filter+mask"),
+            out_name.split(os.path.sep)[-1].replace(".fits", "_single_tile_filter+mask"),
         )
 
         vmin, vmax = np.nanpercentile(data, [2, 98])
         plt.figure(figsize=(8, 4))
-        plt.subplot(1, 2, 1)
-        plt.imshow(
+        ax = plt.subplot(1, 2, 1)
+        im = plt.imshow(
             data,
             origin="lower",
             vmin=vmin,
             vmax=vmax,
             interpolation="nearest",
         )
-
-        plt.axis("off")
+        ax.set_axis_off()
 
         if filter_diffuse:
-            title = "Filtered Data"
+            s = "Filtered Data"
         else:
-            title = "Data"
+            s = "Data"
 
-        plt.title(title)
+        plt.text(0.05, 0.95,
+                 s,
+                 ha='left', va='top',
+                 transform=ax.transAxes,
+                 fontweight='bold',
+                 bbox=dict(facecolor='white', edgecolor='black', alpha=0.7),
+                 )
 
-        plt.subplot(1, 2, 2)
-        plt.imshow(
+        if self.are_rate_files:
+            units = "DN/s"
+        else:
+            units = "MJy/sr"
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("left", size="5%", pad=0)
+
+        plt.colorbar(im, cax=cax, label=units, location="left")
+
+        ax = plt.subplot(1, 2, 2)
+        im = plt.imshow(
             mask,
             origin="lower",
             interpolation="nearest",
         )
+        ax.set_axis_off()
 
-        plt.axis("off")
+        plt.text(0.05, 0.95,
+                 "Mask",
+                 ha="left", va="top",
+                 transform=ax.transAxes,
+                 fontweight="bold",
+                 bbox=dict(facecolor="white", edgecolor="black", alpha=0.7),
+                 )
 
-        plt.title("Mask")
+        # Add in an invisible axis to make sure images are the same size
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0)
+        cax.set_axis_off()
+
+        plt.subplots_adjust(wspace=0.01)
 
         plt.savefig(f"{plot_name}.png", bbox_inches="tight")
         plt.savefig(f"{plot_name}.pdf", bbox_inches="tight")
@@ -1575,7 +1605,7 @@ class SingleTileDestripeStep:
 
         plot_name = os.path.join(
             self.plot_dir,
-            out_name.split(os.path.sep)[-1].replace(".fits", "_noise_model"),
+            out_name.split(os.path.sep)[-1].replace(".fits", "_single_tile_destripe"),
         )
 
         if self.are_rate_files:
@@ -1598,7 +1628,13 @@ class SingleTileDestripeStep:
         )
         plt.axis("off")
 
-        plt.title("Original Data")
+        plt.text(0.05, 0.95,
+                 "Original",
+                 ha="left", va="top",
+                 transform=ax.transAxes,
+                 fontweight="bold",
+                 bbox=dict(facecolor="white", edgecolor="black", alpha=0.7),
+                 )
 
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("bottom", size="5%", pad=0)
@@ -1615,7 +1651,13 @@ class SingleTileDestripeStep:
         )
         plt.axis("off")
 
-        plt.title("Noise Model")
+        plt.text(0.05, 0.95,
+                 "Noise Model",
+                 ha="left", va="top",
+                 transform=ax.transAxes,
+                 fontweight="bold",
+                 bbox=dict(facecolor="white", edgecolor="black", alpha=0.7),
+                 )
 
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("bottom", size="5%", pad=0)
@@ -1632,14 +1674,20 @@ class SingleTileDestripeStep:
         )
         plt.axis("off")
 
-        plt.title("Destriped Data")
+        plt.text(0.05, 0.95,
+                 "Destriped",
+                 ha="left", va="top",
+                 transform=ax.transAxes,
+                 fontweight="bold",
+                 bbox=dict(facecolor="white", edgecolor="black", alpha=0.7),
+                 )
 
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("bottom", size="5%", pad=0)
 
         plt.colorbar(im, cax=cax, label=units, orientation="horizontal")
 
-        plt.subplots_adjust(hspace=0, wspace=0)
+        plt.subplots_adjust(wspace=0.01)
 
         plt.savefig(f"{plot_name}.png", bbox_inches="tight")
         plt.savefig(f"{plot_name}.pdf", bbox_inches="tight")

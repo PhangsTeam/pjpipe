@@ -24,6 +24,10 @@ from tqdm import tqdm
 from ..utils import get_dq_bit_mask, reproject_image, make_source_mask
 
 matplotlib.use("agg")
+matplotlib.rcParams['mathtext.fontset'] = 'stix'
+matplotlib.rcParams['font.family'] = 'STIXGeneral'
+matplotlib.rcParams['font.size'] = 14
+
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
 
@@ -817,7 +821,7 @@ class LevelMatchStep:
                 )
 
                 plt.xlabel("Diff (MJy/sr)")
-                plt.ylabel("N")
+                plt.ylabel("$N$")
 
                 plt.tight_layout()
 
@@ -1046,7 +1050,7 @@ class LevelMatchStep:
 
         plot_name = os.path.join(
             self.plot_dir,
-            f"{plot_from_name}_to_{plot_to_name}",
+            f"{plot_from_name}_to_{plot_to_name}_level_match",
         )
 
         return plot_name

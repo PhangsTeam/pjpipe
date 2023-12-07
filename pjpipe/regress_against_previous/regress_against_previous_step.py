@@ -5,12 +5,18 @@ import os
 import warnings
 
 import cmocean
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pypdf import PdfWriter
 from reproject import reproject_interp
+
+matplotlib.use("agg")
+matplotlib.rcParams['mathtext.fontset'] = 'stix'
+matplotlib.rcParams['font.family'] = 'STIXGeneral'
+matplotlib.rcParams['font.size'] = 14
 
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
@@ -178,7 +184,10 @@ class RegressAgainstPreviousStep:
 
         file_dict = {}
 
-        for key in ["nircam", "miri"]:
+        for key in [
+            "nircam",
+            "miri",
+        ]:
             idx = [
                 i
                 for i in range(len(all_files))
@@ -248,10 +257,28 @@ class RegressAgainstPreviousStep:
 
         files = copy.deepcopy(file_dict[key]["files"])
         file_exts = copy.deepcopy(file_dict[key]["file_exts"])
+
         if len(files) > 0:
+
+            # Figure out if we've got backgrounds, and if so how many
+            backgrounds = np.array(["_bgr_" in file for file in files], dtype=bool)
+            n_backgrounds, n_sci = np.sum(backgrounds), np.sum(~backgrounds)
+            has_backgrounds = n_backgrounds > 0
+
             plot_name = os.path.join(self.out_dir, f"{self.target}_{key}_comparison")
 
-            plt.subplots(nrows=1, ncols=len(files), figsize=(4 * len(files), 4))
+            if has_backgrounds:
+                nrows = 2
+                ncols = np.max([n_backgrounds, n_sci])
+            else:
+                nrows = 1
+                ncols = len(files)
+
+            plt.subplots(nrows=nrows, ncols=ncols, figsize=(4 * ncols, 4 * nrows))
+
+            # Set it up so that we put science on the first row, backgrounds on the second row
+            bgr_offset = copy.deepcopy(ncols) + 1
+            sci_offset = 1
 
             for i, file in enumerate(files):
                 file_short = os.path.split(file)[-1]
@@ -273,7 +300,12 @@ class RegressAgainstPreviousStep:
                     file_exts=self.file_exts,
                 )
 
-                ax = plt.subplot(1, len(files), i + 1)
+                if not is_bgr:
+                    ax = plt.subplot(nrows, ncols, sci_offset)
+                    sci_offset += 1
+                else:
+                    ax = plt.subplot(nrows, ncols, bgr_offset)
+                    bgr_offset += 1
 
                 if diff is None:
                     plt.text(
