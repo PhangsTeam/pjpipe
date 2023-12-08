@@ -381,7 +381,7 @@ class AnchoringStep:
 
         step_complete_file = os.path.join(
             self.in_dir,
-            "anchoring_to_external_step_complete.txt",
+            "anchoring_step_complete.txt",
         )
 
         if self.overwrite:
@@ -627,7 +627,6 @@ class AnchoringStep:
             ref_offset = ref_offsets[band_type]
             offset = -row["intercept"][0] + row["slope"][0] * ref_offset
 
-            ref_offsets[band_type] = offset
             offsets[band] = {
                 "filename": filename,
                 "offset": offset,
@@ -819,7 +818,7 @@ class AnchoringStep:
             self.in_dir,
             current_band.upper(),
             self.out_subdir,
-            f"{self.target}_{current_band.lower()}_vs_{ref_band_tidy.lower()}_anchoring_to_external",
+            f"{self.target}_{current_band.lower()}_vs_{ref_band_tidy.lower()}_anchoring",
         )
         slope, intercept = solve_for_offset(
             comp_data=repr_image,

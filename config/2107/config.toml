@@ -22,7 +22,7 @@ targets = [
 ]
 
 # Version for the reprocessing
-version = 'v0p10p1'
+version = 'v1p0p1'
 
 # Bands to consider
 bands = [
@@ -354,4 +354,4 @@ move_psf_matched = true
 move_diagnostic_plots = true
 
 [parameters.regress_against_previous]
-prev_version = 'v0p10p0'
+prev_version = 'v1p0'

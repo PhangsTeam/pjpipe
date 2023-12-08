@@ -2,6 +2,8 @@
 ==================
 
 - Made plots more consistent and "publication ready" across the board
+- Fix bug in anchoring step
+- Rename anchor_to_external_step.py to anchor_step.py for consistency
 
 1.0.2 (2023-12-01)
 ==================
