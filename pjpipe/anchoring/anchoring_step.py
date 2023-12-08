@@ -295,6 +295,8 @@ def solve_for_offset(
         plt.savefig(f"{save_plot}.png", bbox_inches="tight", dpi=300)
         plt.savefig(f"{save_plot}.pdf", bbox_inches="tight", dpi=300)
 
+        plt.close()
+
     return slope, intercept
 
 
