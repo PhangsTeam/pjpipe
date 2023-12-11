@@ -1,11 +1,16 @@
 import os
+import re
 import sys
+from importlib.metadata import version
 
 # Set the CRDS server URL before any imports
 os.environ["CRDS_SERVER_URL"] = "https://jwst-crds.stsci.edu"
 
 if sys.version_info < (3, 9):
     raise ImportError("JWST requires Python 3.9 and above.")
+
+# Get the version
+__version__ = version(__name__)
 
 from .apply_wcs_adjust import ApplyWCSAdjustStep
 from .astrometric_align import AstrometricAlignStep

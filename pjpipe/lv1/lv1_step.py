@@ -9,8 +9,9 @@ from functools import partial
 
 import numpy as np
 from jwst.pipeline import calwebb_detector1
+from stdatamodels.jwst import datamodels
 
-from ..utils import attribute_setter
+from ..utils import attribute_setter, save_file
 
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
@@ -23,6 +24,7 @@ class Lv1Step:
         band,
         in_dir,
         out_dir,
+        dr_version,
         step_ext,
         procs,
         jwst_parameters=None,
@@ -35,6 +37,7 @@ class Lv1Step:
             band: Band to consider
             in_dir: Input directory
             out_dir: Output directory
+            dr_version: Data processing version
             step_ext: .fits extension for the files going
                 into the step
             procs: Number of processes to run in parallel.
@@ -52,6 +55,7 @@ class Lv1Step:
         self.band = band
         self.in_dir = in_dir
         self.out_dir = out_dir
+        self.dr_version = dr_version
         self.step_ext = step_ext
         self.procs = procs
         self.jwst_parameters = jwst_parameters
@@ -215,6 +219,17 @@ class Lv1Step:
             detector1.run(uncal_file)
 
             del detector1
+
+            # Since running these steps seems to destroy the history parameter,
+            # add this back in
+
+            out_name = os.path.join(self.out_dir, uncal_file.replace(f"{self.step_ext}.fits",
+                                                                     "rate.fits"),
+                                    )
+            with datamodels.open(out_name) as im:
+                save_file(im, out_name=out_name, dr_version=self.dr_version)
+
+            del im
             gc.collect()
 
         return True
