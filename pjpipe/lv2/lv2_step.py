@@ -13,8 +13,9 @@ import jwst
 import numpy as np
 from astropy.table import Table
 from jwst.pipeline import calwebb_image2
+from stdatamodels.jwst import datamodels
 
-from ..utils import get_band_type, get_obs_table, attribute_setter
+from ..utils import get_band_type, get_obs_table, attribute_setter, save_file
 
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
@@ -27,6 +28,7 @@ class Lv2Step:
         band,
         in_dir,
         out_dir,
+        dr_version,
         step_ext,
         is_bgr,
         procs,
@@ -78,6 +80,7 @@ class Lv2Step:
         self.band = band
         self.in_dir = in_dir
         self.out_dir = out_dir
+        self.dr_version = dr_version
         self.step_ext = step_ext
         self.is_bgr = is_bgr
         self.procs = procs
@@ -135,6 +138,9 @@ class Lv2Step:
         if not np.all(successes):
             log.warning("Failures detected in level 2 pipeline")
             return False
+
+        # Make sure to propagate PJPipe info into the output files
+        self.propagate_metadata(files)
 
         with open(step_complete_file, "w+") as f:
             f.close()
@@ -354,5 +360,35 @@ class Lv2Step:
 
         del im2
         gc.collect()
+
+        return True
+
+    def propagate_metadata(self,
+                           files,
+                           ):
+        """Propagate metadata through to the output files
+
+        Args:
+            files: List of files to loop over
+        """
+
+        for file in files:
+
+            file_split = file.split(os.path.sep)[-1].replace(f"{self.step_ext}.fits",
+                                                             "cal.fits",
+                                                             )
+            out_name = os.path.join(self.out_dir,
+                                    file_split,
+                                    )
+
+            # If the file doesn't exist (e.g. it's a background file that won't come through),
+            # then skip
+            if not os.path.exists(out_name):
+                continue
+
+            with datamodels.open(out_name) as im:
+                save_file(im, out_name=out_name, dr_version=self.dr_version)
+
+            del im
 
         return True

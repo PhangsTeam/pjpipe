@@ -17,6 +17,8 @@ from astropy.wcs import WCS
 from matplotlib import pyplot as plt
 from reproject import reproject_interp
 from scipy.optimize import curve_fit
+from stdatamodels import util
+from stdatamodels.jwst import datamodels
 from tqdm import tqdm
 
 from ..utils import do_jwst_convolution, get_band_type
@@ -652,16 +654,18 @@ class AnchoringStep:
             )
 
             # Save anchored files
-            with fits.open(input_file) as hdu:
-                hdu["SCI"].data[
-                    np.isfinite(hdu["SCI"].data) & (hdu["SCI"].data != 0)
+            with datamodels.open(input_file) as im:
+                im.data[
+                    np.isfinite(im.data) & (im.data != 0)
                 ] += offset
-                hdu[0].header["BKGRDVAL"] = offset
+                im.meta.anchor_bkgrdval = offset
+                entry = util.create_history_entry(f"ANCHOR BKGRDVAL: {offset}")
+                im.history.append(entry)
 
                 # TODO: We should also include an error term here. It's just a single number, but for internal
                 #   will be a quadrature sum
 
-                hdu.writeto(output_file, overwrite=True)
+                im.save(output_file)
 
         log.info("Writing out anchor table")
 

@@ -1,14 +1,14 @@
 import copy
+import fnmatch
 import glob
 import logging
 import os
 import shutil
-import fnmatch
 
 from stdatamodels.jwst import datamodels
 from tqdm import tqdm
 
-from ..utils import get_band_ext, get_band_type
+from ..utils import get_band_ext, get_band_type, save_file
 
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
@@ -22,6 +22,7 @@ class MoveRawObsStep:
         step_ext,
         in_dir,
         out_dir,
+        dr_version,
         is_bgr,
         obs_to_skip=None,
         extra_obs_to_include=None,
@@ -45,6 +46,7 @@ class MoveRawObsStep:
             in_dir: Input directory to search for files (should be some kind of mastDownload-esque
                 folder)
             out_dir: Where to move files to
+            dr_version: Data reprocessing version
             is_bgr: Whether we're processing background observations or not
             obs_to_skip: List of failed or otherwise observations that shouldn't be moved.
                 Defaults to None, which skips nothing
@@ -65,6 +67,7 @@ class MoveRawObsStep:
         self.step_ext = step_ext
         self.in_dir = in_dir
         self.out_dir = out_dir
+        self.dr_version = dr_version
         self.is_bgr = is_bgr
         self.obs_to_skip = obs_to_skip
         self.extra_obs_to_include = extra_obs_to_include
@@ -240,11 +243,12 @@ class MoveRawObsStep:
                             jwst_filter = "F444W"
 
                         if hdu_filter == jwst_filter and hdu_pupil == pupil:
-                            im.save(hdu_out_name)
+
+                            save_file(im=im, out_name=hdu_out_name, dr_version=self.dr_version)
 
                     elif self.band_type == "miri":
                         if hdu_filter == self.band:
-                            im.save(hdu_out_name)
+                            save_file(im=im, out_name=hdu_out_name, dr_version=self.dr_version)
 
                 del im
 

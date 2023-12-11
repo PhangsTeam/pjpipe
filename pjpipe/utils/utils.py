@@ -19,6 +19,9 @@ from reproject.mosaicking.subset_array import ReprojectedArraySubset
 from scipy.interpolate import RegularGridInterpolator
 from stdatamodels.jwst import datamodels
 from stdatamodels.jwst.datamodels.dqflags import pixel
+from stdatamodels import util
+
+from .. import __version__
 
 try:
     import tomllib
@@ -927,3 +930,28 @@ def level_data(
         data[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size] += delta
 
     return data
+
+
+def save_file(im,
+              out_name,
+              dr_version,
+              ):
+    """Save out an image, adding in useful metadata
+
+    Args:
+        im: Input JWST datamodel
+        out_name: File to save output to
+        dr_version: Data processing version
+    """
+
+    # Save versions both in the metadata, and in fits history
+    im.meta.pjpipe_version = __version__
+    im.meta.pjpipe_dr_version = dr_version
+    entry = util.create_history_entry(f"PJPIPE VER: {__version__}")
+    im.history.append(entry)
+    entry = util.create_history_entry(f"DATA PROCESSING VER: {dr_version}")
+    im.history.append(entry)
+
+    im.save(out_name)
+
+    return True

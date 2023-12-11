@@ -5,6 +5,8 @@
 - Fix bug in anchoring step
 - Rename anchor_to_external_step.py to anchor_step.py for consistency
 - Fix "too many plots open" warning in anchoring_step.py
+- Include useful pjpipe version info in files
+- Save anchoring background in metadata properly in anchoring_step.py
 
 1.0.2 (2023-12-01)
 ==================

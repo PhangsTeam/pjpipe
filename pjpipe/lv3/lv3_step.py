@@ -12,6 +12,7 @@ from jwst.datamodels import ModelContainer
 from jwst.pipeline import calwebb_image3
 from jwst.skymatch import SkyMatchStep
 from jwst.tweakreg import TweakRegStep
+from stdatamodels.jwst import datamodels
 
 from ..utils import (
     get_band_type,
@@ -21,6 +22,7 @@ from ..utils import (
     attribute_setter,
     recursive_setattr,
     fwhms_pix,
+    save_file,
 )
 
 log = logging.getLogger("stpipe")
@@ -29,25 +31,26 @@ log.addHandler(logging.NullHandler())
 
 class Lv3Step:
     def __init__(
-        self,
-        target,
-        band,
-        in_dir,
-        out_dir,
-        is_bgr,
-        step_ext,
-        procs,
-        tweakreg_degroup_nircam_modules=False,
-        tweakreg_degroup_nircam_short_chips=False,
-        tweakreg_group_dithers=None,
-        tweakreg_degroup_dithers=None,
-        skymatch_group_dithers=None,
-        skymatch_degroup_dithers=None,
-        bgr_check_type="parallel_off",
-        bgr_background_name="off",
-        process_bgr_like_science=False,
-        jwst_parameters=None,
-        overwrite=False,
+            self,
+            target,
+            band,
+            in_dir,
+            out_dir,
+            dr_version,
+            is_bgr,
+            step_ext,
+            procs,
+            tweakreg_degroup_nircam_modules=False,
+            tweakreg_degroup_nircam_short_chips=False,
+            tweakreg_group_dithers=None,
+            tweakreg_degroup_dithers=None,
+            skymatch_group_dithers=None,
+            skymatch_degroup_dithers=None,
+            bgr_check_type="parallel_off",
+            bgr_background_name="off",
+            process_bgr_like_science=False,
+            jwst_parameters=None,
+            overwrite=False,
     ):
         """Wrapper around the level 3 JWST pipeline
 
@@ -56,6 +59,7 @@ class Lv3Step:
             band: Band to consider
             in_dir: Input directory
             out_dir: Output directory
+            dr_version: Data processing version
             is_bgr: Whether we're processing background observations or not
             step_ext: .fits extension for the files going
                 into the step
@@ -112,6 +116,7 @@ class Lv3Step:
         self.band = band
         self.in_dir = in_dir
         self.out_dir = out_dir
+        self.dr_version = dr_version
         self.is_bgr = is_bgr
         self.step_ext = step_ext
         self.procs = procs
@@ -170,14 +175,29 @@ class Lv3Step:
             log.warning("Failures detected in level 3 pipeline")
             return False
 
+        # Propagate PJPipe metadata through the output files, this is the
+        # lv3 mosaic and the crf files
+        all_files = []
+        files = glob.glob(os.path.join(self.out_dir,
+                                       "*_i2d.fits",
+                                       )
+                          )
+        all_files.extend(files)
+        files = glob.glob(os.path.join(self.out_dir,
+                                       "*_crf.fits",
+                                       )
+                          )
+        all_files.extend(files)
+        self.propagate_metadata(all_files)
+
         with open(step_complete_file, "w+") as f:
             f.close()
 
         return True
 
     def create_asn_file(
-        self,
-        files,
+            self,
+            files,
     ):
         """Setup asn lv3 file"""
 
@@ -255,8 +275,8 @@ class Lv3Step:
         return asn_lv3_filename
 
     def run_step(
-        self,
-        asn_file,
+            self,
+            asn_file,
     ):
         """Run the level 3 step
 
@@ -339,8 +359,8 @@ class Lv3Step:
         # first letter of the filename to the module, and adding a large
         # number to the exposure number to degroup them.
         if (
-            band_type == "nircam"
-            and self.tweakreg_degroup_nircam_modules
+                band_type == "nircam"
+                and self.tweakreg_degroup_nircam_modules
         ):
             for i, model in enumerate(asn_file._models):
                 module = model.meta.instrument.module.strip().lower()
@@ -363,8 +383,8 @@ class Lv3Step:
 
         # Degroup the 1/2/3/4 NIRCam shorts, if requested
         if (
-            band_type == "nircam"
-            and self.tweakreg_degroup_nircam_short_chips
+                band_type == "nircam"
+                and self.tweakreg_degroup_nircam_short_chips
         ):
             for i, model in enumerate(asn_file._models):
                 detector = model.meta.instrument.detector.strip().lower()
@@ -408,8 +428,8 @@ class Lv3Step:
 
         # Set the name back to "jw" at the start if we're degrouping NIRCam modules
         if (
-            band_type == "nircam"
-            and self.tweakreg_degroup_nircam_modules
+                band_type == "nircam"
+                and self.tweakreg_degroup_nircam_modules
         ):
             for i, model in enumerate(asn_file._models):
                 model_name = list(copy.deepcopy(model.meta.filename))
@@ -434,8 +454,8 @@ class Lv3Step:
 
         # Set meta parameters back to original values to avoid potential weirdness later
         if (
-            short_long in self.tweakreg_group_dithers
-            or short_long in self.tweakreg_degroup_dithers
+                short_long in self.tweakreg_group_dithers
+                or short_long in self.tweakreg_degroup_dithers
         ):
             for i, model in enumerate(asn_file._models):
                 model_name = model.meta.filename
@@ -484,8 +504,8 @@ class Lv3Step:
 
         # Set meta parameters back to original values to avoid potential weirdness later
         if (
-            short_long in self.skymatch_group_dithers
-            or short_long in self.skymatch_degroup_dithers
+                short_long in self.skymatch_group_dithers
+                or short_long in self.skymatch_degroup_dithers
         ):
             for i, model in enumerate(asn_file._models):
                 model_name = model.meta.filename
@@ -500,5 +520,21 @@ class Lv3Step:
         del im3
         del asn_file
         gc.collect()
+
+        return True
+
+    def propagate_metadata(self,
+                           files):
+        """Propagate metadata through to the output files
+
+        Args:
+            files: List of files to loop over
+        """
+
+        for out_name in files:
+            with datamodels.open(out_name) as im:
+                save_file(im, out_name=out_name, dr_version=self.dr_version)
+
+            del im
 
         return True
