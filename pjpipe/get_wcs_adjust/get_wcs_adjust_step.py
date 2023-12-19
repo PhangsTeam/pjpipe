@@ -269,7 +269,7 @@ class GetWCSAdjustStep:
 
             tweakreg.run(asn_file)
 
-        del input_models, asn_file
+            del input_models, asn_file
 
         output_files = glob.glob(
             os.path.join(

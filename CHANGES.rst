@@ -1,12 +1,13 @@
 1.0.3 (Unreleased)
 ==================
 
+- Fix del in ``get_wcs_adjust`` if we skip alignment
 - Made plots more consistent and "publication ready" across the board
-- Fix bug in anchoring step
-- Rename anchor_to_external_step.py to anchor_step.py for consistency
-- Fix "too many plots open" warning in anchoring_step.py
+- Fix bug in ``anchoring step``
+- Rename ``anchor_to_external_step.py`` to ``anchor_step.py`` for consistency
+- Fix "too many plots open" warning in ``anchoring_step``
 - Include useful pjpipe version info in files
-- Save anchoring background in metadata properly in anchoring_step.py
+- Save anchoring background in metadata properly in ``anchoring_step``
 
 1.0.2 (2023-12-01)
 ==================
