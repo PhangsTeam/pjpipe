@@ -5,7 +5,7 @@
 [![Docs](https://readthedocs.org/projects/pjpipe/badge/?version=latest&style=flat-square)](https://pjpipe.readthedocs.io/en/latest/)
 [![Actions](https://img.shields.io/github/actions/workflow/status/phangsTeam/pjpipe/build_test.yaml?branch=main&style=flat-square)](https://github.com/phangsTeam/pjpipe/actions)
 [![License](https://img.shields.io/badge/license-GNUv3-blue.svg?label=License&style=flat-square)](LICENSE)
-[![DOI](https://img.shields.io/badge/DOI-10.5281%20%2F%20zenodo.10458747-blue.svg?style=flat-square)](https://zenodo.org/doi/10.5281/zenodo.10458746)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%20%2F%20zenodo.10458746-blue.svg?style=flat-square)](https://zenodo.org/doi/10.5281/zenodo.10458746)
 
 ![](docs/images/pjpipe_logo.jpg)
 
