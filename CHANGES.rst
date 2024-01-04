@@ -1,4 +1,4 @@
-1.0.3 (Unreleased)
+1.0.4 (2024-01-04)
 ==================
 
 - Fix del in ``get_wcs_adjust`` if we skip alignment
@@ -8,6 +8,7 @@
 - Fix "too many plots open" warning in ``anchoring_step``
 - Include useful pjpipe version info in files
 - Save anchoring background in metadata properly in ``anchoring_step``
+- Add Zenodo badge
 
 1.0.2 (2023-12-01)
 ==================

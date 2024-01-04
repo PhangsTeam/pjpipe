@@ -11,6 +11,8 @@ PJPipe
 .. image:: https://readthedocs.org/projects/pjpipe/badge/?version=latest&style=flat-square
    :target: https://pjpipe.readthedocs.io/en/latest/
 .. image:: https://img.shields.io/badge/license-GNUv3-blue.svg?label=License&style=flat-square
+.. image:: https://img.shields.io/badge/DOI-10.5281%20%2F%20zenodo.10458747-blue.svg?style=flat-square
+   :target: https://zenodo.org/doi/10.5281/zenodo.10458746
 
 **Note that this pipeline requires Python 3.9 or above**
 

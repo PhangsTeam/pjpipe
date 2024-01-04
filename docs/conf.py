@@ -19,8 +19,8 @@ sys.path.insert(0, os.path.abspath('..'))
 project = 'pjpipe'
 copyright = '2023, PHANGS Team'
 author = 'PHANGS Team'
-release = '1.0.2'
-version = '1.0.2'
+release = '1.0.4'
+version = '1.0.4'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
