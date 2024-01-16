@@ -176,6 +176,7 @@ def solve_for_offset(
     comp_band=None,
     ref_band=None,
     units="MJy/sr",
+    simplify_labels=True
 ):
     """Solve for the offset between two images
 
@@ -201,6 +202,7 @@ def solve_for_offset(
         comp_band: If a string, will label axes appropriately. Defaults to None
         ref_band: If a string, will label axes appropriately. Defaults to None
         units: Units of the data. Defaults to MJy/sr
+        simplify_labels: If True, will strip any convolution info (_atgaussX) from the labels
     """
 
     # Identify overlap used to solve for the offset
@@ -265,17 +267,27 @@ def solve_for_offset(
             linestyle="dashed",
         )
 
+        # Strip out the atgauss bit, if needed
+        if simplify_labels:
+            if ref_band is not None:
+                ref_band = ref_band.split("_atgauss")[0]
+            if comp_band is not None:
+                comp_band = comp_band.split("_atgauss")[0]
+
         # Get labels on as requested
         if ref_band is not None:
             ref_band_str = ref_band.replace("_", r"\_")
-            plt.xlabel(fr"$F_\mathregular{{{ref_band_str}}}$ ({units})")
+            ref_band_str = ref_band_str.upper()
+            plt.xlabel(fr"$I_\mathregular{{{ref_band_str}}}$ ({units})")
         else:
-            ref_band = "$x$"
+            ref_band_str = "$x$"
+
         if comp_band is not None:
             comp_band_str = comp_band.replace("_", r"\_")
-            plt.ylabel(fr"$F_\mathregular{{{comp_band_str}}}$ ({units})")
+            comp_band_str = comp_band_str.upper()
+            plt.ylabel(fr"$I_\mathregular{{{comp_band_str}}}$ ({units})")
         else:
-            comp_band = "$y$"
+            comp_band_str = "$y$"
 
         if intercept < 0:
             sign = "-"
@@ -284,7 +296,7 @@ def solve_for_offset(
             sign = "+"
             intercept_str = copy.deepcopy(intercept)
 
-        this_label = f"{comp_band} = {slope:.2f} $\\times$ {ref_band} {sign} {intercept_str:.2f}"
+        this_label = f"{comp_band_str} = {slope:.2f} $\\times$ {ref_band_str} {sign} {intercept_str:.2f}"
         ax.text(
             0.05,
             0.95,
@@ -318,6 +330,7 @@ class AnchoringStep:
         ref_band=None,
         external_bands=None,
         internal_conv_band=None,
+        simplify_labels=True,
         overwrite=False,
     ):
         """Anchor aligned data to the external images
@@ -345,6 +358,7 @@ class AnchoringStep:
             external_bands: If externally anchoring, these are a list (in preference order) of resolutions
                 to lock to (e.g. irac1, irac1_atgauss4p5)
             internal_conv_band: For internal anchoring, we use this common resolution.
+            simplify_labels: If True, will strip any convolution info (_atgaussX) from the labels
             overwrite: Whether to overwrite or not
         """
 
@@ -378,6 +392,7 @@ class AnchoringStep:
         self.ref_band = ref_band
         self.external_bands = external_bands
         self.internal_conv_band = internal_conv_band
+        self.simplify_labels = simplify_labels
         self.overwrite = overwrite
 
     def do_step(self):
@@ -833,9 +848,10 @@ class AnchoringStep:
             xmax=xmax,
             binsize=0.1,
             save_plot=saveplot_filename,
-            comp_band=current_band.upper(),
+            comp_band=current_band,
             ref_band=ref_band_tidy,
             units="MJy/sr",
+            simplify_labels=self.simplify_labels,
         )
 
         return self.target, ref_file_clean, file_short, current_band, slope, intercept
