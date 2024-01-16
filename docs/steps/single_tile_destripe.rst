@@ -14,6 +14,10 @@ be corrected before flat-fielding.
 If you have subarray observations, ``quadrants`` will automatically be set to ``False``, as the readout is different
 in these modes.
 
+The PCA implementation for NIRCam destriping was adapted from work by Elizabeth Watkins
+(University of Manchester), and up-to-date code is available at
+`this GitHub repository <https://github.com/ejwatkins-astro/robitgapca>`_.
+
 ---
 API
 ---
