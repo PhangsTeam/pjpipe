@@ -2,6 +2,7 @@
 ==================
 
 - Point Zenodo DOI to "concept" DOI, rather than latest
+- Cleaner labels in ``anchoring_step``
 
 1.0.4 (2024-01-04)
 ==================
