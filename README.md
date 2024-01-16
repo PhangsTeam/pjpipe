@@ -204,3 +204,6 @@ PJPipe has been developed by the [PHANGS Team](phangs.org), with major contribut
 * Jessica Sutter (UCSD)
 * David Thilker (JHU)
 * Adam Leroy (OSU)
+
+The PCA implementation for NIRCam destriping was adapted from work by Elizabeth Watkins 
+(University of Manchester), and up-to-date code is available at [this Github repository](https://github.com/ejwatkins-astro/robitgapca).
