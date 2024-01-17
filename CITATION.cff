@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Williams"
+  given-names: "Thomas"
+  orcid: "https://orcid.org/0000-0002-0012-2142"
+- family-names: "Egorov"
+  given-names: "Oleg"
+  orcid: "https://orcid.org/0000-0002-4755-118X"
+- family-names: "Rosolowsky"
+  given-names: "Erik"
+  orcid: "https://orcid.org/0000-0002-5204-2259"
+- family-names: "Belfiore"
+  given-names: "Francesco"
+  orcid: "https://orcid.org/0000-0002-2545-5752"
+- family-names: "Sutter"
+  given-names: "Jessica"
+  orcid: "https://orcid.org/0000-0002-9183-8102"
+- family-names: "Thilker"
+  given-names: "David"
+  orcid: "https://orcid.org/0000-0002-8528-7340"
+- family-names: "Leroy"
+  given-names: "Adam"
+  orcid: "https://orcid.org/0000-0002-2545-1700"
+title: "PJPipe"
+version: 1.0.4
+date-released: 2024-01-17
+doi: 10.5281/zenodo.10458746
+url: "https://github.com/PhangsTeam/pjpipe"
