@@ -527,7 +527,14 @@ def parse_fits_to_table(
         obs_filter = im.meta.instrument.filter
         obs_date = im.meta.observation.date_beg
         obs_duration = im.meta.exposure.duration
-        obs_label = im.meta.observation.observation_label.lower()
+
+        # Sometimes the observation label is not defined, so have a fallback here
+        obs_label = im.meta.observation.observation_label
+        if obs_label is not None:
+            obs_label = obs_label.lower()
+        else:
+            obs_label = ""
+
         obs_program = im.meta.observation.program_number
         array_name = im.meta.subarray.name.lower().strip()
 
