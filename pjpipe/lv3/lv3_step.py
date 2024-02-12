@@ -28,6 +28,12 @@ from ..utils import (
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
 
+BGR_CHECK_TYPES = [
+    "parallel_off",
+    "check_in_name",
+    "filename",
+]
+
 
 class Lv3Step:
     def __init__(
@@ -88,10 +94,10 @@ class Lv3Step:
                 skymatch. Defaults to None, which will keep at
                 default.
             bgr_check_type: Method to check if obs is science
-                or background. Options are 'parallel_off' and
-                'check_in_name'. Defaults to 'parallel_off'
-            bgr_background_name: If `bgr_check_type` is 'check_in_name',
-                this is the string to match
+                or background. Options are given by BGR_CHECK_TYPES.
+                Defaults to 'parallel_off'
+            bgr_background_name: If `bgr_check_type` is 'check_in_name'
+                or 'filename', this is the string to match
             process_bgr_like_science: If True, will process background
                 images as if they are science images. Defaults to False
             jwst_parameters: Parameter dictionary to pass to
