@@ -11,7 +11,7 @@ from functools import partial
 
 import jwst
 import numpy as np
-from astropy.table import Table
+from astropy.table import Table, vstack
 from jwst.pipeline import calwebb_image2
 from stdatamodels.jwst import datamodels
 
@@ -19,6 +19,12 @@ from ..utils import get_band_type, get_obs_table, attribute_setter, save_file
 
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
+
+BGR_CHECK_TYPES = [
+    "parallel_off",
+    "check_in_name",
+    "filename",
+]
 
 
 class Lv2Step:
@@ -52,10 +58,10 @@ class Lv2Step:
             is_bgr: Whether we're processing background observations or not
             procs: Number of processes to run in parallel
             bgr_check_type: Method to check if obs is science
-                or background. Options are 'parallel_off' and
-                'check_in_name'. Defaults to 'parallel_off'
-            bgr_background_name: If `bgr_check_type` is 'check_in_name',
-                this is the string to match
+                or background. Options are given by BGR_CHECK_TYPES.
+                Defaults to 'parallel_off'
+            bgr_background_name: If `bgr_check_type` is 'check_in_name'
+                or 'filename', this is the string to match
             bgr_observation_types: List of observation types with dedicated
                 backgrounds. Defaults to None, i.e. no observations have
                 backgrounds
@@ -186,7 +192,7 @@ class Lv2Step:
         # If we're processing backgrounds like science,
         # join the tables
         if self.process_bgr_like_science and not self.is_bgr:
-            full_tab = sci_tab + bgr_tab
+            full_tab = vstack([sci_tab, bgr_tab])
             full_tab["Type"] = "sci"
 
         # If we're processing background observations,

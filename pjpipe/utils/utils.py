@@ -499,24 +499,41 @@ def parse_fits_to_table(
     Args:
         file (str): File to get info for
         check_bgr (bool): Whether to check if this is a science or background observation (in the MIRI case)
-        check_type (str): How to check if background observation. Options are 'parallel_off', which will use the
-            filename to see if it's a parallel observation with NIRCAM, or 'check_in_name', which will use the
-            observation name to check, matching against 'background_name'. Defaults to 'parallel_off'
+        check_type (str): How to check if background observation. Options are
+            - 'parallel_off', which will use the filename to see if it's a parallel observation with NIRCAM
+            - 'check_in_name', which will use the observation name to check, matching against 'background_name'.
+            - 'filename', which will use the filename
+            Defaults to 'parallel_off'
         background_name (str): Name to indicate background observation. Defaults to 'off'.
     """
 
     # Figure out if we're a background observation or not
     f_type = "sci"
     if check_bgr:
+
+        # If it's a parallel observation (PHANGS-style)
         if check_type == "parallel_off":
             file_split = os.path.split(file)[-1]
             if file_split.split("_")[1][2] == "2":
                 f_type = "bgr"
 
+        # If the backgrounds are labelled differently in the target name
         elif check_type == "check_in_name":
             with datamodels.open(file) as im:
                 if background_name in im.meta.target.proposer_name.lower():
                     f_type = "bgr"
+
+        # If we want to use some specific files within the science as observations
+        elif check_type == "filename":
+
+            if isinstance(background_name, str):
+                background_name = [background_name]
+
+            with datamodels.open(file) as im:
+
+                for bg_name in background_name:
+                    if bg_name in im.meta.filename.lower():
+                        f_type = "bgr"
 
         else:
             raise Warning(f"check_type {check_type} not known")
