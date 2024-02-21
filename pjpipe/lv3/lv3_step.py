@@ -216,24 +216,15 @@ class Lv3Step:
         if self.band_type == "nircam" and self.bgr_check_type == "parallel_off":
             check_bgr = False
 
-        ending = ""
-        if self.process_bgr_like_science:
-            ending += "_offset"
         asn_lv3_filename = os.path.join(
             self.in_dir,
-            f"asn_lv3_{self.band}{ending}.json",
+            f"asn_lv3_{self.band}.json",
         )
 
-        # Filter out background obs
-        if not self.process_bgr_like_science:
-            filtered_files = [f for f in files if "offset" not in f]
-        else:
-            filtered_files = [f for f in files if "offset" in f]
-
-        filtered_files.sort()
+        files.sort()
 
         tab = get_obs_table(
-            files=filtered_files,
+            files=files,
             check_bgr=check_bgr,
             check_type=self.bgr_check_type,
             background_name=self.bgr_background_name,
@@ -266,9 +257,12 @@ class Lv3Step:
         if self.is_bgr:
             tab["Type"] = "sci"
 
-        # If we're not including backgrounds, filter them out here
-        if not self.process_bgr_like_science:
-            tab = tab[tab["Type"] == "sci"]
+        # If we're processing background like science, flip the switch
+        if self.process_bgr_like_science:
+            tab["Type"] = "sci"
+
+        # Only take things flagged as science
+        tab = tab[tab["Type"] == "sci"]
 
         for row in tab:
             json_content["products"][-1]["members"].append(

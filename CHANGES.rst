@@ -1,6 +1,7 @@
 1.0.5 (Unreleased)
 ==================
 
+- Fix bug with ``process_bgr_like_science`` in ``lv3_step``
 - Added 'filename' option for background association
 - Fix in ``parse_fits_to_table`` when there is not a defined observation label
 - Point Zenodo DOI to "concept" DOI, rather than latest
