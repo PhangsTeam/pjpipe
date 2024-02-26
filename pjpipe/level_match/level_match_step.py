@@ -57,7 +57,10 @@ def make_stacked_image(
 
             hdus.append(hdu)
 
-        output_projection, shape_out = find_optimal_celestial_wcs(hdus, hdu_in="SCI")
+        output_projection, shape_out = find_optimal_celestial_wcs(hdus,
+                                                                  hdu_in="SCI",
+                                                                  auto_rotate=True,
+                                                                  )
         stacked_image, stacked_foot = reproject_and_coadd(
             hdus,
             output_projection=output_projection,
@@ -515,6 +518,7 @@ class LevelMatchStep:
             optimal_wcs, optimal_shape = find_optimal_celestial_wcs(
                 files_flat,
                 hdu_in="SCI",
+                auto_rotate=True,
             )
 
         if procs is None:

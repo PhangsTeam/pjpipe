@@ -1,3 +1,4 @@
+import copy
 import gc
 import glob
 import logging
@@ -146,10 +147,18 @@ class ApplyWCSAdjustStep:
 
         # Set up the WCSCorrector per tweakreg
         with datamodels.open(file) as input_im:
-            ref_wcs = input_im.meta.wcs
-            ref_wcsinfo = input_im.meta.wcsinfo.instance
 
-            im = JWSTWCSCorrector(ref_wcs, ref_wcsinfo)
+            model_name = os.path.splitext(input_im.meta.filename)[0].strip('_- ')
+
+            refang = input_im.meta.wcsinfo.instance
+            im = JWSTWCSCorrector(
+                wcs=input_im.meta.wcs,
+                wcsinfo={'roll_ref': refang['roll_ref'],
+                         'v2_ref': refang['v2_ref'],
+                         'v3_ref': refang['v3_ref']},
+                meta={'image_model': input_im,
+                      'name': model_name},
+            )
 
             # Pull out the info we need to shift. If we have both
             # dithers ungrouped and grouped, prefer the ungrouped
@@ -179,27 +188,38 @@ class ApplyWCSAdjustStep:
                         visit_found = True
 
             if not visit_found:
-                log.info(f"No shifts found for {file_short}. Defaulting to no shift")
+                log.info(f"No shifts found for {file_short}. Will write out without shifting")
 
-            im.set_correction(matrix=matrix, shift=shift)
+            if visit_found:
 
-            input_im.meta.wcs = im.wcs
+                im.set_correction(matrix=matrix, shift=shift)
 
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                try:
-                    update_fits_wcsinfo(
-                        input_im,
-                    )
-                except (ValueError, RuntimeError) as e:
-                    log.warning(
-                        "Failed to update 'meta.wcsinfo' with FITS SIP "
-                        f"approximation. Reported error is:\n'{e.args[0]}'"
-                    )
+                image_model = im.meta["image_model"]
+                image_model.meta.wcs = im.wcs
 
-            input_im.save(output_file)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    try:
+                        update_fits_wcsinfo(
+                            image_model,
+                            degree=6,
+                            max_pix_error=0.01,
+                            npoints=32,
+                        )
+                    except (ValueError, RuntimeError) as e:
+                        log.warning(
+                            "Failed to update 'meta.wcsinfo' with FITS SIP "
+                            f"approximation. Reported error is:\n'{e.args[0]}'"
+                        )
+
+            else:
+
+                image_model = copy.deepcopy(im.meta["image_model"])
+
+            image_model.save(output_file)
 
         del input_im
+        del image_model
         del im
         gc.collect()
 

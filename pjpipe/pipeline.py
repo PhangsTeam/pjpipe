@@ -485,6 +485,7 @@ class PJPipeline:
                                 dr_version=self.version,
                                 step_ext=in_step_ext,
                                 procs=self.procs,
+                                is_bgr=is_bgr,
                                 **kws,
                             )
                             step_result = lv1.do_step()

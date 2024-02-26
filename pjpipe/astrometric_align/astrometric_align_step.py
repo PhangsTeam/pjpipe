@@ -156,8 +156,9 @@ def parallel_tweakback(
         try:
             update_fits_wcsinfo(
                 input_im,
+                degree=6,
                 max_pix_error=0.01,
-                npoints=16,
+                npoints=32,
             )
         except (ValueError, RuntimeError) as e:
             logging.warning(
@@ -363,81 +364,82 @@ class AstrometricAlignStep:
                 shift = shift.astype(np.ndarray).astype(float)
                 matrix = matrix.astype(np.ndarray).astype(float)
 
-            with datamodels.open(file) as target_im:
-                target_wcs = get_lv3_wcs(target_im)
-                target_wcs_corrector = FITSWCSCorrector(target_wcs)
-                target_wcs_corrector_orig = copy.deepcopy(target_wcs_corrector)
-                target_data = copy.deepcopy(target_im.data)
-                target_err = copy.deepcopy(target_im.err)
-                target_data[target_data == 0] = np.nan
+                with datamodels.open(file) as target_im:
+                    target_wcs = get_lv3_wcs(target_im)
+                    target_wcs_corrector = FITSWCSCorrector(target_wcs)
+                    target_wcs_corrector_orig = copy.deepcopy(target_wcs_corrector)
+                    target_data = copy.deepcopy(target_im.data)
+                    target_err = copy.deepcopy(target_im.err)
+                    target_data[target_data == 0] = np.nan
 
-            if self.align_mapping_mode == "cross_corr":
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    ref_data = reproject_interp(
-                        (ref_data, ref_wcs),
-                        target_wcs,
-                        shape_out=target_data.shape,
-                        return_footprint=False,
+                    if self.align_mapping_mode == "cross_corr":
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore")
+                            ref_data = reproject_interp(
+                                (ref_data, ref_wcs),
+                                target_wcs,
+                                shape_out=target_data.shape,
+                                return_footprint=False,
+                            )
+
+                            ref_err = reproject_interp(
+                                (ref_err, ref_wcs),
+                                target_wcs,
+                                shape_out=target_data.shape,
+                                return_footprint=False,
+                            )
+
+                        nan_idx = np.logical_or(np.isnan(ref_data), np.isnan(target_data))
+
+                        ref_data[nan_idx] = np.nan
+                        target_data[nan_idx] = np.nan
+
+                        ref_err[nan_idx] = np.nan
+                        target_err[nan_idx] = np.nan
+
+                        # Make sure we're square, since apparently this causes weirdness
+                        data_size_min = min(target_data.shape)
+                        data_slice_i = slice(
+                            target_data.shape[0] // 2 - data_size_min // 2,
+                            target_data.shape[0] // 2 + data_size_min // 2,
+                        )
+                        data_slice_j = slice(
+                            target_data.shape[1] // 2 - data_size_min // 2,
+                            target_data.shape[1] // 2 + data_size_min // 2,
+                        )
+
+                        x_off, y_off = cross_correlation_shifts(
+                            ref_data[data_slice_i, data_slice_j],
+                            target_data[data_slice_i, data_slice_j],
+                            errim1=ref_err[data_slice_i, data_slice_j],
+                            errim2=target_err[data_slice_i, data_slice_j],
+                        )
+                        shift = [-x_off, -y_off]
+                        matrix = [[1, 0], [0, 1]]
+
+                        log.info(f"Found offset of {shift}")
+
+                    elif self.align_mapping_mode == "shift":
+                        # Add in shift metadata
+                        target_im.meta.abs_astro_alignment = {
+                            "shift": shift,
+                            "matrix": matrix,
+                        }
+
+                    # Apply correction
+                    target_wcs_corrector.set_correction(
+                        shift=shift,
+                        matrix=matrix,
+                        ref_tpwcs=target_wcs_corrector_orig,
                     )
 
-                    ref_err = reproject_interp(
-                        (ref_err, ref_wcs),
-                        target_wcs,
-                        shape_out=target_data.shape,
-                        return_footprint=False,
-                    )
+                    target_hdr, new_gwcs = transform_wcs_gwcs(target_wcs_corrector.wcs)
+                    target_im.meta.wcs = new_gwcs
 
-                nan_idx = np.logical_or(np.isnan(ref_data), np.isnan(target_data))
+                    # Update WCS info
+                    updated_im = lv3_update_fits_wcsinfo(im=target_im, hdr=target_hdr)
 
-                ref_data[nan_idx] = np.nan
-                target_data[nan_idx] = np.nan
-
-                ref_err[nan_idx] = np.nan
-                target_err[nan_idx] = np.nan
-
-                # Make sure we're square, since apparently this causes weirdness
-                data_size_min = min(target_data.shape)
-                data_slice_i = slice(
-                    target_data.shape[0] // 2 - data_size_min // 2,
-                    target_data.shape[0] // 2 + data_size_min // 2,
-                )
-                data_slice_j = slice(
-                    target_data.shape[1] // 2 - data_size_min // 2,
-                    target_data.shape[1] // 2 + data_size_min // 2,
-                )
-
-                x_off, y_off = cross_correlation_shifts(
-                    ref_data[data_slice_i, data_slice_j],
-                    target_data[data_slice_i, data_slice_j],
-                    errim1=ref_err[data_slice_i, data_slice_j],
-                    errim2=target_err[data_slice_i, data_slice_j],
-                )
-                shift = [-x_off, -y_off]
-                matrix = [[1, 0], [0, 1]]
-
-                log.info(f"Found offset of {shift}")
-
-            elif self.align_mapping_mode == "shift":
-                # Add in shift metadata
-                target_im.meta.abs_astro_alignment = {
-                    "shift": shift,
-                    "matrix": matrix,
-                }
-
-            # Apply correction
-            target_wcs_corrector.set_correction(
-                shift=shift,
-                matrix=matrix,
-                ref_tpwcs=target_wcs_corrector_orig,
-            )
-
-            target_hdr, new_gwcs = transform_wcs_gwcs(target_wcs_corrector.wcs)
-            target_im.meta.wcs = new_gwcs
-
-            # Update WCS info
-            updated_im = lv3_update_fits_wcsinfo(im=target_im, hdr=target_hdr)
-            updated_im.write(aligned_file)
+                    updated_im.write(aligned_file)
 
             # Also apply this to each individual crf file
             crf_files = glob.glob(

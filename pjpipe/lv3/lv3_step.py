@@ -297,8 +297,8 @@ class Lv3Step:
         im3 = calwebb_image3.Image3Pipeline.from_config_section(config)
         im3.output_dir = self.out_dir
 
-        im3.tweakreg.kernel_fwhm = fwhm_pix * 2
-        im3.source_catalog.kernel_fwhm = fwhm_pix * 2
+        im3.tweakreg.kernel_fwhm = fwhm_pix  # * 2
+        im3.source_catalog.kernel_fwhm = fwhm_pix  # * 2
 
         im3 = attribute_setter(
             im3,
@@ -315,7 +315,7 @@ class Lv3Step:
         tweakreg = TweakRegStep.from_config_section(config)
         tweakreg.output_dir = self.out_dir
         tweakreg.save_results = False
-        tweakreg.kernel_fwhm = fwhm_pix * 2
+        tweakreg.kernel_fwhm = fwhm_pix  # * 2
 
         try:
             tweakreg_params = self.jwst_parameters["tweakreg"]
