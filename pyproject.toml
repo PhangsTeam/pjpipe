@@ -1,7 +1,7 @@
 [project]
 
 name = "pjpipe"
-version = "1.0.4"
+version = "1.1.0"
 description = "JWST Pipeline Wrapper for Nearby Galaxies"
 readme = "README.md"
 requires-python = ">=3.9"
