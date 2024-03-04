@@ -180,4 +180,14 @@ class PSFMatchingStep:
             file, output_file, file_kernel=kernel_file, output_grid=output_grid
         )
 
+        # Put in BMAJ header keywords for Gaussian convolves
+        if "gauss" in target_band.lower():
+            with fits.open(output_file) as hdu:
+                bmaj = target_band.lower().replace("gauss", "")
+                bmaj = bmaj.replace("p", ".")
+                bmaj = float(bmaj)
+                bmaj /= 3600
+                hdu[0].header['BMAJ'] = bmaj
+                hdu.writeto(output_file, overwrite=True)
+
         return True

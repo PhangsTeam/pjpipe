@@ -10,6 +10,7 @@ from functools import partial
 import numpy as np
 from jwst.pipeline import calwebb_detector1
 from stdatamodels.jwst import datamodels
+from tqdm import tqdm
 
 from ..utils import attribute_setter, save_file
 
@@ -27,6 +28,7 @@ class Lv1Step:
         dr_version,
         step_ext,
         procs,
+        is_bgr,
         jwst_parameters=None,
         overwrite=False,
     ):
@@ -41,6 +43,7 @@ class Lv1Step:
             step_ext: .fits extension for the files going
                 into the step
             procs: Number of processes to run in parallel.
+            is_bgr: Whether we're processing background observations or not
             jwst_parameters: Parameter dictionary to pass to
                 the level 1 pipeline. Defaults to None,
                 which will run the observatory defaults
@@ -58,6 +61,7 @@ class Lv1Step:
         self.dr_version = dr_version
         self.step_ext = step_ext
         self.procs = procs
+        self.is_bgr = is_bgr
         self.jwst_parameters = jwst_parameters
         self.overwrite = overwrite
 
@@ -79,44 +83,75 @@ class Lv1Step:
             log.info("Step already run")
             return True
 
-        # We need to operate this in the input directory
-        cwd = os.getcwd()
-        os.chdir(self.in_dir)
+        # If we're operating on background observations and
+        # the science has already been processed, we can just
+        # copy the fits files over here to save time
 
-        # Build file list
-        in_files = glob.glob(f"*_{self.step_ext}.fits")
+        # Account for whether there's a '/' at the start
+        trailing_slash = self.out_dir[0] == os.path.sep
+        sci_dir_split = self.out_dir.split(os.path.sep)
+        sci_dir_split[-2] = sci_dir_split[-2].replace("_bgr", "")
 
-        if len(in_files) == 0:
-            log.warning(f"No {self.step_ext} files found")
+        sci_dir = ""
+        if trailing_slash:
+            sci_dir += os.path.sep
+        sci_dir += os.path.join(*sci_dir_split)
+
+        if self.is_bgr and os.path.exists(sci_dir):
+
+            log.info("These are background observations and science level 1 has already been run. "
+                     "Will just copy those files to the output directory"
+                     )
+
+            # Only copy over fits files
+            files = glob.glob(os.path.join(sci_dir, "*.fits"))
+
+            for f in tqdm(files,
+                          ascii=True,
+                          desc="Copying files",
+                          total=len(files),
+                          ):
+                os.system(f"cp {f} {self.out_dir}")
+
+        else:
+            # We need to operate this in the input directory
+            cwd = os.getcwd()
+            os.chdir(self.in_dir)
+
+            # Build file list
+            in_files = glob.glob(f"*_{self.step_ext}.fits")
+
+            if len(in_files) == 0:
+                log.warning(f"No {self.step_ext} files found")
+                os.chdir(cwd)
+                return False
+
+            in_files.sort()
+
+            # For speed, we want to parallelise these up by dither since we use the
+            # persistence file
+            dithers = []
+            for file in in_files:
+                file_split = os.path.split(file)[-1].split("_")
+                dithers.append("_".join(file_split[:2]) + "_*_" + file_split[-2])
+            dithers = np.unique(dithers)
+            dithers.sort()
+
+            # Ensure we're not wasting processes
+            procs = np.nanmin([self.procs, len(dithers)])
+
+            successes = self.run_step(
+                dithers,
+                procs=procs,
+            )
+
+            # If not everything has succeeded, then return a warning
+            if not np.all(successes):
+                log.warning("Failures detected in level 1 pipeline")
+                os.chdir(cwd)
+                return False
+
             os.chdir(cwd)
-            return False
-
-        in_files.sort()
-
-        # For speed, we want to parallelise these up by dither since we use the
-        # persistence file
-        dithers = []
-        for file in in_files:
-            file_split = os.path.split(file)[-1].split("_")
-            dithers.append("_".join(file_split[:2]) + "_*_" + file_split[-2])
-        dithers = np.unique(dithers)
-        dithers.sort()
-
-        # Ensure we're not wasting processes
-        procs = np.nanmin([self.procs, len(dithers)])
-
-        successes = self.run_step(
-            dithers,
-            procs=procs,
-        )
-
-        # If not everything has succeeded, then return a warning
-        if not np.all(successes):
-            log.warning("Failures detected in level 1 pipeline")
-            os.chdir(cwd)
-            return False
-
-        os.chdir(cwd)
 
         with open(step_complete_file, "w+") as f:
             f.close()

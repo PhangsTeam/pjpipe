@@ -1,6 +1,16 @@
-1.0.5 (Unreleased)
-==================
+1.1 (Unreleased)
+================
 
+- If science lv1 data already exists, just copy it over for background data to save processing time
+- Include BMAJ in ``psf_matching_step``
+- Auto rotate the WCS in ``level_match_step``
+- Fix SIP approximation issues in ``apply_wcs_adjust_step``
+- ``astrometric_catalog_step`` can now use either DAOStarFinder or IRAFStarFinder. Observatory recommendations seem
+    to be IRAFStarFinder in general
+- Removed factor of 2 for FWHM in lv3 tweakreg-related steps to more closely match observatory recommendations
+- Add lower version pins to project requirements to avoid incompatibilities
+- Fixed bug in ``astrometric_align_step`` where file might already be closed before saving
+- Updated PHANGS Cycle 1 config to v1p1 (last couple of observations, and a few small changes to the config)
 - Fix bug with ``process_bgr_like_science`` in ``lv3_step``
 - Added 'filename' option for background association
 - Fix in ``parse_fits_to_table`` when there is not a defined observation label
