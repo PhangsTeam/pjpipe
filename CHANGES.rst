@@ -1,5 +1,5 @@
-1.1 (Unreleased)
-================
+1.1.0 (2024-03-04)
+==================
 
 - If science lv1 data already exists, just copy it over for background data to save processing time
 - Include BMAJ in ``psf_matching_step``
