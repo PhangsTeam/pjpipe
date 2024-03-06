@@ -193,6 +193,11 @@ and will be passed to the step. This is not necessarily true for each
 JWST pipeline step, for those we recommend looking at 
 [the online docs](https://jwst-pipeline.readthedocs.io/en/latest/jwst/pipeline/main.html#pipelines)
 
+### Useful additional resources
+
+* If you'd like to generate convolution kernels easily, [this repository](https://github.com/francbelf/jwst_kernels) 
+  will do that for you
+
 ### Credits
 
 PJPipe has been developed by the [PHANGS Team](phangs.org), with major contributions from:
