@@ -28,6 +28,7 @@ class PSFMatchingStep:
         in_step_ext,
         band=None,
         target_bands=None,
+        reproject_func="interp",
         overwrite=False,
     ):
         """Match PSF for all images
@@ -45,6 +46,8 @@ class PSFMatchingStep:
             in_step_ext: Filename extension for the input files
             band: Bands to consider
             target_bands: Bands to convolve to
+            reproject_func: Which reproject function to use. Defaults to 'interp',
+                but can also be 'exact' or 'adaptive'
             overwrite: Whether to overwrite or not
         """
 
@@ -59,6 +62,7 @@ class PSFMatchingStep:
         self.procs = procs
         self.in_step_ext = in_step_ext
         self.target_bands = target_bands
+        self.reproject_func = reproject_func
         self.overwrite = overwrite
 
     def do_step(self):
@@ -176,9 +180,12 @@ class PSFMatchingStep:
         else:
             output_grid = None
 
-        do_jwst_convolution(
-            file, output_file, file_kernel=kernel_file, output_grid=output_grid
-        )
+        do_jwst_convolution(file,
+                            output_file,
+                            file_kernel=kernel_file,
+                            output_grid=output_grid,
+                            reproject_func=self.reproject_func,
+                            )
 
         # Put in BMAJ header keywords for Gaussian convolves
         if "gauss" in target_band.lower():

@@ -1,6 +1,12 @@
 1.1.1 (Unreleased)
 ==================
 
+- Add control over reproject functions, can be ``reproject_interp`` (default), ``reproject_exact``,
+  or ``reproject_adaptive``. For MIRI, ``reproject_exact`` may work better. This applies to ``anchoring_step``,
+  ``astrometric_align_step``, ``level_match_step``, ``multi_tile_destripe_step``, ``psf_matching_step``, and
+  ``release_step``
+- Fix bug for parameters with 'pix' in getting picked up like numbers of pixels
+- Updated PHANGS Cy3 config
 - Include links to Francesco Belfiore's kernel generation repository in the docs
 
 1.1.0 (2024-03-04)

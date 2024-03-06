@@ -17,7 +17,7 @@ from astropy.stats import sigma_clipped_stats
 from astropy.wcs import WCS
 from jwst.flatfield.flat_field import do_correction
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from reproject import reproject_interp
+from reproject import reproject_interp, reproject_adaptive, reproject_exact
 from reproject.mosaicking import find_optimal_celestial_wcs
 from reproject.mosaicking.background import determine_offset_matrix, solve_corrections_sgd
 from scipy.ndimage import uniform_filter, median_filter
@@ -34,8 +34,21 @@ matplotlib.rcParams['font.size'] = 14
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
 
-ALLOWED_WEIGHT_METHODS = ["mean", "median", "sigma_clip"]
-ALLOWED_WEIGHT_TYPES = ["exptime", "ivm", "equal"]
+ALLOWED_WEIGHT_METHODS = [
+    "mean",
+    "median",
+    "sigma_clip",
+]
+ALLOWED_WEIGHT_TYPES = [
+    "exptime",
+    "ivm",
+    "equal",
+]
+ALLOWED_REPROJECT_FUNCS = [
+    "interp",
+    "adaptive",
+    "exact",
+]
 
 
 def get_rotation_angle(wcs):
@@ -179,6 +192,7 @@ def parallel_reproject_weight(
         optimal_shape,
         weight_type="exptime",
         do_level_data=True,
+        reproject_func="interp",
 ):
     """Function to parallelise reprojecting with associated weights
 
@@ -190,6 +204,8 @@ def parallel_reproject_weight(
         weight_type: How to weight the average image. Defaults
             to exptime, the exposure time
         do_level_data: Whether to level data or not. Defaults to True
+        reproject_func: Which reproject function to use. Defaults to 'interp',
+            but can also be 'exact' or 'adaptive'
     """
 
     file = files[idx]
@@ -199,6 +215,7 @@ def parallel_reproject_weight(
         optimal_wcs=optimal_wcs,
         optimal_shape=optimal_shape,
         do_level_data=do_level_data,
+        reproject_func=reproject_func,
     )
     # Set any bad data to 0
     data_array.array[np.isnan(data_array.array)] = 0
@@ -219,6 +236,7 @@ def parallel_reproject_weight(
             optimal_wcs=optimal_wcs,
             optimal_shape=optimal_shape,
             hdu_type="var_rnoise",
+            reproject_func=reproject_func
         )
         weight_array.array = weight_array.array ** -1
         weight_array.array[np.isnan(weight_array.array)] = 0
@@ -258,6 +276,7 @@ class MultiTileDestripeStep:
             sigma=3,
             dilate_size=7,
             maxiters=None,
+            reproject_func="interp",
             overwrite=False,
     ):
         """Subtracts large-scale stripes using dither information
@@ -319,6 +338,8 @@ class MultiTileDestripeStep:
             raise ValueError(
                 f"weight_type should be one of {ALLOWED_WEIGHT_TYPES}, not {weight_type}"
             )
+        if reproject_func not in ALLOWED_REPROJECT_FUNCS:
+            raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
 
         if weight_method in ["median", "sigma_clip"]:
             log.info(f"Using {weight_method} for creating average image, will not use weighting")
@@ -348,6 +369,7 @@ class MultiTileDestripeStep:
         self.sigma = sigma
         self.dilate_size = dilate_size
         self.maxiters = maxiters
+        self.reproject_func = reproject_func
         self.overwrite = overwrite
 
         self.files_reproj = None
@@ -511,6 +533,7 @@ class MultiTileDestripeStep:
                             optimal_shape=self.optimal_shape,
                             weight_type=self.weight_type,
                             do_level_data=True,
+                            reproject_func=self.reproject_func,
                         ),
                         range(len(files)),
                     ),
@@ -951,6 +974,15 @@ class MultiTileDestripeStep:
             do_large_scale: Is this a large-scale smoothed subtraction? Defaults to False
         """
 
+        if self.reproject_func == "interp":
+            r_func = reproject_interp
+        elif self.reproject_func == "exact":
+            r_func = reproject_exact
+        elif self.reproject_func == "adaptive":
+            r_func = reproject_adaptive
+        else:
+            raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             with datamodels.open(file) as model:
@@ -978,7 +1010,7 @@ class MultiTileDestripeStep:
             del model
 
             # Reproject the average image
-            data_avg = reproject_interp(
+            data_avg = r_func(
                 (self.data_avg, self.optimal_wcs),
                 wcs,
                 return_footprint=False,
@@ -989,7 +1021,7 @@ class MultiTileDestripeStep:
             if do_large_scale:
 
                 # Reproject the smoothed data
-                data_avg_smooth = reproject_interp(
+                data_avg_smooth = r_func(
                     (self.data_avg_smooth, self.optimal_wcs),
                     wcs,
                     return_footprint=False,
@@ -997,7 +1029,8 @@ class MultiTileDestripeStep:
 
                 diff_smooth = data_avg - data_avg_smooth
 
-                # Also reproject the mask, casting to bool
+                # Also reproject the mask, casting to bool. This needs to use
+                # reproject_interp, so we can keep whole numbers
                 mask_smooth = reproject_interp(
                     (self.data_avg_mask, self.optimal_wcs),
                     wcs,
