@@ -1,3 +1,8 @@
+1.1.1 (Unreleased)
+==================
+
+- Include links to Francesco Belfiore's kernel generation repository in the docs
+
 1.1.0 (2024-03-04)
 ==================
 
