@@ -15,13 +15,19 @@ from astropy.io import fits
 from astropy.table import Table
 from astropy.wcs import WCS
 from matplotlib import pyplot as plt
-from reproject import reproject_interp
+from reproject import reproject_interp, reproject_adaptive, reproject_exact
 from scipy.optimize import curve_fit
 from stdatamodels import util
 from stdatamodels.jwst import datamodels
 from tqdm import tqdm
 
 from ..utils import do_jwst_convolution, get_band_type
+
+ALLOWED_REPROJECT_FUNCS = [
+    "interp",
+    "adaptive",
+    "exact",
+]
 
 matplotlib.use("agg")
 matplotlib.rcParams['mathtext.fontset'] = 'stix'
@@ -330,6 +336,7 @@ class AnchoringStep:
         ref_band=None,
         external_bands=None,
         internal_conv_band=None,
+        reproject_func="interp",
         simplify_labels=True,
         overwrite=False,
     ):
@@ -358,6 +365,8 @@ class AnchoringStep:
             external_bands: If externally anchoring, these are a list (in preference order) of resolutions
                 to lock to (e.g. irac1, irac1_atgauss4p5)
             internal_conv_band: For internal anchoring, we use this common resolution.
+            reproject_func: Which reproject function to use. Defaults to 'interp',
+                but can also be 'exact' or 'adaptive'
             simplify_labels: If True, will strip any convolution info (_atgaussX) from the labels
             overwrite: Whether to overwrite or not
         """
@@ -370,6 +379,8 @@ class AnchoringStep:
             raise ValueError("external_bands should be defined")
         if internal_conv_band is None:
             raise ValueError("internal_conv_band should be defined")
+        if reproject_func not in ALLOWED_REPROJECT_FUNCS:
+            raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
 
         # Make sure we're definitely looping over a list here
         if isinstance(external_bands, str):
@@ -392,6 +403,7 @@ class AnchoringStep:
         self.ref_band = ref_band
         self.external_bands = external_bands
         self.internal_conv_band = internal_conv_band
+        self.reproject_func = reproject_func
         self.simplify_labels = simplify_labels
         self.overwrite = overwrite
 
@@ -706,6 +718,15 @@ class AnchoringStep:
 
         """
 
+        if self.reproject_func == "interp":
+            r_func = reproject_interp
+        elif self.reproject_func == "exact":
+            r_func = reproject_exact
+        elif self.reproject_func == "adaptive":
+            r_func = reproject_adaptive
+        else:
+            raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
+
         external_band = None
         if external:
             external_band = copy.deepcopy(file[1])
@@ -778,7 +799,11 @@ class AnchoringStep:
                         "Cannot convolve file to compare with reference as the kernel does not exist"
                     )
                     return None
-                do_jwst_convolution(file, file_conv, kernel_file)
+                do_jwst_convolution(file,
+                                    file_conv,
+                                    kernel_file,
+                                    reproject_func=self.reproject_func,
+                                    )
             if external:
                 # convolve internal reference image also to the internal convolution band as we will
                 # need it on the next iteration
@@ -798,7 +823,11 @@ class AnchoringStep:
                     f"{file_short}_at{self.internal_conv_band.lower()}.fits",
                 )
                 if not os.path.exists(f_out):
-                    do_jwst_convolution(file, f_out, kernel_file)
+                    do_jwst_convolution(file,
+                                        f_out,
+                                        kernel_file,
+                                        reproject_func=self.reproject_func,
+                                        )
 
         # Reproject current image to the ref_image wcs
         image, header = fits.getdata(file_conv, header=True, extname="SCI")
@@ -812,7 +841,7 @@ class AnchoringStep:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            repr_image, fp = reproject_interp(
+            repr_image, fp = r_func(
                 (image, header),
                 output_projection=WCS(header_ref),
                 shape_out=image_ref.shape,

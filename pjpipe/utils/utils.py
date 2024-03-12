@@ -14,7 +14,7 @@ from astropy.stats import sigma_clipped_stats, SigmaClip
 from astropy.table import Table
 from astropy.wcs import WCS
 from photutils.segmentation import detect_threshold, detect_sources
-from reproject import reproject_interp
+from reproject import reproject_interp, reproject_adaptive, reproject_exact
 from reproject.mosaicking.subset_array import ReprojectedArraySubset
 from scipy.interpolate import RegularGridInterpolator
 from stdatamodels.jwst import datamodels
@@ -27,6 +27,12 @@ try:
     import tomllib
 except ModuleNotFoundError:
     import tomli as tomllib
+
+ALLOWED_REPROJECT_FUNCS = [
+    "interp",
+    "adaptive",
+    "exact",
+]
 
 # Useful values
 
@@ -333,10 +339,14 @@ def parse_parameter_dict(
         if not isinstance(value, dict):
             found_value = True
 
-    # Finally, if we have a string with a 'pix' in there, we need to convert to arcsec
+    # Finally, if we have a string with a 'pix' in there, we need to convert to arcsec. Unless it's not a number!
+    # Then just return the value
     if isinstance(value, str):
         if "pix" in value:
-            value = float(value.strip("pix")) * pixel_scale
+            try:
+                value = float(value.strip("pix")) * pixel_scale
+            except ValueError:
+                pass
 
     return value
 
@@ -653,6 +663,7 @@ def reproject_image(
         do_sigma_clip=False,
         stacked_image=False,
         do_level_data=False,
+        reproject_func="interp",
 ):
     """Reproject an image to an optimal WCS
 
@@ -666,7 +677,18 @@ def reproject_image(
         stacked_image: Stacked image or not? Defaults to False
         do_level_data: Whether to level between amplifiers or not.
             Defaults to False
+        reproject_func: Which reproject function to use. Defaults to 'interp',
+            but can also be 'exact' or 'adaptive'
     """
+
+    if reproject_func == "interp":
+        r_func = reproject_interp
+    elif reproject_func == "exact":
+        r_func = reproject_exact
+    elif reproject_func == "adaptive":
+        r_func = reproject_adaptive
+    else:
+        raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
 
     if not stacked_image:
         with datamodels.open(file) as hdu:
@@ -728,14 +750,15 @@ def reproject_image(
     wcs_out_indiv = optimal_wcs[jmin:jmax, imin:imax]
     shape_out_indiv = (jmax - jmin, imax - imin)
 
-    data_reproj_small = reproject_interp(
+    data_reproj_small = r_func(
         (data, wcs),
         output_projection=wcs_out_indiv,
         shape_out=shape_out_indiv,
         return_footprint=False,
     )
 
-    # Mask out bad DQ, but only for unstacked images
+    # Mask out bad DQ, but only for unstacked images. This needs to use
+    # reproject_interp, so we can keep whole numbers
     if not stacked_image:
         dq_reproj_small = reproject_interp(
             (dq_bit_mask, wcs),
@@ -746,6 +769,8 @@ def reproject_image(
         )
         data_reproj_small[dq_reproj_small == 1] = np.nan
 
+    # If we're sigma-clipping, reproject the mask. This needs to use
+    # reproject_interp, so we can keep whole numbers
     if do_sigma_clip:
         sig_mask_reproj_small = reproject_interp(
             (sig_mask, wcs),
@@ -776,6 +801,7 @@ def do_jwst_convolution(
         file_kernel,
         blank_zeros=True,
         output_grid=None,
+        reproject_func="interp",
 ):
     """
     Convolves input image with an input kernel, and writes to disk.
@@ -789,8 +815,19 @@ def do_jwst_convolution(
         blank_zeros: If True, then all zero values will be set to NaNs. Defaults to True
         output_grid: None (no reprojection to be done) or tuple (wcs, shape) defining the grid for reprojection.
             Defaults to None
-
+        reproject_func: Which reproject function to use. Defaults to 'interp',
+            but can also be 'exact' or 'adaptive'
     """
+
+    if reproject_func == "interp":
+        r_func = reproject_interp
+    elif reproject_func == "exact":
+        r_func = reproject_exact
+    elif reproject_func == "adaptive":
+        r_func = reproject_adaptive
+    else:
+        raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
+
     with fits.open(file_kernel) as kernel_hdu:
         kernel_pix_scale = get_pixscale(kernel_hdu[0])
         # Note the shape and grid of the kernel as input
@@ -829,7 +866,7 @@ def do_jwst_convolution(
 
         new_central_pixel = (interpolate_kernel_size - 1) / 2
         new_grid = (
-                           np.arange(interpolate_kernel_size) - new_central_pixel
+            np.arange(interpolate_kernel_size) - new_central_pixel
                    ) * image_pix_scale
         x_coords_new, y_coords_new = np.meshgrid(new_grid, new_grid)
 
@@ -884,7 +921,7 @@ def do_jwst_convolution(
             target_wcs, target_shape = output_grid
             hdulist_out = fits.HDUList([fits.PrimaryHDU(header=image_hdu[0].header)])
 
-            repr_data, fp = reproject_interp(
+            repr_data, fp = r_func(
                 (conv_im, image_hdu["SCI"].header),
                 output_projection=target_wcs,
                 shape_out=target_shape,
@@ -896,7 +933,7 @@ def do_jwst_convolution(
             hdulist_out.append(fits.ImageHDU(data=repr_data, header=header, name="SCI"))
 
             # Note - this ignores the errors of interpolation and thus the resulting errors might be underestimated
-            repr_err = reproject_interp(
+            repr_err = r_func(
                 (conv_err, image_hdu["SCI"].header),
                 output_projection=target_wcs,
                 shape_out=target_shape,

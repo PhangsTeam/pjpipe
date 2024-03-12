@@ -11,7 +11,13 @@ import numpy as np
 from astropy.io import fits
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pypdf import PdfWriter
-from reproject import reproject_interp
+from reproject import reproject_interp, reproject_adaptive, reproject_exact
+
+ALLOWED_REPROJECT_FUNCS = [
+    "interp",
+    "adaptive",
+    "exact",
+]
 
 matplotlib.use("agg")
 matplotlib.rcParams['mathtext.fontset'] = 'stix'
@@ -27,6 +33,7 @@ def get_diff_image(
     v_curr,
     v_prev,
     curr_file_ext,
+    reproject_func="interp",
     percentiles=None,
     file_exts=None,
 ):
@@ -37,6 +44,8 @@ def get_diff_image(
         v_curr: Current version
         v_prev: Previous version
         curr_file_ext: Current file extension
+        reproject_func: Which reproject function to use. Defaults to 'interp',
+                but can also be 'exact' or 'adaptive'
         percentiles: Percentiles for diff image. Defaults to None,
             which will be [1, 99]th percentiles
         file_exts: List of file extensions to search for the previous
@@ -67,17 +76,26 @@ def get_diff_image(
 
         hdu1["SCI"].data[hdu1["SCI"].data == 0] = np.nan
 
+        if reproject_func == "interp":
+            r_func = reproject_interp
+        elif reproject_func == "exact":
+            r_func = reproject_exact
+        elif reproject_func == "adaptive":
+            r_func = reproject_adaptive
+        else:
+            raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
+
         with fits.open(prev_filename) as hdu2:
             # Reproject both HDUs, just to be sure
             hdu2["SCI"].data[hdu2["SCI"].data == 0] = np.nan
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                data1 = reproject_interp(
+                data1 = r_func(
                     hdu1["SCI"],
                     hdu1["SCI"].header,
                     return_footprint=False,
                 )
-                data2 = reproject_interp(
+                data2 = r_func(
                     hdu2["SCI"],
                     hdu1["SCI"].header,
                     return_footprint=False,
@@ -98,6 +116,7 @@ class RegressAgainstPreviousStep:
         curr_version,
         prev_version=None,
         file_exts=None,
+        reproject_func="interp",
         overwrite=False,
     ):
         """Create diagnostic plots to regress against previous versions
@@ -108,12 +127,17 @@ class RegressAgainstPreviousStep:
             curr_version: Current version to compare to...
             prev_version: Previous version
             file_exts: File extensions (in priority order) to search for
+            reproject_func: Which reproject function to use. Defaults to 'interp',
+                but can also be 'exact' or 'adaptive'
             overwrite: Whether to overwrite or not. Defaults to
                 False
         """
 
         if prev_version is None:
             raise ValueError("prev_version should be defined")
+
+        if reproject_func not in ALLOWED_REPROJECT_FUNCS:
+            raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
 
         if file_exts is None:
             file_exts = [
@@ -127,6 +151,7 @@ class RegressAgainstPreviousStep:
         self.curr_version = curr_version
         self.prev_version = prev_version
         self.file_exts = file_exts
+        self.reproject_func = reproject_func
         self.overwrite = overwrite
 
         self.out_dir = os.path.join(
@@ -298,6 +323,7 @@ class RegressAgainstPreviousStep:
                     v_prev=self.prev_version,
                     curr_file_ext=file_ext,
                     file_exts=self.file_exts,
+                    reproject_func=self.reproject_func,
                 )
 
                 if not is_bgr:

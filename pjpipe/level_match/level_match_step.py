@@ -15,13 +15,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
-from reproject import reproject_interp
+from reproject import reproject_interp, reproject_adaptive, reproject_exact
 from reproject.mosaicking import find_optimal_celestial_wcs, reproject_and_coadd
 from stdatamodels.jwst import datamodels
 from threadpoolctl import threadpool_limits
 from tqdm import tqdm
 
 from ..utils import get_dq_bit_mask, reproject_image, make_source_mask
+
+ALLOWED_REPROJECT_FUNCS = [
+    "interp",
+    "adaptive",
+    "exact",
+]
 
 matplotlib.use("agg")
 matplotlib.rcParams['mathtext.fontset'] = 'stix'
@@ -35,13 +41,25 @@ log.addHandler(logging.NullHandler())
 def make_stacked_image(
     files,
     out_name,
+    reproject_func="interp",
 ):
     """Create a quick stacked image from a series of input images
 
     Args:
         files: List of input files
         out_name: Output stacked file
+        reproject_func: Which reproject function to use. Defaults to 'interp',
+            but can also be 'exact' or 'adaptive'
     """
+
+    if reproject_func == "interp":
+        r_func = reproject_interp
+    elif reproject_func == "exact":
+        r_func = reproject_exact
+    elif reproject_func == "adaptive":
+        r_func = reproject_adaptive
+    else:
+        raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -66,7 +84,7 @@ def make_stacked_image(
             output_projection=output_projection,
             shape_out=shape_out,
             hdu_in="SCI",
-            reproject_function=reproject_interp,
+            reproject_function=r_func,
         )
 
         hdr = output_projection.to_header()
@@ -101,6 +119,7 @@ class LevelMatchStep:
         min_area_percent=0.002,
         min_linear_frac=0.25,
         rms_sig_limit=2,
+        reproject_func="interp",
         overwrite=False,
     ):
         """Perform background matching between tiles
@@ -140,9 +159,14 @@ class LevelMatchStep:
             min_linear_frac: Minimum linear overlap in any direction to keep tiles.
                 Defaults to 0.25
             rms_sig_limit: Sigma limit for cutting off noisy fits. Defaults to 2
+            reproject_func: Which reproject function to use. Defaults to 'interp',
+                but can also be 'exact' or 'adaptive'
             overwrite: Whether to overwrite or not. Defaults
                 to False
         """
+
+        if reproject_func not in ALLOWED_REPROJECT_FUNCS:
+            raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
 
         self.in_dir = in_dir
         self.out_dir = out_dir
@@ -159,6 +183,7 @@ class LevelMatchStep:
         self.min_area_percent = min_area_percent
         self.min_linear_frac = min_linear_frac
         self.rms_sig_limit = rms_sig_limit
+        self.reproject_func = reproject_func
         self.overwrite = overwrite
 
         self.plot_dir = os.path.join(
@@ -478,6 +503,7 @@ class LevelMatchStep:
         success = make_stacked_image(
             files=files,
             out_name=out_name,
+            reproject_func=self.reproject_func,
         )
         if not success:
             return False
@@ -982,6 +1008,7 @@ class LevelMatchStep:
                     optimal_shape=optimal_shape,
                     do_sigma_clip=self.do_sigma_clip,
                     stacked_image=stacked_image,
+                    reproject_func=self.reproject_func,
                 )
                 for i in file
             ]
@@ -992,6 +1019,7 @@ class LevelMatchStep:
                 optimal_shape=optimal_shape,
                 do_sigma_clip=self.do_sigma_clip,
                 stacked_image=stacked_image,
+                reproject_func=self.reproject_func,
             )
 
         return file_reproj

@@ -14,7 +14,7 @@ from astropy.table import QTable, Table
 from astropy.wcs import WCS
 from image_registration import cross_correlation_shifts
 from jwst.assign_wcs.util import update_fits_wcsinfo
-from reproject import reproject_interp
+from reproject import reproject_interp, reproject_adaptive, reproject_exact
 from stdatamodels.jwst import datamodels
 from tqdm import tqdm
 from tweakwcs import fit_wcs, XYXYMatch
@@ -26,6 +26,12 @@ from ..utils import (
     recursive_setattr,
     get_default_args,
 )
+
+ALLOWED_REPROJECT_FUNCS = [
+    "interp",
+    "adaptive",
+    "exact",
+]
 
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
@@ -193,6 +199,7 @@ class AstrometricAlignStep:
         align_mapping_mode="shift",
         align_mapping=None,
         tweakreg_parameters=None,
+        reproject_func="interp",
         overwrite=False,
     ):
         """Perform absolute astrometric alignment
@@ -223,9 +230,14 @@ class AstrometricAlignStep:
                 between the images)
             tweakreg_parameters: Dictionary of parameters
                 to pass to tweakreg for the standard alignment
+            reproject_func: Which reproject function to use. Defaults to 'interp',
+                but can also be 'exact' or 'adaptive'
             overwrite: Whether to overwrite or not. Defaults
                 to False
         """
+
+        if reproject_func not in ALLOWED_REPROJECT_FUNCS:
+            raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
 
         if catalogs is None:
             catalogs = {}
@@ -247,6 +259,7 @@ class AstrometricAlignStep:
         self.align_mapping_mode = align_mapping_mode
         self.align_mapping = align_mapping
         self.tweakreg_parameters = tweakreg_parameters
+        self.reproject_func = reproject_func
         self.overwrite = overwrite
 
     def do_step(self):
@@ -305,6 +318,15 @@ class AstrometricAlignStep:
         Args:
             band: Band we're aligning
         """
+
+        if self.reproject_func == "interp":
+            r_func = reproject_interp
+        elif self.reproject_func == "exact":
+            r_func = reproject_exact
+        elif self.reproject_func == "adaptive":
+            r_func = reproject_adaptive
+        else:
+            raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
 
         files = glob.glob(
             os.path.join(
@@ -375,14 +397,14 @@ class AstrometricAlignStep:
                     if self.align_mapping_mode == "cross_corr":
                         with warnings.catch_warnings():
                             warnings.simplefilter("ignore")
-                            ref_data = reproject_interp(
+                            ref_data = r_func(
                                 (ref_data, ref_wcs),
                                 target_wcs,
                                 shape_out=target_data.shape,
                                 return_footprint=False,
                             )
 
-                            ref_err = reproject_interp(
+                            ref_err = r_func(
                                 (ref_err, ref_wcs),
                                 target_wcs,
                                 shape_out=target_data.shape,
