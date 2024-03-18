@@ -18,6 +18,7 @@ from .utils import (
     reproject_image,
     level_data,
     save_file,
+    make_stacked_image,
 )
 
 __all__ = [
@@ -40,4 +41,5 @@ __all__ = [
     "reproject_image",
     "level_data",
     "save_file",
+    "make_stacked_image",
 ]
