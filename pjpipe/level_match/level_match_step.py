@@ -13,15 +13,13 @@ from functools import partial
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
-from reproject import reproject_interp, reproject_adaptive, reproject_exact
-from reproject.mosaicking import find_optimal_celestial_wcs, reproject_and_coadd
+from reproject.mosaicking import find_optimal_celestial_wcs
 from stdatamodels.jwst import datamodels
 from threadpoolctl import threadpool_limits
 from tqdm import tqdm
 
-from ..utils import get_dq_bit_mask, reproject_image, make_source_mask
+from ..utils import get_dq_bit_mask, reproject_image, make_source_mask, make_stacked_image
 
 ALLOWED_REPROJECT_FUNCS = [
     "interp",
@@ -36,69 +34,6 @@ matplotlib.rcParams['font.size'] = 14
 
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
-
-
-def make_stacked_image(
-    files,
-    out_name,
-    reproject_func="interp",
-):
-    """Create a quick stacked image from a series of input images
-
-    Args:
-        files: List of input files
-        out_name: Output stacked file
-        reproject_func: Which reproject function to use. Defaults to 'interp',
-            but can also be 'exact' or 'adaptive'
-    """
-
-    if reproject_func == "interp":
-        r_func = reproject_interp
-    elif reproject_func == "exact":
-        r_func = reproject_exact
-    elif reproject_func == "adaptive":
-        r_func = reproject_adaptive
-    else:
-        raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-
-        hdus = []
-
-        for file in files:
-            hdu = fits.open(file)
-
-            dq_bit_mask = get_dq_bit_mask(hdu["DQ"].data)
-
-            hdu["SCI"].data[dq_bit_mask != 0] = np.nan
-
-            hdus.append(hdu)
-
-        output_projection, shape_out = find_optimal_celestial_wcs(hdus,
-                                                                  hdu_in="SCI",
-                                                                  auto_rotate=True,
-                                                                  )
-        stacked_image, stacked_foot = reproject_and_coadd(
-            hdus,
-            output_projection=output_projection,
-            shape_out=shape_out,
-            hdu_in="SCI",
-            reproject_function=r_func,
-        )
-
-        hdr = output_projection.to_header()
-
-        hdu = fits.ImageHDU(data=stacked_image, header=hdr, name="SCI")
-        hdu.writeto(
-            out_name,
-            overwrite=True,
-        )
-
-        del hdus
-        gc.collect()
-
-    return True
 
 
 class LevelMatchStep:

@@ -1,6 +1,9 @@
 1.1.1 (Unreleased)
 ==================
 
+- Fix bug in ``astrometric_align_step`` if first pass of alignment succeeds but second
+  fails
+- Add cross-correlation option to ``get_wcs_adjust_step``, which uses ``spacepylot``
 - Add control over reproject functions, can be ``reproject_interp`` (default), ``reproject_exact``,
   or ``reproject_adaptive``. For MIRI, ``reproject_exact`` may work better. This applies to ``anchoring_step``,
   ``astrometric_align_step``, ``level_match_step``, ``multi_tile_destripe_step``, ``psf_matching_step``, and

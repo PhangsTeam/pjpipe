@@ -676,6 +676,12 @@ class AstrometricAlignStep:
                 except ValueError:
                     log.warning("No catalog matches found. Defaulting to no shift")
 
+                    # Reset everything to avoid crashes
+                    wcs_aligned_fit = None
+                    xoffset, yoffset = 0, 0
+                    shift = np.array([0, 0])
+                    matrix = np.array([[1, 0], [0, 1]])
+
             target_wcs_corrected = copy.deepcopy(target_wcs_corrector_orig)
 
             # Put the correction in and properly update header.

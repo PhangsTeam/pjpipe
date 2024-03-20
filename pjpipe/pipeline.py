@@ -281,6 +281,7 @@ class PJPipeline:
                             progress_dict=progress_dict[target],
                             target=target,
                             alignment_dir=self.alignment_dir,
+                            procs=self.procs,
                             **step_parameters,
                         )
                         step_result = get_wcs_adjust.do_step()

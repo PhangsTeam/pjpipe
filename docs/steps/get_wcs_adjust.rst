@@ -8,6 +8,9 @@ shift per-visit (since JWST cycles between filters), and apply that shift to all
 that taking a long NIRCam band that is ideally stellar dominated (i.e. F300M) works best for NIRCam, and a shorter
 wavelength, non-PAH-dominated MIRI band (i.e. F1000W) is ideal for MIRI.
 
+By default, this step uses tweakreg, but can also be swapped out for cross-correlation via optical flow. This may be
+more optimal if you don't have any point source dominated wavebands, such as if you only have F770W, for instance.
+
 ---
 API
 ---

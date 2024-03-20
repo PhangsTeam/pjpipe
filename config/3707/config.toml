@@ -91,6 +91,9 @@ jwst_parameters.bkg_subtract.sigma = 1.5
 
 [parameters.get_wcs_adjust]
 
+method.nircam = "tweakreg"
+method.miri = "cross_corr"
+
 bands = [
     'F300M',
     'F770W',
