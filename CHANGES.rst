@@ -1,6 +1,9 @@
 1.1.1 (Unreleased)
 ==================
 
+- Added ``recombine_lyot`` option to ``level_match_step``, which allows for recombining
+  the lyot coronagraph into the main MIRI science chip before matching between mosaic tiles
+- Tidied up ``level_match_step`` to make more modular and functional
 - Fix bug in ``astrometric_align_step`` if first pass of alignment succeeds but second
   fails
 - Add cross-correlation option to ``get_wcs_adjust_step``, which uses ``spacepylot``

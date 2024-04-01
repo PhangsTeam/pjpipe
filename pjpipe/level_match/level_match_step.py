@@ -19,7 +19,11 @@ from stdatamodels.jwst import datamodels
 from threadpoolctl import threadpool_limits
 from tqdm import tqdm
 
-from ..utils import get_dq_bit_mask, reproject_image, make_source_mask, make_stacked_image
+from ..utils import get_dq_bit_mask, reproject_image, make_source_mask, make_stacked_image, get_band_type
+
+# Rough lyot outline
+LYOT_I = slice(735, None)
+LYOT_J = slice(None, 290)
 
 ALLOWED_REPROJECT_FUNCS = [
     "interp",
@@ -36,26 +40,58 @@ log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
 
 
+def get_dithers(files):
+    """Get unique dithers from a list of files
+
+    Args:
+        files: List of input files
+    """
+
+    # Split these into dithers per-chip
+    dithers = []
+    for file in files:
+        file_split = os.path.split(file)[-1].split("_")
+        dithers.append("_".join(file_split[:2]) + "_*_" + file_split[-2])
+    dithers = np.unique(dithers)
+    dithers.sort()
+
+    return dithers
+
+
+def apply_subtraction(im,
+                      delta,
+                      ):
+    """Apply subtraction to the image."""
+
+    zero_idx = np.where(im.data == 0)
+    im.data -= delta
+    im.data[zero_idx] = 0
+
+    return im
+
+
 class LevelMatchStep:
     def __init__(
-        self,
-        in_dir,
-        out_dir,
-        step_ext,
-        procs,
-        do_local_subtraction=True,
-        sigma=3,
-        npixels=3,
-        dilate_size=7,
-        max_iters=20,
-        max_points=10000,
-        do_sigma_clip=False,
-        weight_method="equal",
-        min_area_percent=0.002,
-        min_linear_frac=0.25,
-        rms_sig_limit=2,
-        reproject_func="interp",
-        overwrite=False,
+            self,
+            in_dir,
+            out_dir,
+            step_ext,
+            procs,
+            band,
+            recombine_lyot=False,
+            do_local_subtraction=True,
+            sigma=3,
+            npixels=3,
+            dilate_size=7,
+            max_iters=20,
+            max_points=10000,
+            do_sigma_clip=False,
+            weight_method="equal",
+            min_area_percent=0.002,
+            min_linear_frac=0.25,
+            rms_sig_limit=2,
+            reproject_func="interp",
+            overwrite=False,
     ):
         """Perform background matching between tiles
 
@@ -76,6 +112,9 @@ class LevelMatchStep:
             step_ext: .fits extension for the files going
                 into the step
             procs: Number of parallel processes to run
+            band: JWST band
+            recombine_lyot: If True, will recombine the lyot coronagraph
+                into the main chip after the initial round of level matching
             do_local_subtraction: Whether to do a sigma-clipped local median
                 subtraction. Defaults to True
             sigma: Sigma for sigma-clipping. Defaults to 3
@@ -107,6 +146,8 @@ class LevelMatchStep:
         self.out_dir = out_dir
         self.step_ext = step_ext
         self.procs = procs
+        self.band = band
+        self.recombine_lyot = recombine_lyot
         self.do_local_subtraction = do_local_subtraction
         self.sigma = sigma
         self.npixels = npixels
@@ -155,15 +196,52 @@ class LevelMatchStep:
         )
         files.sort()
 
-        # Split these into dithers per-chip
-        dithers = []
-        for file in files:
-            file_split = os.path.split(file)[-1].split("_")
-            dithers.append("_".join(file_split[:2]) + "_*_" + file_split[-2])
-        dithers = np.unique(dithers)
-        dithers.sort()
+        dithers = get_dithers(files)
 
-        # First pass where we do this per-dither, per-chip. Ensure we're not wasting processes
+        success = self.match_dithers(dithers)
+        if not success:
+            log.warning("Failures detected level matching between individual dithers")
+            return False
+
+        if self.recombine_lyot:
+            success = self.match_lyot_science(dithers)
+            if not success:
+                log.warning("Failures detected level matching between individual dithers")
+                return False
+
+            # Redo the dithers, since now the "l" and "s" will have potentially been dropped
+            files = glob.glob(
+                os.path.join(
+                    self.out_dir,
+                    f"*_{self.step_ext}.fits",
+                )
+            )
+            files.sort()
+
+            # Split these into dithers per-chip
+            dithers = get_dithers(files)
+
+        if len(dithers) > 1:
+            success = self.match_mosaic_tiles(dithers)
+            if not success:
+                log.warning("Failures detected level matching between mosaic tiles")
+                return False
+
+        with open(step_complete_file, "w+") as f:
+            f.close()
+
+        return True
+
+    def match_dithers(self,
+                      dithers,
+                      ):
+        """Match levels between the dithers in each mosaic tile
+
+        Args:
+            dithers: List of dither groups
+        """
+
+        # Ensure we're not wasting processes
         procs = np.nanmin([self.procs, len(dithers)])
 
         deltas, dither_files = self.get_per_dither_delta(
@@ -217,88 +295,165 @@ class LevelMatchStep:
                 log.info(f"{short_file}, delta={delta + local_delta:.2f}")
 
                 with datamodels.open(dither_file) as im:
-
-                    zero_idx = np.where(im.data == 0)
-
-                    im.data -= delta + local_delta
-                    im.data[zero_idx] = 0
+                    im = apply_subtraction(im, delta + local_delta)
                     im.save(out_file)
                 del im
 
-        if len(dithers) > 1:
-            # From the individually corrected images
-            # get a stacked image
-            stacked_dir = self.out_dir + "_stacked"
-            if not os.path.exists(stacked_dir):
-                os.makedirs(stacked_dir)
+        return True
 
-            successes = self.make_stacked_images(
-                dithers=dithers,
-                stacked_dir=stacked_dir,
-                procs=procs,
-            )
+    def match_lyot_science(self,
+                           dithers):
+        """Match levels between each individual lyot/main science chip, and recombine"""
 
-            if not np.all(successes):
-                log.warning("Failures detected making stacked images")
-                return False
+        # First, check we're in MIRI mode
+        band_type = get_band_type(self.band)
 
-            # Now match up these stacked images
-            stacked_files = glob.glob(
-                os.path.join(stacked_dir, f"*_{self.step_ext}.fits")
-            )
-            (
-                delta_matrix,
-                npix_matrix,
-                rms_matrix,
-                lin_size_matrix,
-            ) = self.calculate_delta(
-                stacked_files,
-                procs=procs,
-                stacked_image=True,
-            )
-            deltas = self.find_optimum_deltas(
-                delta_mat=delta_matrix,
-                npix_mat=npix_matrix,
-                rms_mat=rms_matrix,
-                lin_size_mat=lin_size_matrix,
-            )
+        if band_type not in ["miri"]:
+            return True
 
-            # Subtract the per-dither delta, do in place
-            for idx, delta in enumerate(deltas):
-                short_stack_file = os.path.split(stacked_files[idx])[-1]
-                dither_files = glob.glob(
-                    os.path.join(
-                        self.out_dir,
-                        short_stack_file,
-                    )
+        log.info("Matching levels between lyot and main chip and recombining")
+
+        # From the individually corrected images
+        # get a stacked image
+        stacked_dir = self.out_dir + "_stacked"
+        if not os.path.exists(stacked_dir):
+            os.makedirs(stacked_dir)
+
+        procs = np.nanmin([self.procs, len(dithers)])
+
+        # We now want to find the separate l and s files
+        combined_miri_dithers = []
+        for dither in dithers:
+            if dither[-1] in ["l", "s"]:
+                combined_miri_dithers.append(dither[:-1])
+        combined_miri_dithers = np.unique(combined_miri_dithers)
+
+        if len(combined_miri_dithers) == 0:
+            log.info("No split MIRI lyot/main chip found. Returning")
+            return True
+
+        successes = self.make_stacked_images(
+            dithers=dithers,
+            stacked_dir=stacked_dir,
+            procs=procs,
+        )
+
+        if not np.all(successes):
+            log.warning("Failures detected making stacked images")
+            return False
+
+        procs = np.nanmin([self.procs, len(combined_miri_dithers)])
+
+        successes = []
+
+        with mp.get_context("fork").Pool(procs) as pool:
+            for success in tqdm(
+                    pool.imap_unordered(
+                        partial(
+                            self.parallel_match_lyot_science,
+                            stacked_dir=stacked_dir,
+                        ),
+                        combined_miri_dithers,
+                    ),
+                    total=len(combined_miri_dithers),
+                    desc="Matching lyot and main science",
+                    ascii=True,
+                    disable=True,
+            ):
+                successes.append(success)
+
+            pool.close()
+            pool.join()
+            gc.collect()
+
+        # Remove the stacked images
+        shutil.rmtree(stacked_dir)
+
+        if not np.all(successes):
+            log.warning("Failures detected matching lyot and main science")
+            return False
+
+        return True
+
+    def match_mosaic_tiles(self,
+                           dithers,
+                           ):
+        """Match levels between each mosaic tile
+
+        Args:
+            dithers: List of dither groups
+        """
+
+        log.info("Matching levels between mosaic tiles")
+
+        # From the individually corrected images
+        # get a stacked image
+        stacked_dir = self.out_dir + "_stacked"
+        if not os.path.exists(stacked_dir):
+            os.makedirs(stacked_dir)
+
+        procs = np.nanmin([self.procs, len(dithers)])
+
+        successes = self.make_stacked_images(
+            dithers=dithers,
+            stacked_dir=stacked_dir,
+            procs=procs,
+        )
+
+        if not np.all(successes):
+            log.warning("Failures detected making stacked images")
+            return False
+
+        # Now match up these stacked images
+        stacked_files = glob.glob(
+            os.path.join(stacked_dir, f"*_{self.step_ext}.fits")
+        )
+        (
+            delta_matrix,
+            npix_matrix,
+            rms_matrix,
+            lin_size_matrix,
+        ) = self.calculate_delta(
+            stacked_files,
+            procs=procs,
+            stacked_image=True,
+        )
+        deltas = self.find_optimum_deltas(
+            delta_mat=delta_matrix,
+            npix_mat=npix_matrix,
+            rms_mat=rms_matrix,
+            lin_size_mat=lin_size_matrix,
+        )
+
+        # Subtract the per-dither delta, do in place
+        for idx, delta in enumerate(deltas):
+            short_stack_file = os.path.split(stacked_files[idx])[-1]
+            dither_files = glob.glob(
+                os.path.join(
+                    self.out_dir,
+                    short_stack_file,
                 )
-                dither_files.sort()
+            )
+            dither_files.sort()
 
-                for dither_file in dither_files:
-                    short_dither_file = os.path.split(dither_file)[-1]
-                    log.info(f"{short_dither_file}, delta={delta:.2f}")
+            for dither_file in dither_files:
+                short_dither_file = os.path.split(dither_file)[-1]
+                log.info(f"{short_dither_file}, delta={delta:.2f}")
 
-                    with datamodels.open(dither_file) as im:
+                with datamodels.open(dither_file) as im:
+                    im = apply_subtraction(im, delta)
+                    im.save(dither_file)
+                del im
 
-                        zero_idx = np.where(im.data == 0)
-
-                        im.data -= delta
-                        im.data[zero_idx] = 0
-                        im.save(dither_file)
-                    del im
-
-            # Remove the stacked images
-            shutil.rmtree(stacked_dir)
-
-        with open(step_complete_file, "w+") as f:
-            f.close()
+        # Remove the stacked images
+        shutil.rmtree(stacked_dir)
 
         return True
 
     def get_per_dither_delta(
-        self,
-        dithers,
-        procs=1,
+            self,
+            dithers,
+            procs=1,
     ):
         """Function to parallelise getting the delta for each observation in a dither sequence
 
@@ -315,15 +470,15 @@ class LevelMatchStep:
 
         with mp.get_context("fork").Pool(procs) as pool:
             for delta, dither_file in tqdm(
-                pool.imap_unordered(
-                    partial(
-                        self.parallel_per_dither_delta,
+                    pool.imap_unordered(
+                        partial(
+                            self.parallel_per_dither_delta,
+                        ),
+                        dithers,
                     ),
-                    dithers,
-                ),
-                total=len(dithers),
-                desc="Matching individual dithers",
-                ascii=True,
+                    total=len(dithers),
+                    desc="Matching individual dithers",
+                    ascii=True,
             ):
                 deltas.append(delta)
                 dither_files.append(dither_file)
@@ -335,8 +490,8 @@ class LevelMatchStep:
         return deltas, dither_files
 
     def parallel_per_dither_delta(
-        self,
-        dither,
+            self,
+            dither,
     ):
         """Function to parallelise up matching dithers
 
@@ -370,10 +525,10 @@ class LevelMatchStep:
         return deltas, dither_files
 
     def make_stacked_images(
-        self,
-        dithers,
-        stacked_dir,
-        procs=1,
+            self,
+            dithers,
+            stacked_dir,
+            procs=1,
     ):
         """Function to parallellise up making stacked dither images
 
@@ -390,16 +545,16 @@ class LevelMatchStep:
             successes = []
 
             for success in tqdm(
-                pool.imap_unordered(
-                    partial(
-                        self.parallel_make_stacked_image,
-                        out_dir=stacked_dir,
+                    pool.imap_unordered(
+                        partial(
+                            self.parallel_make_stacked_image,
+                            out_dir=stacked_dir,
+                        ),
+                        dithers,
                     ),
-                    dithers,
-                ),
-                total=len(dithers),
-                desc="Creating stacked images",
-                ascii=True,
+                    total=len(dithers),
+                    desc="Creating stacked images",
+                    ascii=True,
             ):
                 successes.append(success)
 
@@ -410,9 +565,9 @@ class LevelMatchStep:
         return successes
 
     def parallel_make_stacked_image(
-        self,
-        dither,
-        out_dir,
+            self,
+            dither,
+            out_dir,
     ):
         """Light wrapper around parallelising the stacked image
 
@@ -445,11 +600,83 @@ class LevelMatchStep:
 
         return True
 
+    def parallel_match_lyot_science(self,
+                                    dither,
+                                    stacked_dir,
+                                    ):
+        """Function to parallelise up combining the lyot back into the main science chip
+
+        Args:
+            dither: Dither to level match and combine
+            stacked_dir: Directory contained stacked images
+        """
+
+        stacked_files = glob.glob(
+            os.path.join(stacked_dir, f"{dither}*_{self.step_ext}.fits")
+        )
+        stacked_files.sort()
+
+        (
+            delta_matrix,
+            npix_matrix,
+            rms_matrix,
+            lin_size_matrix,
+        ) = self.calculate_delta(
+            stacked_files,
+            procs=None,
+            stacked_image=True,
+        )
+        lyot_delta, sci_delta = self.find_optimum_deltas(
+            delta_mat=delta_matrix,
+            npix_mat=npix_matrix,
+            rms_mat=rms_matrix,
+            lin_size_mat=lin_size_matrix,
+        )
+
+        # Subtract the per-dither delta. Since we've sorted, the first is lyot and the second is
+        # the main science
+        short_stack_file = os.path.split(stacked_files[1])[-1]
+        sci_files = glob.glob(
+            os.path.join(
+                self.out_dir,
+                short_stack_file,
+            )
+        )
+        sci_files.sort()
+
+        short_file = short_stack_file.replace("mirimages", "mirimage")
+        log.info(f"{short_file}: science delta={sci_delta:.2f}, lyot delta={lyot_delta:.2f}")
+
+        for sci_file in sci_files:
+            # Get the equivalent lyot file, and the out file (dropping that s/l)
+            lyot_file = sci_file.replace("mirimages", "mirimagel")
+            out_file = sci_file.replace("mirimages", "mirimage")
+
+            with datamodels.open(sci_file) as sci_im, datamodels.open(lyot_file) as lyot_im:
+                # Do the subtractions
+                sci_im = apply_subtraction(sci_im, sci_delta)
+                lyot_im = apply_subtraction(lyot_im, lyot_delta)
+
+                # Force the lyot back into the science
+                sci_im.data[LYOT_I, LYOT_J] = lyot_im.data[LYOT_I, LYOT_J]
+                sci_im.dq[LYOT_I, LYOT_J] = lyot_im.dq[LYOT_I, LYOT_J]
+
+                # Save
+                sci_im.save(out_file)
+
+                del sci_im, lyot_im
+
+                # And finally, remove the two separate files to clean things up
+                os.system(f"rm -rf {sci_file}")
+                os.system(f"rm -rf {lyot_file}")
+
+        return True
+
     def calculate_delta(
-        self,
-        files,
-        stacked_image=False,
-        procs=None,
+            self,
+            files,
+            stacked_image=False,
+            procs=None,
     ):
         """Match relative offsets between tiles
 
@@ -536,19 +763,19 @@ class LevelMatchStep:
                 file_reproj = list([None] * len(files))
 
                 for i, result in tqdm(
-                    pool.imap_unordered(
-                        partial(
-                            self.parallel_get_reproject,
-                            files=files,
-                            optimal_wcs=optimal_wcs,
-                            optimal_shape=optimal_shape,
-                            stacked_image=stacked_image,
+                        pool.imap_unordered(
+                            partial(
+                                self.parallel_get_reproject,
+                                files=files,
+                                optimal_wcs=optimal_wcs,
+                                optimal_shape=optimal_shape,
+                                stacked_image=stacked_image,
+                            ),
+                            range(len(files)),
                         ),
-                        range(len(files)),
-                    ),
-                    total=len(files),
-                    desc="Reprojecting files",
-                    ascii=True,
+                        total=len(files),
+                        desc="Reprojecting files",
+                        ascii=True,
                 ):
                     file_reproj[i] = result
 
@@ -601,10 +828,10 @@ class LevelMatchStep:
         return deltas, weights, rmses, lin_sizes
 
     def parallel_delta_matrix(
-        self,
-        ij,
-        file_reproj,
-        files,
+            self,
+            ij,
+            file_reproj,
+            files,
     ):
         """Function to parallelise up getting delta matrix values
 
@@ -636,11 +863,11 @@ class LevelMatchStep:
         return ij, delta, n_pix, rms, lin_size
 
     def get_level_match(
-        self,
-        files1,
-        files2,
-        plot_name=None,
-        maxiters=10,
+            self,
+            files1,
+            files2,
+            plot_name=None,
+            maxiters=10,
     ):
         """Calculate relative difference between groups of files on the same pixel grid
 
@@ -722,10 +949,10 @@ class LevelMatchStep:
 
                     # Include everything, but flag if we've hit the minimum linear extent
                     if (
-                        diff_iaxis > file1_iaxis * self.min_linear_frac
-                        or diff_jaxis > file1_jaxis * self.min_linear_frac
-                        or diff_iaxis > file2_iaxis * self.min_linear_frac
-                        or diff_jaxis > file2_jaxis * self.min_linear_frac
+                            diff_iaxis > file1_iaxis * self.min_linear_frac
+                            or diff_jaxis > file1_jaxis * self.min_linear_frac
+                            or diff_iaxis > file2_iaxis * self.min_linear_frac
+                            or diff_jaxis > file2_jaxis * self.min_linear_frac
                     ):
                         lin_size = 1
 
@@ -803,11 +1030,11 @@ class LevelMatchStep:
         return n_pix, delta, rms, lin_size
 
     def find_optimum_deltas(
-        self,
-        delta_mat,
-        npix_mat,
-        rms_mat,
-        lin_size_mat,
+            self,
+            delta_mat,
+            npix_mat,
+            rms_mat,
+            lin_size_mat,
     ):
         """Get optimum deltas from a delta/weight matrix.
 
@@ -869,7 +1096,7 @@ class LevelMatchStep:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 weight = 0.5 * (rms_mat + rms_mat.T)
-                weight = weight**-2
+                weight = weight ** -2
                 weight[~np.isfinite(weight)] = 0
         else:
             raise ValueError(f"weight_method {self.weight_method} not known")
@@ -920,11 +1147,11 @@ class LevelMatchStep:
         return deltas
 
     def get_reproject(
-        self,
-        file,
-        optimal_wcs,
-        optimal_shape,
-        stacked_image=False,
+            self,
+            file,
+            optimal_wcs,
+            optimal_shape,
+            stacked_image=False,
     ):
         """Reproject files, maintaining list structure
 
@@ -960,12 +1187,12 @@ class LevelMatchStep:
         return file_reproj
 
     def parallel_get_reproject(
-        self,
-        idx,
-        files,
-        optimal_wcs,
-        optimal_shape,
-        stacked_image=False,
+            self,
+            idx,
+            files,
+            optimal_wcs,
+            optimal_shape,
+            stacked_image=False,
     ):
         """Light function to parallelise get_dither_reproject
 
@@ -987,9 +1214,9 @@ class LevelMatchStep:
         return idx, dither_reproj
 
     def get_plot_name(
-        self,
-        files1,
-        files2,
+            self,
+            files1,
+            files2,
     ):
         """Make a plot name from list of files for level matching
 
