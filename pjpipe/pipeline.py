@@ -624,6 +624,7 @@ class PJPipeline:
                                 out_dir=out_dir,
                                 step_ext=in_step_ext,
                                 procs=self.procs,
+                                band=band,
                                 **kws,
                             )
                             step_result = level_match.do_step()
