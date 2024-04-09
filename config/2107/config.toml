@@ -1,28 +1,28 @@
 # List of targets. NGC7496 goes first, since IC5332 uses the background from those obs
 targets = [
-    'ngc7496',
-    'ic5332',
-    'ngc0628',
-    'ngc1087',
-    'ngc1300',
-    'ngc1365',
-    'ngc1385',
-    'ngc1433',
-    'ngc1512',
-    'ngc1566',
-    'ngc1672',
-    'ngc2835',
-    'ngc3351',
+#    'ngc7496',
+#    'ic5332',
+#    'ngc0628',
+#    'ngc1087',
+#    'ngc1300',
+#    'ngc1365',
+#    'ngc1385',
+#    'ngc1433',
+#    'ngc1512',
+#    'ngc1566',
+#    'ngc1672',
+#    'ngc2835',
+#    'ngc3351',
     'ngc3627',
-    'ngc4254',
-    'ngc4303',
-    'ngc4321',
-    'ngc4535',
-    'ngc5068',
+#    'ngc4254',
+#    'ngc4303',
+#    'ngc4321',
+#    'ngc4535',
+#    'ngc5068',
 ]
 
 # Version for the reprocessing
-version = 'v1p1'
+version = 'v1p1p1'
 
 # Bands to consider
 bands = [
@@ -30,14 +30,14 @@ bands = [
     'F300M',
     'F335M',
     'F360M',
-    'F1000W',
-    'F770W',
-    'F1130W',
-    'F2100W',
-    'F1000W_bgr',
-    'F770W_bgr',
-    'F1130W_bgr',
-    'F2100W_bgr',
+#    'F1000W',
+#    'F770W',
+#    'F1130W',
+#    'F2100W',
+#    'F1000W_bgr',
+#    'F770W_bgr',
+#    'F1130W_bgr',
+#    'F2100W_bgr',
 ]
 
 # Steps. These can/should be different
@@ -309,7 +309,12 @@ searchrad.miri = 10
 searchrad.nircam_long = 20
 searchrad.nircam_short = 40
 separation = 1
-tolerance = 1
+
+# This is for NIRCam, NGC3627. May generally be OK, but untested
+tolerance = 2
+# The default
+#tolerance = 1
+
 use2dhist = true
 fitgeom = 'shift'
 nclip = 5
