@@ -23,6 +23,8 @@ from tqdm import tqdm
 from ..utils import get_band_type, fwhms_pix, parse_parameter_dict, recursive_setattr, make_stacked_image, \
     reproject_image, get_pixscale
 
+from .custom_catalogs import constrained_diffusion_catalog
+
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
 
@@ -31,6 +33,7 @@ RAD_TO_ARCSEC = 3600 * np.rad2deg(1)
 ALLOWED_METHODS = [
     "tweakreg",
     "cross_corr",
+    "custom",
 ]
 
 ALLOWED_REPROJECT_FUNCS = [
@@ -104,6 +107,8 @@ class GetWCSAdjustStep:
             tweakreg_parameters=None,
             reproject_func="interp",
             overwrite=False,
+            custom_catalog_function=None,
+            custom_catalog_function_kwargs=None,
     ):
         """Gets a table of WCS corrections to apply to visit groups
 
@@ -182,6 +187,8 @@ class GetWCSAdjustStep:
         self.tweakreg_parameters = tweakreg_parameters
         self.reproject_func = reproject_func
         self.overwrite = overwrite
+        self.custom_catalog_function = custom_catalog_function
+        self.custom_catalog_function_kwargs = custom_catalog_function_kwargs
 
     def do_step(self):
         """Run the WCS adjust step"""
@@ -275,6 +282,7 @@ class GetWCSAdjustStep:
         """
 
         log.info(f"Running tweakreg for {band_full}")
+        use_custom_flag = False
 
         if "bgr" in band_full:
             band = band_full.replace("_bgr", "")
@@ -309,6 +317,26 @@ class GetWCSAdjustStep:
         )
         in_files.sort()
         input_models = [datamodels.open(in_file) for in_file in in_files]
+        
+        #Adding this garbage in here to allow for custom catalogs
+        # Noting that this the catalog needs to have two columns 'x' and 'y' 
+        # or 'xcentroid' and 'ycentroid'
+
+        if self.custom_catalog_function is not None:
+            if self.custom_catalog_function == 'constrained_diffusion':
+                catfunc = constrained_diffusion_catalog
+            else:
+                log.warning(f"Custom catalog function {self.custom_catalog_function} not found. Skipping")
+                return False
+
+            for thismodel in input_models:
+                if self.custom_catalog_function_kwargs is not None:
+                    thismodel = catfunc(thismodel, band_dir,
+                                        **self.custom_catalog_function_kwargs)
+                else:
+                    thismodel = self.custom_catalog_function(thismodel)
+            use_custom_flag = True    
+
         asn_file = ModelContainer(input_models)
 
         # Group up the dithers
@@ -329,6 +357,8 @@ class GetWCSAdjustStep:
         tweakreg.save_results = True
         tweakreg.suffix = self.out_ext
         tweakreg.kernel_fwhm = fwhm_pix * 2
+        # Require custom catalogs if they're generated
+        tweakreg.use_custom_catalog = use_custom_flag
 
         # Sort this into a format that tweakreg is happy with
         if self.target in self.alignment_catalogs:
