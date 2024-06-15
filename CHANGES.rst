@@ -1,6 +1,7 @@
 1.1.1 (Unreleased)
 ==================
 
+- Added prefilter option to ``get_wcs_adjust``, which uses constrained diffusion to remove large-scale structure
 - Added ``recombine_lyot`` option to ``level_match_step``, which allows for recombining
   the lyot coronagraph into the main MIRI science chip before matching between mosaic tiles
 - Tidied up ``level_match_step`` to make more modular and functional
