@@ -1,5 +1,5 @@
 crds_path = '/Users/thomaswilliams/Documents/phangs/jwst/crds/'
-crds_context = 'jwst_1210.pmap'
+crds_context = 'jwst_1238.pmap'
 raw_dir = '/Users/thomaswilliams/Documents/phangs/jwst/jwst_raw/3707/'
 reprocess_dir = '/Users/thomaswilliams/Documents/phangs/jwst_3707/reprocessing/'
 alignment_dir = '/Users/thomaswilliams/PycharmProjects/pjpipe/config/3707/alignment/'

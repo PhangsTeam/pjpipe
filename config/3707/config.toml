@@ -1,19 +1,19 @@
 # List of targets
 targets = [
-    'ngc2997'
-#    'ngc1511',
-#    'ngc2283',
-#    'ngc1637',
-#    'ngc1792',
-#    'ngc1808',
-#    # 'ngc1068', # run separately
-#    'ic5273',
-#    'ngc7456',
-#    'ngc1809',
-#    'ngc1546',
-#    'ngc1559',
-#    'ngc2090',
-#    'ngc1097',
+    'ngc1511',
+    'ngc2283',
+    'ngc1637',
+    'ngc1792',
+    'ngc1808',
+    # 'ngc1068', # run separately
+    'ic5273',
+    'ngc7456',
+    'ngc1809',
+    'ngc1546',
+    'ngc1559',
+    'ngc2090',
+    'ngc1097',
+    'ngc2566',
 ]
 
 # Version for the reprocessing
@@ -21,15 +21,15 @@ version = 'v0p1p6'
 
 # Bands to consider
 bands = [
-#    'F150W',
-#    'F187N',
-#    'F200W',
-#    'F300M',
-#    'F335M',
+    'F150W',
+    'F187N',
+    'F200W',
+    'F300M',
+    'F335M',
     'F770W',
-#    'F2100W',
+    'F2100W',
     'F770W_bgr',
-#    'F2100W_bgr',
+    'F2100W_bgr',
 ]
 
 # Steps. These can/should be different
@@ -43,17 +43,18 @@ steps = [
     'lv2',
     'get_wcs_adjust',
     'apply_wcs_adjust',
+#    'lyot_mask.miri',
     'lyot_separate.miri',
     'level_match',
-#    'multi_tile_destripe.nircam',
+    'multi_tile_destripe.nircam',
 #    'psf_model',  # TODO
     'lv3',
     'astrometric_catalog.miri',
     'astrometric_align',
-#    'anchoring',
-#    'psf_matching',
-#    'release',
-#    'regress_against_previous',
+    'anchoring',
+    'psf_matching',
+    'release',
+    'regress_against_previous',
 ]
 
 # Parameters for downloading data. This just downloads
@@ -92,11 +93,10 @@ jwst_parameters.bkg_subtract.sigma = 1.5
 
 [parameters.get_wcs_adjust]
 
-method.nircam = "tweakreg"
-method.miri = "tweakreg"
+method = "tweakreg"
 
 bands = [
-#    'F300M',
+    'F300M',
     'F770W',
 ]
 
@@ -105,8 +105,8 @@ group_dithers = [
     'miri',
 ]
 
-custom_catalog_function = 'constrained_diffusion'
-custom_catalog_function_kwargs = {roundlo = 0.0, roundhi = 0.1, sharplo = 0.6, sharphi = 1.1}
+#custom_catalog_function = 'constrained_diffusion'
+#custom_catalog_function_kwargs = {roundlo = 0.0, roundhi = 0.1, sharplo = 0.6, sharphi = 1.1}
 
 [parameters.get_wcs_adjust.tweakreg_parameters]
 
@@ -154,6 +154,16 @@ do_large_scale = true
 large_scale_filter_extend_mode = "reflect"
 
 [parameters.level_match]
+
+fit_type_dithers.nircam = "level"
+fit_type_mosaic_tiles.nircam = "level"
+
+fit_type_dithers.miri = "level"
+fit_type_recombine_lyot = "level"
+fit_type_mosaic_tiles.miri = "level"
+
+recombine_lyot = true
+combine_nircam_short = true
 do_sigma_clip = false
 weight_method = 'rms'
 
@@ -179,8 +189,8 @@ save_results = true
 
 # Skip MIRI wavelengths, since we have already
 # solved for this
-skip.F770W = false
-skip.F2100W = false
+skip.F770W = true
+skip.F2100W = true
 
 # align_to_gaia = false # no longer a tweakreg parameter
 starfinder = 'iraf'
@@ -272,7 +282,7 @@ ngc1808 = 'Gaia_DR3_ngc1808.fits'
 ngc1792 = 'Gaia_DR3_ngc1792.fits'
 ngc1637 = 'Gaia_DR3_ngc1637.fits'
 ngc2283 = 'Gaia_DR3_ngc2283.fits'
-ngc2997 = 'ngc2997_sourcecat.fits'
+ngc2566 = 'Gaia_DR3_ngc2566.fits'
 
 # Initial pass to get decent shifts for absolute astrometry
 [parameters.astrometric_align.tweakreg_parameters.iteration1]

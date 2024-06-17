@@ -4,7 +4,7 @@ name = "pjpipe"
 version = "1.1.0"
 description = "JWST Pipeline Wrapper for Nearby Galaxies"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {file = "LICENSE"}
 
 authors = [
@@ -23,9 +23,9 @@ classifiers = [
   # License
   "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
 
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
 ]
 
 dependencies = [
@@ -33,29 +33,33 @@ dependencies = [
     "astroquery>=0.4.6",
     "cmocean>=3.1.3",
     "crds>=11.17.16",
-    "gwcs>=0.20.0",
+    "gwcs>=0.21.0",
     "image-registration>=0.2.8",
-    "jwst>=1.13.4",
+    "jwst>=1.14.0",
     "lmfit>=1.2.2",
     "matplotlib>=3.8.2",
-    "numpy>=1.26.4",
+    "numpy>=1.26.4,<2",
     "photutils>=1.10.0",
     "pypdf>=4.0.1",
     "pytest>=8.0.0",
-    "reproject>=0.13.0",
+    "reproject>=0.13.1",
     "requests>=2.31.0",
     "scikit-image>=0.22.0",
     "scipy>=1.12.0",
     "shapely>=2.0.2",
     "setuptools>=68.2.2",
-    "stdatamodels>=1.9.1",
+    "stdatamodels>=1.10.1",
     "stwcs>=1.7.2",
     "spacepylot@git+https://github.com/ejwatkins-astro/spacepylot.git",
     "threadpoolctl>=3.2.0",
     "tomli>=2.0.1",
     "tqdm>=4.66.1",
-    "tweakwcs==0.8.5",
+    "tweakwcs>=0.8.7",
     "webbpsf>=1.2.1",
+]
+
+[project.optional-dependencies]
+docs = [
     "sphinx-automodapi>=0.16.0",
     "sphinx-rtd-theme>=2.0.0",
 ]

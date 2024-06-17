@@ -6,6 +6,7 @@ import multiprocessing as mp
 import os
 import shutil
 from functools import partial
+import cv2 as cv
 
 import numpy as np
 from jwst.pipeline import calwebb_detector1
@@ -16,6 +17,9 @@ from ..utils import attribute_setter, save_file
 
 log = logging.getLogger("stpipe")
 log.addHandler(logging.NullHandler())
+
+# Set OpenCV number of threads to 1 to avoid MP issues on newer Macbooks
+cv.setNumThreads(1)
 
 
 class Lv1Step:
