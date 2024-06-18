@@ -13,14 +13,15 @@ from astropy.nddata.bitmask import interpret_bit_flags, bitfield_to_boolean_mask
 from astropy.stats import sigma_clipped_stats, SigmaClip
 from astropy.table import Table
 from astropy.wcs import WCS
+from astropy.wcs.wcsapi import SlicedLowLevelWCS
 from photutils.segmentation import detect_threshold, detect_sources
 from reproject import reproject_interp, reproject_adaptive, reproject_exact
 from reproject.mosaicking import find_optimal_celestial_wcs, reproject_and_coadd
 from reproject.mosaicking.subset_array import ReprojectedArraySubset
 from scipy.interpolate import RegularGridInterpolator
+from stdatamodels import util
 from stdatamodels.jwst import datamodels
 from stdatamodels.jwst.datamodels.dqflags import pixel
-from stdatamodels import util
 
 from .. import __version__
 
@@ -580,8 +581,8 @@ def parse_fits_to_table(
 
 
 def get_dq_bit_mask(
-    dq,
-    bit_flags="~DO_NOT_USE+NON_SCIENCE",
+        dq,
+        bit_flags="~DO_NOT_USE+NON_SCIENCE",
 ):
     """Get a DQ bit mask from an input image
 
@@ -672,7 +673,7 @@ def reproject_image(
         file: File to reproject
         optimal_wcs: Optimal WCS for input image stack
         optimal_shape: Optimal shape for input image stack
-        hdu_type: Type of HDU. Can either be 'data' or 'var_rnoise'
+        hdu_type: Type of HDU. Can either be 'data', 'err', or 'var_rnoise'
         do_sigma_clip: Whether to perform sigma-clipping or not.
             Defaults to False
         stacked_image: Stacked image or not? Defaults to False
@@ -691,6 +692,12 @@ def reproject_image(
     else:
         raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
 
+    hdu_mapping = {
+        "data": "SCI",
+        "err": "ERR",
+        "var_rnoise": "VAR_RNOISE",
+    }
+
     if not stacked_image:
         with datamodels.open(file) as hdu:
 
@@ -705,14 +712,20 @@ def reproject_image(
 
             if hdu_type == "data":
                 data = copy.deepcopy(hdu.data)
+            elif hdu_type == "err":
+                data = copy.deepcopy(hdu.err)
             elif hdu_type == "var_rnoise":
                 data = copy.deepcopy(hdu.var_rnoise)
             else:
                 raise Warning(f"Unsure how to deal with hdu_type {hdu_type}")
 
     else:
+
+        hdu_name = hdu_mapping[hdu_type]
+
         with fits.open(file) as hdu:
-            data = copy.deepcopy(hdu["SCI"].data)
+            sci = copy.deepcopy(hdu["SCI"].data)
+            data = copy.deepcopy(hdu[hdu_name].data)
             wcs = hdu["SCI"].header
             w_in = WCS(wcs)
         dq_bit_mask = None
@@ -720,7 +733,7 @@ def reproject_image(
     sig_mask = None
     if do_sigma_clip:
         sig_mask = make_source_mask(
-            data,
+            sci,
             mask=dq_bit_mask,
             dilate_size=7,
         )
@@ -728,28 +741,42 @@ def reproject_image(
 
     data[data == 0] = np.nan
 
-    # Find the minimal shape for the reprojection. This is from the astropy reproject routines
-    ny, nx = data.shape
-    xc = np.array([-0.5, nx - 0.5, nx - 0.5, -0.5])
-    yc = np.array([-0.5, -0.5, ny - 0.5, ny - 0.5])
-    xc_out, yc_out = optimal_wcs.world_to_pixel(w_in.pixel_to_world(xc, yc))
+    # This comes from the astropy reproject routines
+    edges = sample_array_edges(data.shape, n_samples=11)[::-1]
+    edges_out = optimal_wcs.world_to_pixel(w_in.pixel_to_world(*edges))[::-1]
 
-    if np.any(np.isnan(xc_out)) or np.any(np.isnan(yc_out)):
-        imin = 0
-        imax = optimal_shape[1]
-        jmin = 0
-        jmax = optimal_shape[0]
+    # Determine the cutout parameters
+
+    # In some cases, images might not have valid coordinates in the corners,
+    # such as all-sky images or full solar disk views. In this case we skip
+    # this step and just use the full output WCS for reprojection.
+
+    ndim_out = len(optimal_shape)
+
+    skip_data = False
+    if np.any(np.isnan(edges_out)):
+        bounds = list(zip([0] * ndim_out, optimal_shape))
     else:
-        imin = max(0, int(np.floor(xc_out.min() + 0.5)))
-        imax = min(optimal_shape[1], int(np.ceil(xc_out.max() + 0.5)))
-        jmin = max(0, int(np.floor(yc_out.min() + 0.5)))
-        jmax = min(optimal_shape[0], int(np.ceil(yc_out.max() + 0.5)))
+        bounds = []
+        for idim in range(ndim_out):
+            imin = max(0, int(np.floor(edges_out[idim].min() + 0.5)))
+            imax = min(optimal_shape[idim], int(np.ceil(edges_out[idim].max() + 0.5)))
+            bounds.append((imin, imax))
+            if imax < imin:
+                skip_data = True
+                break
 
-    if imax < imin or jmax < jmin:
+    if skip_data:
         return
 
-    wcs_out_indiv = optimal_wcs[jmin:jmax, imin:imax]
-    shape_out_indiv = (jmax - jmin, imax - imin)
+    slice_out = tuple([slice(imin, imax) for (imin, imax) in bounds])
+
+    if isinstance(optimal_wcs, WCS):
+        wcs_out_indiv = optimal_wcs[slice_out]
+    else:
+        wcs_out_indiv = SlicedLowLevelWCS(optimal_wcs.low_level_wcs, slice_out)
+
+    shape_out_indiv = [imax - imin for (imin, imax) in bounds]
 
     data_reproj_small = r_func(
         (data, wcs),
@@ -787,13 +814,32 @@ def reproject_image(
         np.logical_or(data_reproj_small == 0, ~np.isfinite(data_reproj_small))
     ] = 0
     data_array = ReprojectedArraySubset(
-        data_reproj_small, footprint, imin, imax, jmin, jmax
+        data_reproj_small, footprint, bounds[1][0], bounds[1][1], bounds[0][0], bounds[0][1],
     )
 
     del hdu
     gc.collect()
 
     return data_array
+
+
+def sample_array_edges(shape, *, n_samples):
+    # Given an N-dimensional array shape, sample each edge of the array using
+    # the requested number of samples (which will include vertices). To do this
+    # we iterate through the dimensions and for each one we sample the points
+    # in that dimension and iterate over the combination of other vertices.
+    # Returns an array with dimensions (N, n_samples)
+    all_positions = []
+    ndim = len(shape)
+    shape = np.array(shape)
+    for idim in range(ndim):
+        for vertex in range(2 ** ndim):
+            positions = -0.5 + shape * ((vertex & (2 ** np.arange(ndim))) > 0).astype(int)
+            positions = np.broadcast_to(positions, (n_samples, ndim)).copy()
+            positions[:, idim] = np.linspace(-0.5, shape[idim] - 0.5, n_samples)
+            all_positions.append(positions)
+    positions = np.unique(np.vstack(all_positions), axis=0).T
+    return positions
 
 
 def do_jwst_convolution(
@@ -867,7 +913,7 @@ def do_jwst_convolution(
 
         new_central_pixel = (interpolate_kernel_size - 1) / 2
         new_grid = (
-            np.arange(interpolate_kernel_size) - new_central_pixel
+                           np.arange(interpolate_kernel_size) - new_central_pixel
                    ) * image_pix_scale
         x_coords_new, y_coords_new = np.meshgrid(new_grid, new_grid)
 
@@ -1020,21 +1066,45 @@ def save_file(im,
 
 
 def make_stacked_image(
-    files,
-    out_name,
-    reproject_func="interp",
-    match_background=False,
+        files,
+        out_name,
+        additional_hdus=None,
+        auto_rotate=True,
+        reproject_func="interp",
+        match_background=False,
 ):
     """Create a quick stacked image from a series of input images
 
     Args:
         files: List of input files
         out_name: Output stacked file
+        additional_hdus: Can also append some additional data beyond the science
+            extension by specifying the fits extension here. Defaults to None,
+            which will not add anything extra
+        auto_rotate: Whether to rotate the WCS to make a minimum sized image.
+            Defaults to True
         reproject_func: Which reproject function to use. Defaults to 'interp',
             but can also be 'exact' or 'adaptive'
         match_background: Whether to match backgrounds when making the stack.
             Defaults to False
     """
+
+    # HDUs we need to square before they go into the reprojection
+    sq_hdus = [
+        "ERR",
+    ]
+
+    # HDUs we'll need to take the square root of the stacked image to be meaningful
+    sqrt_hdus = [
+        "ERR",
+        "VAR_RNOISE",
+    ]
+
+    combine_functions = {
+        "SCI": "mean",
+        "ERR": "sum",
+        "VAR_RNOISE": "sum",
+    }
 
     if reproject_func == "interp":
         r_func = reproject_interp
@@ -1044,6 +1114,11 @@ def make_stacked_image(
         r_func = reproject_adaptive
     else:
         raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
+
+    if additional_hdus is None:
+        additional_hdus = []
+    if isinstance(additional_hdus, str):
+        additional_hdus = [additional_hdus]
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -1056,25 +1131,61 @@ def make_stacked_image(
             dq_bit_mask = get_dq_bit_mask(hdu["DQ"].data)
 
             hdu["SCI"].data[dq_bit_mask != 0] = np.nan
+            for additional_hdu in additional_hdus:
+                hdu[additional_hdu].data[dq_bit_mask != 0] = np.nan
+
+                # Make sure the full WCS is in there by copying over the header
+                hdr = copy.deepcopy(hdu["SCI"].header)
+                hdr["EXTNAME"] = additional_hdu
+                hdu[additional_hdu].header = copy.deepcopy(hdr)
+
+                if additional_hdu in sq_hdus:
+                    hdu[additional_hdu].data = hdu[additional_hdu].data ** 2
 
             hdus.append(hdu)
 
         output_projection, shape_out = find_optimal_celestial_wcs(hdus,
                                                                   hdu_in="SCI",
-                                                                  auto_rotate=True,
+                                                                  auto_rotate=auto_rotate,
                                                                   )
-        stacked_image, stacked_foot = reproject_and_coadd(
+        hdr = output_projection.to_header()
+
+        # Loop over the various HDUs we want to reproject
+        stacked_images = {}
+        stacked_image, stacked_footprint = reproject_and_coadd(
             hdus,
             output_projection=output_projection,
             shape_out=shape_out,
             hdu_in="SCI",
+            combine_function=combine_functions["SCI"],
             reproject_function=r_func,
             match_background=match_background,
         )
+        stacked_image[stacked_footprint == 0] = np.nan
+        stacked_images["SCI"] = copy.deepcopy(stacked_image)
 
-        hdr = output_projection.to_header()
+        for additional_hdu in additional_hdus:
+            stacked_image, stacked_footprint = reproject_and_coadd(
+                hdus,
+                output_projection=output_projection,
+                shape_out=shape_out,
+                hdu_in=additional_hdu,
+                combine_function=combine_functions[additional_hdu],
+                reproject_function=r_func,
+                match_background=match_background,
+            )
+            stacked_image[stacked_footprint == 0] = np.nan
+            if additional_hdu in sqrt_hdus:
+                stacked_image = np.sqrt(stacked_image)
 
-        hdu = fits.ImageHDU(data=stacked_image, header=hdr, name="SCI")
+            stacked_images[additional_hdu] = copy.deepcopy(stacked_image)
+
+        # Create an HDU list here
+        hdu = fits.HDUList()
+        hdu.append(fits.PrimaryHDU(header=hdus[0][0].header))
+        for key in stacked_images:
+            hdu.append(fits.ImageHDU(data=stacked_images[key], header=hdr, name=key))
+
         hdu.writeto(
             out_name,
             overwrite=True,

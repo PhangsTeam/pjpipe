@@ -1,6 +1,17 @@
 1.1.1 (Unreleased)
 ==================
 
+- Added ``combine_nircam_short`` option in ``level_match_step``, which will match levels
+  between the four NIRCam short imaging chips before doing matching between mosaic tiles
+- ``lv2_step`` will now propagate through individual exposure offset times from backgrounds,
+  which is necessary for selecting a reference image in ``level_match_step``
+- Added ``fit_type`` option to ``level_match_step`` for every option, which allows for
+  plane fitting in the level matching in a modular way
+- ``level_match_step`` fitting method has been changed to resemble the iterative Montage method,
+  which is necessary for plane fitting
+- ``reproject_image`` in ``utils`` can now also reproject error arrays
+- ``make_stacked_image`` in ``utils`` can now also reproject the error and readnoise maps
+- Exposed ``auto_rotate`` in ``make_stacked_image`` in ``utils``
 - Added prefilter option to ``get_wcs_adjust``, which uses constrained diffusion to remove large-scale structure
 - Added ``recombine_lyot`` option to ``level_match_step``, which allows for recombining
   the lyot coronagraph into the main MIRI science chip before matching between mosaic tiles
@@ -12,9 +23,11 @@
   or ``reproject_adaptive``. For MIRI, ``reproject_exact`` may work better. This applies to ``anchoring_step``,
   ``astrometric_align_step``, ``level_match_step``, ``multi_tile_destripe_step``, ``psf_matching_step``, and
   ``release_step``
+- Fix bug for lv1 hanging on newer Macbooks
 - Fix bug for parameters with 'pix' in getting picked up like numbers of pixels
 - Updated PHANGS Cy3 config
 - Include links to Francesco Belfiore's kernel generation repository in the docs
+- Updated various package requirements
 
 1.1.0 (2024-03-04)
 ==================

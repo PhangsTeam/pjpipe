@@ -11,6 +11,7 @@ from functools import partial
 
 import jwst
 import numpy as np
+from astropy.io import fits
 from astropy.table import Table, vstack
 from jwst.pipeline import calwebb_image2
 from stdatamodels.jwst import datamodels
@@ -263,7 +264,28 @@ class Lv2Step:
             "products": [],
         }
 
+        # Pull out an average background time if we care about that
+        if self.band_type in self.bgr_observation_types:
+            bgr_times = []
+            for row in bgr_tab:
+                with datamodels.open(row["File"]) as im:
+                    bgr_times.append(im.meta.time.heliocentric_expmid)
+            if len(bgr_times) == 0:
+                bgr_time = "null"
+            else:
+                bgr_time = np.nanmean(bgr_times)
+        else:
+            bgr_time = "null"
+
         for row in sci_tab:
+
+            # Get the difference from the backgrounds, if we have any
+            if bgr_time != "null":
+                with datamodels.open(row["File"]) as im:
+                    sci_bgr_offset = im.meta.time.heliocentric_expmid - bgr_time
+            else:
+                sci_bgr_offset = "null"
+
             name = os.path.split(row["File"])[-1].split("_rate.fits")[0]
 
             json_content["products"].append(
@@ -275,6 +297,7 @@ class Lv2Step:
                             "expname": row["File"],
                             "exptype": "science",
                             "exposerr": "null",
+                            "scibgroffset": str(sci_bgr_offset),
                         }
                     ],
                 }
@@ -366,6 +389,33 @@ class Lv2Step:
 
         del im2
         gc.collect()
+
+        # Add in background offset times, if we're a background observation
+        if self.band_type in self.bgr_observation_types:
+            with open(asn_file) as f:
+                asn_json = json.load(f)
+                for product in asn_json["products"]:
+                    for member in product["members"]:
+
+                        # If we're not a science image, or we don't have a background, skip
+                        if member["exptype"] != "science":
+                            continue
+                        if member["scibgroffset"] == "null":
+                            continue
+
+                        expname_short = member["expname"].split(os.path.sep)[-1].split("_rate.fits")[0]
+                        out_files = glob.glob(os.path.join(self.out_dir,
+                                                           f"{expname_short}*cal.fits",
+                                                           ),
+                                              )
+                        sci_bgr_offset = member["scibgroffset"]
+                        for out_file in out_files:
+                            with datamodels.open(out_file) as im:
+                                im.meta.time.sci_bgr_offset = sci_bgr_offset
+                                im.save(out_file)
+                            with fits.open(out_file) as hdu:
+                                hdu[0].header["DT_BGR"] = (sci_bgr_offset, 'Time offset between image and backgrounds')
+                                hdu.writeto(out_file, overwrite=True)
 
         return True
 
