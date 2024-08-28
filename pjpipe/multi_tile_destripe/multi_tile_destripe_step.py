@@ -601,7 +601,6 @@ class MultiTileDestripeStep:
 
             # First case, we have a weird mix of rotations. In which case direction should be None
             if not np.all(internal_diff < 10):
-                raise ValueError("Input images have a variety of rotations. Have not encountered this before")
                 direction = None
                 log.info("Input images have a variety of rotations. Defaulting to smoothing over both axes")
 

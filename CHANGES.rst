@@ -1,6 +1,8 @@
 1.1.1 (Unreleased)
 ==================
 
+- Removed raised warning in ``multi_tile_destripe_step`` when input images have a variety of
+  rotations
 - Added ``combine_nircam_short`` option in ``level_match_step``, which will match levels
   between the four NIRCam short imaging chips before doing matching between mosaic tiles
 - ``lv2_step`` will now propagate through individual exposure offset times from backgrounds,
