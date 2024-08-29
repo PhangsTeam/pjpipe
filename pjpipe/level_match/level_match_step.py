@@ -1614,10 +1614,8 @@ class LevelMatchStep:
                     valid_idx = np.isfinite(diff_arr)
 
                     # Get the coords, account for the differences in where the arrays start
-                    # IMPORTANT: Our indexing conventions are different to reproject, so i/j
-                    # gets swapped
-                    diff_ii = ii[valid_idx] + diff.jmin
-                    diff_jj = jj[valid_idx] + diff.imin
+                    diff_ii = ii[valid_idx] + diff.bounds[1][0]
+                    diff_jj = jj[valid_idx] + diff.bounds[0][0]
 
                     diff = diff_arr[valid_idx].tolist()
                     err = err_arr[valid_idx].tolist()

@@ -813,8 +813,11 @@ def reproject_image(
     footprint[
         np.logical_or(data_reproj_small == 0, ~np.isfinite(data_reproj_small))
     ] = 0
+
     data_array = ReprojectedArraySubset(
-        data_reproj_small, footprint, bounds[1][0], bounds[1][1], bounds[0][0], bounds[0][1],
+        data_reproj_small,
+        footprint,
+        bounds,
     )
 
     del hdu
@@ -1130,9 +1133,17 @@ def make_stacked_image(
 
             dq_bit_mask = get_dq_bit_mask(hdu["DQ"].data)
 
-            hdu["SCI"].data[dq_bit_mask != 0] = np.nan
+            # For some reason this doesn't like being in-place edited,
+            # so dipsy-doodle
+            data = copy.deepcopy(hdu["SCI"].data)
+            data[dq_bit_mask != 0] = np.nan
+            hdu["SCI"].data = copy.deepcopy(data)
+
             for additional_hdu in additional_hdus:
-                hdu[additional_hdu].data[dq_bit_mask != 0] = np.nan
+
+                data = copy.deepcopy(hdu[additional_hdu].data)
+                data[dq_bit_mask != 0] = np.nan
+                hdu[additional_hdu].data = copy.deepcopy(data)
 
                 # Make sure the full WCS is in there by copying over the header
                 hdr = copy.deepcopy(hdu["SCI"].header)
