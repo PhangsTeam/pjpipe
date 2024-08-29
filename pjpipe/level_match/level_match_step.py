@@ -173,6 +173,7 @@ def plane(x, y, params):
 def plane_resid(params,
                 points,
                 err=None,
+                rescale_result=False,
                 return_sum=True,
                 ):
     """Calculates the difference between a plane and input points
@@ -181,6 +182,9 @@ def plane_resid(params,
         params: Parameters for the plane
         points: (x, y, z) coordinates measured
         err: Error on each z-point. Defaults to None
+        rescale_result: If True, will rescale the result
+            by the number of points so the chi-square
+            space isn't so severe. Defaults to False
         return_sum: Whether to return the sum or all
             the individual values. Defaults to True
     """
@@ -193,8 +197,9 @@ def plane_resid(params,
     else:
         result = diff ** 2 / err ** 2
 
-    # Scale chisq using sqrt(2N) to account for large number of points
-    result /= np.sqrt(2 * len(points[:, 0]))
+    if rescale_result:
+        # Scale chisq using sqrt(2N) to account for large number of points
+        result /= np.sqrt(2 * len(points[:, 0]))
 
     if return_sum:
         result = np.nansum(result)
@@ -312,7 +317,7 @@ class LevelMatchStep:
             do_sigma_clip=False,
             weight_method="equal",
             min_area_percent=0.002,
-            min_linear_frac=0.25,
+            min_linear_frac=0.2,
             rms_sig_limit=2,
             reproject_func="interp",
             overwrite=False,
@@ -372,7 +377,7 @@ class LevelMatchStep:
             min_area_percent: Minimum percentage of average areal overlap to remove tiles.
                 Defaults to 0.002 (0.2%)
             min_linear_frac: Minimum linear overlap in any direction to keep tiles.
-                Defaults to 0.25
+                Defaults to 0.2
             rms_sig_limit: Sigma limit for cutting off noisy fits. Defaults to 2
             reproject_func: Which reproject function to use. Defaults to 'interp',
                 but can also be 'exact' or 'adaptive'
@@ -889,8 +894,8 @@ class LevelMatchStep:
                     im = apply_subtraction(im,
                                            delta,
                                            fit_type=fit_type,
-                                           ref_ra=ref_ra,  # [idx],
-                                           ref_dec=ref_dec,  # [idx],
+                                           ref_ra=ref_ra,
+                                           ref_dec=ref_dec,
                                            ref_wcs=optimal_wcs,
                                            ref_shape=optimal_shape,
                                            )
@@ -1492,7 +1497,7 @@ class LevelMatchStep:
             plot_name=None,
             maxiters=10,
             plane_fit_maxiters=20,
-            plane_fit_abs_tol=0,
+            plane_fit_abs_tol=1e-8,
             plane_fit_rel_tol=1e-5,
     ):
         """Calculate relative difference between groups of files on the same pixel grid
@@ -1509,7 +1514,7 @@ class LevelMatchStep:
             plane_fit_maxiters: Maximum number of iterations for the plane fitting.
                 Defaults to 20
             plane_fit_abs_tol: Absolute tolerance to define convergence in the
-                plane fit. Defaults to 0 (i.e. don't use absolute tolerances)
+                plane fit. Defaults to 1e-8
             plane_fit_rel_tol: Relative tolerance to define convergence in
                 the plane fitting. Defaults to 1e-5
         """
@@ -1544,7 +1549,7 @@ class LevelMatchStep:
             file1_err = copy.deepcopy(file1["err"])
 
             ii, jj = np.indices(file1_data.array.shape, dtype=float)
-            nan_idx = np.where(np.isnan(file1_data.array))
+            nan_idx = np.where(np.isnan(file1_data.array) | (file1_data.footprint == 0))
 
             ii[nan_idx] = np.nan
             jj[nan_idx] = np.nan
@@ -1568,20 +1573,20 @@ class LevelMatchStep:
                     diff = file2_data - file1_data
                     diff_arr = diff.array
                     diff_foot = diff.footprint
-                    diff_arr[diff == 0] = np.nan
                     diff_arr[diff_foot == 0] = np.nan
 
                     # Pull out error arrays, remove NaNs
                     err = file1_err * file1_err + file2_err * file2_err
                     err_arr = np.sqrt(err.array)
-                    err_arr[diff == 0] = np.nan
                     err_arr[diff_foot == 0] = np.nan
 
                     # Get out coordinates where data is valid, so we can do a linear
                     # extent test
+                    nan_idx = np.where(np.isnan(file2_data.array) | (file2_data.footprint == 0))
+
                     ii, jj = np.indices(file2_data.array.shape, dtype=float)
-                    ii[np.where(np.isnan(file2_data.array))] = np.nan
-                    jj[np.where(np.isnan(file2_data.array))] = np.nan
+                    ii[nan_idx] = np.nan
+                    jj[nan_idx] = np.nan
 
                     # If we have something that's all NaNs
                     # (e.g. lyot on MIRI subarray obs.), skip
@@ -1611,7 +1616,8 @@ class LevelMatchStep:
                     ):
                         lin_size = 1
 
-                    valid_idx = np.isfinite(diff_arr)
+                    # Get valid points, which are where we have finite diffs/errs and the error array isn't 0
+                    valid_idx = np.isfinite(diff_arr) & np.isfinite(err_arr) & (err_arr != 0)
 
                     # Get the coords, account for the differences in where the arrays start
                     diff_ii = ii[valid_idx] + diff.bounds[1][0]
@@ -1717,16 +1723,12 @@ class LevelMatchStep:
                 # Get an initial guess which we'll normalise things by. This is just a flat plane
                 delta = np.array([0, 0, initial_offset], dtype=float)
 
-                # Set up an initial difference for comparison, with really big numbers
-                delta_diff = np.ones_like(delta) * 1e9
-
                 converged = False
                 n_iter = 0
 
                 while not converged and n_iter <= plane_fit_maxiters:
 
-                    # prev_delta = copy.deepcopy(delta)
-                    prev_delta_diff = copy.deepcopy(delta_diff)
+                    prev_delta = copy.deepcopy(delta)
 
                     # Look at the current plane we have, and reject points that are
                     # significantly different to it
@@ -1747,6 +1749,7 @@ class LevelMatchStep:
                     func = partial(plane_resid,
                                    points=points,
                                    err=errs[fit_idx],
+                                   rescale_result=True,
                                    )
                     res = minimize(func,
                                    delta,
@@ -1758,20 +1761,22 @@ class LevelMatchStep:
                     # Add this to our final delta
                     delta += delta_diff
 
-                    # If the changes are very small, then just call this converged and jump out
-                    if np.all(np.isclose(delta_diff,
-                                         prev_delta_diff,
-                                         atol=plane_fit_abs_tol,
-                                         rtol=plane_fit_rel_tol,
-                                         )
-                              ):
+                    # If the changes are very small from the previous delta, then just call this converged and jump out
+                    if np.all(
+                            np.isclose(
+                                delta,
+                                prev_delta,
+                                atol=plane_fit_abs_tol,
+                                rtol=plane_fit_rel_tol,
+                            )
+                    ):
                         converged = True
                         log.debug(f"Plane fitting converged after {n_iter} iterations")
 
                     n_iter += 1
 
                 if not converged:
-                    log.debug(f"Plane fitting did not converge after {n_iter-1} iterations")
+                    log.debug(f"Plane fitting did not converge after {n_iter - 1} iterations")
 
                 ii_min, ii_max = np.nanmin(iis), np.nanmax(iis)
                 jj_min, jj_max = np.nanmin(jjs), np.nanmax(jjs)
@@ -1904,7 +1909,7 @@ class LevelMatchStep:
             fit_type="level",
             n_draws=25,
             n_iter=10000,
-            convergence_abs_tol=0,
+            convergence_abs_tol=1e-8,
             convergence_rel_tol=1e-5,
             ref_idx=None,
     ):
@@ -1928,8 +1933,7 @@ class LevelMatchStep:
                 controls how many draws we do. Defaults to 25
             n_iter: Maximum number of iterations before breaking out of the fitting routine. Defaults
                 to 10,000
-            convergence_abs_tol: Absolute tolerance to define convergence. Defaults to 0 (i.e. don't use
-                absolute tolerances)
+            convergence_abs_tol: Absolute tolerance to define convergence. Defaults to 1e-8
             convergence_rel_tol: Relative tolerance to define convergence. Defaults to 1e-5
             ref_idx: Index to define the zero level for all the level matching. Defaults to None, which
                 will use the average correction
@@ -1965,7 +1969,7 @@ class LevelMatchStep:
         # Create weight matrix
         if self.weight_method == "equal":
             # Weight evenly
-            weight = np.ones_like(delta_mat)
+            weight = np.ones_like(use_mat)
         elif self.weight_method == "npix":
             # Weight by straight number of pixels
             weight = 0.5 * (npix_mat + npix_mat.T)
@@ -2052,7 +2056,7 @@ class LevelMatchStep:
             delta_arr = {}
             best_fits = {}
 
-            delta_mat_corr_prev = copy.deepcopy(delta_mat_corr)
+            deltas_prev = copy.deepcopy(deltas)
 
             for i in range(ns):
                 if invalid[i]:
@@ -2183,40 +2187,45 @@ class LevelMatchStep:
                     if invalid[j]:
                         continue
 
-                    if valid_mat[i, j] == 0:
+                    if use_mat[i, j] == 0:
                         continue
 
                     # Apply the corrections within the matrix
                     delta_mat_corr[i, j, :] -= best_fits[i]
                     delta_mat_corr[i, j, :] += best_fits[j]
 
-            # Check for convergence. If the maximum difference hasn't
+            # Check for convergence. If the delta values haven't
             # changed within the tolerance, jump out and call it a day
-            has_converged = np.all(np.isclose(delta_mat_corr,
-                                              delta_mat_corr_prev,
-                                              atol=convergence_abs_tol,
-                                              rtol=convergence_rel_tol,
-                                              )
-                                   )
+            has_converged = np.all(
+                np.isclose(
+                    deltas,
+                    deltas_prev,
+                    atol=convergence_abs_tol,
+                    rtol=convergence_rel_tol,
+                )
+            )
 
-            # if convergence_param < convergence_tol:
             if has_converged:
-
                 if curr_fit_type != fit_type:
                     level_converged = True
                 else:
                     converged = True
-                log.info(f"Level matching converged after {iteration} iterations")
 
-            if level_iteration >= n_level and not level_converged:
-                log.info(f"Level matching has not converged after {iteration} iterations")
-                level_converged = True
+                log.debug(f"{curr_fit_type} matching converged after {iteration} iterations")
 
             # Update convergences
             if not level_converged:
                 level_iteration += 1
             if not converged:
                 iteration += 1
+
+            if level_iteration >= n_level and not level_converged:
+                log.debug(f"{curr_fit_type} matching has not converged after {iteration} iterations")
+                level_converged = True
+
+            if iteration >= n_iter and not converged:
+                log.debug(f"{curr_fit_type} matching has not converged after {iteration} iterations")
+                converged = True
 
         # If we don't have a selected reference index, take the average correction
         if ref_idx is None:
