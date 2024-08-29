@@ -22,7 +22,7 @@ targets = [
 ]
 
 # Version for the reprocessing
-version = 'v1p1p1'
+version = 'v1p2'
 
 # Bands to consider
 bands = [
@@ -30,14 +30,14 @@ bands = [
     'F300M',
     'F335M',
     'F360M',
-#    'F1000W',
-#    'F770W',
-#    'F1130W',
-#    'F2100W',
-#    'F1000W_bgr',
-#    'F770W_bgr',
-#    'F1130W_bgr',
-#    'F2100W_bgr',
+    'F1000W',
+    'F770W',
+    'F1130W',
+    'F2100W',
+    'F1000W_bgr',
+    'F770W_bgr',
+    'F1130W_bgr',
+    'F2100W_bgr',
 ]
 
 # Steps. These can/should be different
@@ -367,4 +367,4 @@ move_psf_matched = true
 move_diagnostic_plots = true
 
 [parameters.regress_against_previous]
-prev_version = 'v1p0p1'
+prev_version = 'v1p1p1'

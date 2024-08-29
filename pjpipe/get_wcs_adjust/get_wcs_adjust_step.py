@@ -599,11 +599,12 @@ class GetWCSAdjustStep:
             unmatched_array[unmatched_array == 0] = np.nan
 
             # Finally, cut down to just the overlap area
-            ref_array = ref_array[diff.imin:diff.imax, diff.jmin:diff.jmax]
-            unmatched_array = unmatched_array[diff.imin:diff.imax, diff.jmin:diff.jmax]
+            diff_bounds = tuple([slice(imin, imax) for (imin, imax) in diff.bounds])
+            ref_array = ref_array[diff_bounds]
+            unmatched_array = unmatched_array[diff_bounds]
 
             # And cut down the WCS to the overlap
-            hdr = optimal_wcs[diff.imin:diff.imax, diff.jmin:diff.jmax].to_header()
+            hdr = optimal_wcs[diff_bounds].to_header()
             hdr["NAXIS1"] = ref_array.shape[1]
             hdr["NAXIS2"] = ref_array.shape[0]
 

@@ -28,39 +28,47 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
 ]
 
+# Just to note for future runs where we might need to update packages. This goes
+
+# 0) set up some testing conda env
+# 1) install .docs dependencies
+# 2) pip install jwst
+# 3) pip install astroquery cmocean image-registration lmfit pypdf pytest reproject shapely stwcs threadpoolctl tqdm webbpsf
+# X) pip list to get the version numbers
+
 dependencies = [
-    "astropy>=6.0.0",
-    "astroquery>=0.4.6",
-    "cmocean>=3.1.3",
-    "crds>=11.17.16",
+    "astropy>=6.1.2",
+    "astroquery>=0.4.7",
+    "cmocean>=4.0.3",
+    "crds>=11.18.1",
     "gwcs>=0.21.0",
-    "image-registration>=0.2.8",
-    "jwst>=1.14.0",
-    "lmfit>=1.2.2",
-    "matplotlib>=3.8.2",
+    "image-registration>=0.2.9",
+    "jwst>=1.15.1",
+    "lmfit>=1.3.2",
+    "matplotlib>=3.9.2",
     "numpy>=1.26.4,<2",
-    "photutils>=1.10.0",
-    "pypdf>=4.0.1",
-    "pytest>=8.0.0",
-    "reproject>=0.13.1",
-    "requests>=2.31.0",
-    "scikit-image>=0.22.0",
-    "scipy>=1.12.0",
-    "shapely>=2.0.2",
-    "setuptools>=68.2.2",
-    "stdatamodels>=1.10.1",
-    "stwcs>=1.7.2",
+    "photutils>=1.13.0",
+    "pypdf>=4.3.1",
+    "pytest>=8.3.2",
+    "reproject>=0.14.0",
+    "requests>=2.32.3",
+    "scikit-image>=0.24.0",
+    "scipy>=1.14.1",
+    "shapely>=2.0.6",
+    "setuptools>=72.2.0",
+    "stdatamodels>=2.0.0",
+    "stwcs>=1.7.3",
     "spacepylot@git+https://github.com/ejwatkins-astro/spacepylot.git",
-    "threadpoolctl>=3.2.0",
+    "threadpoolctl>=3.5.0",
     "tomli>=2.0.1",
-    "tqdm>=4.66.1",
-    "tweakwcs>=0.8.7",
-    "webbpsf>=1.2.1",
+    "tqdm>=4.66.5",
+    "tweakwcs>=0.8.8",
+    "webbpsf>=1.3.0",
 ]
 
 [project.optional-dependencies]
 docs = [
-    "sphinx-automodapi>=0.16.0",
+    "sphinx-automodapi>=0.17.0",
     "sphinx-rtd-theme>=2.0.0",
 ]
 

@@ -26,6 +26,7 @@ ALLOWED_PREFILTER = [
     "constrained_diffusion",
 ]
 
+
 class AstrometricCatalogStep:
     def __init__(
             self,
@@ -55,9 +56,8 @@ class AstrometricCatalogStep:
         if starfind_method not in ALLOWED_STARFIND_METHODS:
             raise ValueError(f"starfind_method should be one of {ALLOWED_STARFIND_METHODS}")
 
-        if starfind_prefilter not in ALLOWED_PREFILTER:
+        if starfind_prefilter is not None and starfind_prefilter not in ALLOWED_PREFILTER:
             raise ValueError(f"starfind_method should be one of {ALLOWED_PREFILTER}")
-
 
         if dao_parameters is not None:
             log.warning("dao_parameters has been deprecated in favour of starfind_parameters, "
@@ -170,7 +170,6 @@ class AstrometricCatalogStep:
 
             recursive_setattr(starfind, astro_key, value)
 
-    
         if self.starfind_prefilter == "constrained_diffusion":
             scales, _ = constrained_diffusion(data, n_scales=3)
             filter_data = scales.sum(axis=0)

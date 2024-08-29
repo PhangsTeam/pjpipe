@@ -30,6 +30,7 @@
 - Updated PHANGS Cy3 config
 - Include links to Francesco Belfiore's kernel generation repository in the docs
 - Updated various package requirements
+- Updated indexing to align with new ``reproject`` updates
 
 1.1.0 (2024-03-04)
 ==================
