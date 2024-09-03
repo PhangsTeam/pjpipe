@@ -1,4 +1,4 @@
-1.1.1 (Unreleased)
+1.2.0 (2024-09-03)
 ==================
 
 - Removed raised warning in ``multi_tile_destripe_step`` when input images have a variety of
