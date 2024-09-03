@@ -40,6 +40,9 @@ master_doc = 'index'
 
 todo_include_todos = True
 
+# Mock out spacepylot, since it's not automatically installed from pip
+autodoc_mock_imports = ['spacepylot']
+
 html_theme_options = {
     'collapse_navigation': False,
     'navigation_depth': 4,
