@@ -58,7 +58,7 @@ dependencies = [
     "setuptools>=72.2.0",
     "stdatamodels>=2.0.0",
     "stwcs>=1.7.3",
-    "spacepylot@git+https://github.com/ejwatkins-astro/spacepylot.git",
+#    "spacepylot@git+https://github.com/ejwatkins-astro/spacepylot.git",
     "threadpoolctl>=3.5.0",
     "tomli>=2.0.1",
     "tqdm>=4.66.5",

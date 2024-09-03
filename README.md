@@ -41,6 +41,13 @@ The easiest way to install PJPipe is via pip:
 pip install pjpipe
 ```
 
+You **must** also install spacepylot for PJPipe to work. PyPI does not work with
+direct dependencies, so install this afterwards like:
+
+```bash
+pip install git+https://github.com/ejwatkins-astro/spacepylot.git
+```
+
 ## Setting up config files
 
 The pipeline is primarily interfaced with using config files. These are .toml,
