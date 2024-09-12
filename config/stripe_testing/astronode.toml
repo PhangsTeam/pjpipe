@@ -1,0 +1,9 @@
+crds_path = '/data/beegfs/astro-storage/groups/schinnerer/williams/crds/'
+crds_context = 'jwst_1276.pmap'
+raw_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_raw/stripe_testing/'
+reprocess_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_stripe_testing/'
+alignment_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/pjpipe/config/stripe_testing/alignment/'
+webb_psf_data = '/data/beegfs/astro-storage/groups/schinnerer/williams/webbpsf-data'
+anchor_ref_dir =   '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data/ref_images/'
+kernel_dir = '/data/beegfs/astro-storage/groups/schinnerer/williams/jwst_data/kernels/'
+processors = 20
