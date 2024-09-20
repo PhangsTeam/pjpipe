@@ -1,3 +1,8 @@
+1.2.1 (Unreleased)
+==================
+
+- Change how the level 3 step handles models for newer JWST versions
+
 1.2.0 (2024-09-03)
 ==================
 
