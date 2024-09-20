@@ -1,12 +1,12 @@
 # List of targets
 targets = [
-#    'ngc0300',
     'ngc0598',
-#    'ngc7793',
+    'ngc0300',
+    'ngc7793',
 ]
 
 # Version for the reprocessing
-version = 'v0p2p1'
+version = 'v0p3'
 
 # Bands to consider
 bands = [
@@ -24,17 +24,17 @@ steps = [
     'download',
     'gaia_query',
     'lv1',
-    'lv2',
     'single_tile_destripe.nircam',
+    'lv2',
     'get_wcs_adjust',
     'apply_wcs_adjust',
     'lyot_separate.miri',
-    'multi_tile_destripe.nircam',
     'level_match',
+    'multi_tile_destripe.nircam',
 #    'psf_model',  # TODO
     'lv3',
+    'astrometric_catalog.miri',
     'astrometric_align',
-    'mosaic_individual_fields',
     'release',
     'regress_against_previous',
 ]
@@ -93,32 +93,32 @@ group_dithers = [
 
 [parameters.get_wcs_adjust.tweakreg_parameters]
 
-align_to_gaia = false
-brightest.miri = 500
-brightest.nircam_long = 500
-brightest.nircam_short = 125
+starfinder = 'iraf'
+brightest = 500
 snr_threshold = 3
 expand_refcat = true
-fitgeometry = 'shift'
-minobj = 3
 peakmax.nircam = 20
 roundlo.nircam = -0.5
 roundhi.nircam = 0.5
 
 # Parameters to get wcs_adjust shifts
+minobj = 3
+sigma = 2
 searchrad = 2
 separation.miri = 1
-tolerance.miri = 0.7
 separation.nircam = 2
-tolerance.nircam = 1
+tolerance = 0.3
 use2dhist = true
+fitgeometry = 'shift'
 nclip = 5
 
 # Tweak boxsize, so we detect objects in diffuse emission
 bkg_boxsize.nircam_short = 100
 bkg_boxsize.nircam_long = 100
 bkg_boxsize.miri = 25
-enforce_user_order = false
+
+[parameters.lyot_mask]
+method = 'mask'
 
 [parameters.single_tile_destripe]
 quadrants = true
@@ -131,11 +131,11 @@ filter_extend_mode = "reflect"
 filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
 
 [parameters.multi_tile_destripe]
+
 quadrants = true
-sigma = 3
 weight_type = 'ivm'
 do_large_scale = true
-large_scale_filter_extend_mode = "reflect"
+weight_method = 'mean'
 
 [parameters.level_match]
 do_sigma_clip = false
@@ -167,16 +167,15 @@ save_results = true
 # Skip for MIRI, since we have already solved for this
 skip.miri = true
 
-align_to_gaia = false
+starfinder = 'iraf'
 brightest.nircam_short = 125
 brightest.nircam_long = 500
 brightest.miri = 500
-snr_threshold.nircam = 5
-snr_threshold.miri = 4
+snr_threshold = 3
 expand_refcat = true
 fitgeometry = 'shift'
 minobj = 3
-peakmax.nircam = 1000
+peakmax.nircam = 20
 roundlo.nircam = -0.5
 roundhi.nircam = 0.5
 
@@ -184,17 +183,16 @@ roundhi.nircam = 0.5
 # close to the correct solution
 separation.miri = 1
 separation.nircam = 2
+sigma = 2
 tolerance.nircam_short = 0.3
 tolerance.nircam_long = 0.3
-tolerance.miri = 0.7
+tolerance.miri = 1
 use2dhist = false
-sigma.nircam = 2
-sigma.miri = 3
 
 # Tweak boxsize, so we detect objects in diffuse emission
-bkg_boxsize.nircam = 100
+bkg_boxsize.nircam_short = 100
+bkg_boxsize.nircam_long = 100
 bkg_boxsize.miri = 25
-enforce_user_order = false
 
 [parameters.lv3.jwst_parameters.skymatch]
 
@@ -217,15 +215,16 @@ rotation = 0.0
 in_memory = true
 
 [parameters.lv3.jwst_parameters.source_catalog]
-snr_threshold = 3
+snr_threshold = 2
 npixels = 5
-bkg_boxsize = 100
+bkg_boxsize = 25
 deblend = true
 
 [parameters.astrometric_catalog]
-snr = 50
+snr = 10
+starfind_method = "iraf"
 
-[parameters.astrometric_catalog.dao_parameters]
+[parameters.astrometric_catalog.starfind_parameters]
 sharplo = 0.2
 sharphi = 1.0
 roundlo = -0.5
@@ -258,16 +257,16 @@ searchrad = 2
 separation = 1
 tolerance = 0.5
 use2dhist = false
-fitgeom = 'shift'
+fitgeom = 'rshift'
 nclip = 5
 sigma = 3
 
 [parameters.release]
 
-remove_bloat = false
-move_tweakback = false
-move_backgrounds = false
-move_individual_fields = false
+move_tweakback = true
+move_backgrounds = true
+move_psf_matched = true
+move_diagnostic_plots = true
 
 [parameters.regress_against_previous]
-prev_version = 'v0p2'
+prev_version = 'v0p2p1'

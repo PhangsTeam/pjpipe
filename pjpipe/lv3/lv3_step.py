@@ -9,6 +9,14 @@ import time
 
 import jwst
 from jwst.datamodels import ModelContainer
+
+# FIXME For newer JWST versions, import ModelLibrary
+try:
+    from jwst.datamodels import ModelLibrary
+except ImportError:
+    class ModelLibrary:
+        pass
+
 from jwst.pipeline import calwebb_image3
 from jwst.skymatch import SkyMatchStep
 from jwst.tweakreg import TweakRegStep
@@ -118,12 +126,18 @@ class Lv3Step:
         if skymatch_degroup_dithers is None:
             skymatch_degroup_dithers = []
 
+        if is_bgr:
+            bgr_ext = "_bgr"
+        else:
+            bgr_ext = ""
+
         self.target = target
         self.band = band
         self.in_dir = in_dir
         self.out_dir = out_dir
         self.dr_version = dr_version
         self.is_bgr = is_bgr
+        self.bgr_ext = bgr_ext
         self.step_ext = step_ext
         self.procs = procs
         self.tweakreg_degroup_nircam_modules = tweakreg_degroup_nircam_modules
@@ -230,11 +244,6 @@ class Lv3Step:
             background_name=self.bgr_background_name,
         )
 
-        if self.is_bgr:
-            bgr_ext = "_bgr"
-        else:
-            bgr_ext = ""
-
         json_content = {
             "asn_type": "None",
             "asn_rule": "DMS_Level3_Base",
@@ -247,7 +256,7 @@ class Lv3Step:
             "asn_pool": "none",
             "products": [
                 {
-                    "name": f"{self.target.lower()}_{self.band_type}_lv3_{self.band.lower()}{bgr_ext}",
+                    "name": f"{self.target.lower()}_{self.band_type}_lv3_{self.band.lower()}{self.bgr_ext}",
                     "members": [],
                 }
             ],
@@ -420,47 +429,92 @@ class Lv3Step:
 
         asn_file = tweakreg.run(asn_file)
 
+        # If the asn file is a ModelLibrary, we need to force the name back in
+        use_model_library = False
+
+        if isinstance(asn_file, ModelLibrary):
+            use_model_library = True
+
+            # If there's no final name here, add it now
+            if "name" not in asn_file._asn["products"][0]:
+                name = f"{self.target.lower()}_{self.band_type}_lv3_{self.band.lower()}{self.bgr_ext}"
+                asn_file._asn["products"][0]["name"] = copy.deepcopy(name)
+
         del tweakreg
         gc.collect()
 
         # Make sure we skip tweakreg since we've already done it
         im3.tweakreg.skip = True
 
+        if use_model_library:
+            models = asn_file._loaded_models
+        else:
+            models = asn_file._models
+
         # Set the name back to "jw" at the start if we're degrouping NIRCam modules
         if (
                 band_type == "nircam"
                 and self.tweakreg_degroup_nircam_modules
         ):
-            for i, model in enumerate(asn_file._models):
-                model_name = list(copy.deepcopy(model.meta.filename))
-                model_name[0] = "j"
-                model_name = "".join(model_name)
-                model.meta.filename = copy.deepcopy(model_name)
-                model.meta.observation.exposure_number = meta_params[model_name][0]
-                model.meta.group_id = meta_params[model_name][1]
+            if use_model_library:
+                for i in models:
+                    model_name = list(copy.deepcopy(models[i].meta.filename))
+                    model_name[0] = "j"
+                    model_name = "".join(model_name)
+                    models[i].meta.filename = copy.deepcopy(model_name)
+                    models[i].meta.observation.exposure_number = meta_params[model_name][0]
+                    models[i].meta.group_id = meta_params[model_name][1]
+
+            else:
+                for i, model in enumerate(models):
+                    model_name = list(copy.deepcopy(model.meta.filename))
+                    model_name[0] = "j"
+                    model_name = "".join(model_name)
+                    model.meta.filename = copy.deepcopy(model_name)
+                    model.meta.observation.exposure_number = meta_params[model_name][0]
+                    model.meta.group_id = meta_params[model_name][1]
 
         # Remove the chip info if we're degrouping the NIRCam short chips
         if (
                 band_type == "nircam"
                 and self.tweakreg_degroup_nircam_short_chips
         ):
-            for i, model in enumerate(asn_file._models):
-                model_name = list(copy.deepcopy(model.meta.filename))
-                model_name.pop(1)
-                model_name = "".join(model_name)
-                model.meta.filename = copy.deepcopy(model_name)
-                model.meta.observation.exposure_number = meta_params[model_name][0]
-                model.meta.group_id = meta_params[model_name][1]
+
+            if use_model_library:
+                for i in models:
+                    model_name = list(copy.deepcopy(models[i].meta.filename))
+                    model_name.pop(1)
+                    model_name = "".join(model_name)
+                    models[i].meta.filename = copy.deepcopy(model_name)
+                    models[i].meta.observation.exposure_number = meta_params[model_name][0]
+                    models[i].meta.group_id = meta_params[model_name][1]
+
+            else:
+                for i, model in enumerate(models):
+                    model_name = list(copy.deepcopy(model.meta.filename))
+                    model_name.pop(1)
+                    model_name = "".join(model_name)
+                    model.meta.filename = copy.deepcopy(model_name)
+                    model.meta.observation.exposure_number = meta_params[model_name][0]
+                    model.meta.group_id = meta_params[model_name][1]
 
         # Set meta parameters back to original values to avoid potential weirdness later
         if (
                 short_long in self.tweakreg_group_dithers
                 or short_long in self.tweakreg_degroup_dithers
         ):
-            for i, model in enumerate(asn_file._models):
-                model_name = model.meta.filename
-                model.meta.observation.exposure_number = meta_params[model_name][0]
-                model.meta.group_id = meta_params[model_name][1]
+
+            if use_model_library:
+                for i in models:
+                    model_name = models[i].meta.filename
+                    models[i].meta.observation.exposure_number = meta_params[model_name][0]
+                    models[i].meta.group_id = meta_params[model_name][1]
+
+            else:
+                for i, model in enumerate(models):
+                    model_name = model.meta.filename
+                    model.meta.observation.exposure_number = meta_params[model_name][0]
+                    model.meta.group_id = meta_params[model_name][1]
 
         # Run the skymatch step with custom hacks if required
         config = SkyMatchStep.get_config_from_reference(asn_file)
@@ -488,29 +542,65 @@ class Lv3Step:
 
         # Group or degroup for skymatching
         if short_long in self.skymatch_group_dithers:
-            for model in asn_file._models:
-                model.meta.observation.exposure_number = "1"
-                model.meta.group_id = ""
+
+            if use_model_library:
+                for i in models:
+                    models[i].meta.observation.exposure_number = "1"
+                    models[i].meta.group_id = ""
+
+            else:
+                for model in models:
+                    model.meta.observation.exposure_number = "1"
+                    model.meta.group_id = ""
 
         elif short_long in self.skymatch_degroup_dithers:
-            for i, model in enumerate(asn_file._models):
-                model.meta.observation.exposure_number = str(i)
-                model.meta.group_id = ""
+
+            if use_model_library:
+                for i in models:
+                    models[i].meta.observation.exposure_number = str(i)
+                    models[i].meta.group_id = ""
+
+            else:
+                for i, model in enumerate(models):
+                    model.meta.observation.exposure_number = str(i)
+                    model.meta.group_id = ""
 
         asn_file = skymatch.run(asn_file)
 
         del skymatch
         gc.collect()
 
+        use_model_library = False
+        if isinstance(asn_file, ModelLibrary):
+            use_model_library = True
+
+            # If there's no final name here, add it now
+            if "name" not in asn_file._asn["products"][0]:
+                name = f"{self.target.lower()}_{self.band_type}_lv3_{self.band.lower()}{self.bgr_ext}"
+                asn_file._asn["products"][0]["name"] = copy.deepcopy(name)
+
+        if use_model_library:
+            models = asn_file._loaded_models
+        else:
+            models = asn_file._models
+
         # Set meta parameters back to original values to avoid potential weirdness later
         if (
                 short_long in self.skymatch_group_dithers
                 or short_long in self.skymatch_degroup_dithers
         ):
-            for i, model in enumerate(asn_file._models):
-                model_name = model.meta.filename
-                model.meta.observation.exposure_number = meta_params[model_name][0]
-                model.meta.group_id = meta_params[model_name][1]
+
+            if use_model_library:
+                for i in models:
+                    model_name = models[i].meta.filename
+                    models[i].meta.observation.exposure_number = meta_params[model_name][0]
+                    models[i].meta.group_id = meta_params[model_name][1]
+
+            else:
+                for i, model in enumerate(models):
+                    model_name = model.meta.filename
+                    model.meta.observation.exposure_number = meta_params[model_name][0]
+                    model.meta.group_id = meta_params[model_name][1]
 
         im3.skymatch.skip = True
 
