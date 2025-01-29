@@ -290,6 +290,11 @@ class PJPipeline:
                     # we need more control on the sequence (reference nircam and miri bands first)
                     elif step == "anchoring":
 
+                        # By default, we assume we've done alignment.
+                        # If that's not the case, fall back to i2d
+                        if "astrometric_align" not in self.steps:
+                            in_step_ext = "i2d"
+
                         in_subdir = IN_BAND_DIRS[step]
                         out_subdir = OUT_BAND_DIRS[step]
 
@@ -739,6 +744,18 @@ class PJPipeline:
                             step_result = mosaic_individual_fields.do_step()
 
                         elif step == "psf_matching":
+
+                            # By default, we assume we've done anchoring.
+                            # If not, catch the cases
+                            if "anchoring" not in self.steps:
+
+                                # If we've done astrometric alignment
+                                if "astrometric_align" in self.steps:
+                                    in_step_ext = "i2d_align"
+
+                                # Or if not
+                                else:
+                                    in_step_ext = "i2d"
 
                             psf_matching = PSFMatchingStep(
                                 target=target,

@@ -47,7 +47,6 @@ html_theme_options = {
     'collapse_navigation': False,
     'navigation_depth': 4,
     'globaltoc_collapse': False,
-    'display_version': True,
 }
 
 html_logo = 'images/pjpipe_logo.jpg'
