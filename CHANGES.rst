@@ -1,6 +1,8 @@
 1.2.1 (Unreleased)
 ==================
 
+- Fix for crash if trying to anchor without first aligning
+- Fix for crash if trying to PSF match without some combination of anchoring, aligning
 - Change how the level 3 step handles models for newer JWST versions
 
 1.2.0 (2024-09-03)
