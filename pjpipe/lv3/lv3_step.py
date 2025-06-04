@@ -550,7 +550,15 @@ class Lv3Step:
                     model.meta.observation.exposure_number = str(i)
                     model.meta.group_id = ""
 
-        asn_file = skymatch.run(asn_file)
+        # Add ability to skip skymatch if requested
+        # By default, skymatch is run
+        # To do this, set lv3_step.jwst_parameters["skymatch"]["skip"] = True in config.toml
+        skip_skymatch = False
+        if self.jwst_parameters and (("skymatch" in self.jwst_parameters) and ("skip" in self.jwst_parameters["skymatch"])):
+            skip_skymatch = self.jwst_parameters["skymatch"]["skip"]
+
+        if not skip_skymatch:
+            asn_file = skymatch.run(asn_file)
 
         del skymatch
         gc.collect()
@@ -591,14 +599,26 @@ class Lv3Step:
 
         # Run the rest of the level 3 pipeline
 
-        if use_model_library:
-            # Re-instantiate the ModelLibrary, to wipe out any weirdness we might have performed
-            # along the way
-            asn_file = ModelContainer([models[m] for m in models])
-            asn_file = ModelLibrary(asn_file, on_disk=False)
-            if "name" not in asn_file._asn["products"][0]:
-                name = f"{self.target.lower()}_{self.band_type}_lv3_{band_short.lower()}{self.bgr_ext}"
+        # Ensure product name is set correctly whether skymatch is run or not
+        # This prevents the default "step" name from being used
+        if isinstance(asn_file, ModelLibrary) and hasattr(asn_file, "_asn"):
+            name = f"{self.target.lower()}_{self.band_type}_lv3_{self.band.lower()}{self.bgr_ext}"
+            if "products" in asn_file._asn and len(asn_file._asn["products"]) > 0:
                 asn_file._asn["products"][0]["name"] = copy.deepcopy(name)
+                log.info(f"Setting product name to {name}")
+            
+        # Set the output_dir and output_file for im3 to ensure correct file naming
+        im3.output_file = f"{self.target.lower()}_{self.band_type}_lv3_{self.band.lower()}{self.bgr_ext}"
+        log.info(f"Setting output_file to {im3.output_file}")
+
+        # if use_model_library:
+        #     # Re-instantiate the ModelLibrary, to wipe out any weirdness we might have performed
+        #     # along the way
+        #     asn_file = ModelContainer([models[m] for m in models])
+        #     asn_file = ModelLibrary(asn_file, on_disk=False)
+        #     if "name" not in asn_file._asn["products"][0]:
+        #         name = f"{self.target.lower()}_{self.band_type}_lv3_{band_short.lower()}{self.bgr_ext}"
+        #         asn_file._asn["products"][0]["name"] = copy.deepcopy(name)
 
         im3.run(asn_file)
 
