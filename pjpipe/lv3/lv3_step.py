@@ -551,11 +551,16 @@ class Lv3Step:
                     model.meta.group_id = ""
 
         # Add ability to skip skymatch if requested
-        # By default, skymatch is run
-        # To do this, set lv3_step.jwst_parameters["skymatch"]["skip"] = True in config.toml
+        # By default, skymatch is run on both science and background observations
+        # To disable skymatch for background observations, 
+        #    set lv3_step.jwst_parameters["skymatch"]["skip_bgr"] = True in config.toml
+        # To disable skymatch for science observations, 
+        #    set lv3_step.jwst_parameters["skymatch"]["skip"] = True in config.toml
         skip_skymatch = False
-        if self.jwst_parameters and (("skymatch" in self.jwst_parameters) and ("skip" in self.jwst_parameters["skymatch"])):
-            skip_skymatch = self.jwst_parameters["skymatch"]["skip"]
+        if self.jwst_parameters:
+            skymatch_params = self.jwst_parameters.get("skymatch", {})
+            key = "skip_bgr" if self.is_bgr else "skip"
+            skip_skymatch = skymatch_params.get(key, False)
 
         if not skip_skymatch:
             asn_file = skymatch.run(asn_file)
