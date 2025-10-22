@@ -28,55 +28,48 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 
-# Just to note for future runs where we might need to update packages. This goes
-
-# 0) set up some testing conda env
-# 1) install .docs dependencies
-# 2) pip install jwst
-# 3) pip install astroquery cmocean image-registration lmfit pypdf pytest reproject shapely stwcs threadpoolctl tqdm webbpsf
-# X) pip list to get the version numbers
-
 dependencies = [
-    "astropy>=6.1.2",
-    "astropy-healpix>=1.1.2",
-    "astroquery>=0.4.7",
-    "cmocean>=4.0.3",
-    "crds>=12.0.3",
-    "gwcs>=0.24.0",
-    "image-registration>=0.2.9",
-    "jwst>=1.18.0",
-    "lmfit>=1.3.3",
-    "matplotlib>=3.9.2",
-    "numpy>=2.2.6",
-    "opencv-python-headless>=4.11.0.86",
-    "photutils>=1.13.0",
-    "pyerfa>=2.0.1.5",
-    "pypdf>=5.6.0",
-    "pytest>=8.3.2",
-    "reproject>=0.14.1",
-    "requests>=2.32.3",
-    "scikit-image>=0.24.0",
-    "scipy>=1.14.1",
-    "shapely>=2.0.6",
-    "spherical-geometry>=1.3.3",
-    "setuptools>=72.2.0",
-    "stdatamodels>=3.0.2",
-    "stsci.imagestats>=1.8.3",
-    "stsci.stimage>=0.3.0",
-    "stpsf>=2.0.0",
-    "stwcs>=1.7.4",
-    "synphot>=1.5.0",
+    "astropy == 7.1.1",
+    "astropy-healpix == 1.1.2",
+    "astroquery == 0.4.11",
+    "cmocean == 4.0.3",
+    "crds == 13.0.6",
+    "gwcs == 0.26.0",
+    "image-registration == 0.2.9",
+    "jwst == 1.20.1",
+    "lmfit == 1.3.4",
+    "matplotlib == 3.10.7",
+    "numpy == 2.2.6",
+    "opencv-python-headless == 4.12.0.88",
+    "photutils == 2.3.0",
+    "pyerfa == 2.0.1.5",
+    "pypdf == 6.1.2",
+    "pysiaf == 0.24.1",
+    "pytest == 8.4.2",
+    "reproject == 0.18.0",
+    "requests == 2.32.5",
+    "scikit-image == 0.25.2",
+    "scipy == 1.16.2",
+    "shapely == 2.1.2",
+    "spherical-geometry == 1.3.3",
+    "setuptools == 80.9.0",
+    "stdatamodels == 4.1.0",
+    "stsci.imagestats == 1.8.3",
+    "stsci.stimage == 0.3.0",
+    "stpsf == 2.1.0",
+    "stwcs == 1.7.5",
+    "synphot == 1.6.0",
 #    "spacepylot@git+https://github.com/ejwatkins-astro/spacepylot.git",
-    "threadpoolctl>=3.5.0",
-    "tomli>=2.0.1",
-    "tqdm>=4.66.5",
-    "tweakwcs>=0.8.10",
+    "threadpoolctl == 3.6.0",
+    "tomli == 2.3.0",
+    "tqdm == 4.67.1",
+    "tweakwcs == 0.8.12",
 ]
 
 [project.optional-dependencies]
 docs = [
-    "sphinx-automodapi>=0.17.0",
-    "sphinx-rtd-theme>=2.0.0",
+    "sphinx-automodapi == 0.20.0",
+    "sphinx-rtd-theme == 3.0.2",
 ]
 
 [project.urls]
@@ -88,5 +81,9 @@ docs = [
 exclude = ["LEGACY/*"]
 
 [build-system]
-requires = ["setuptools>=43.0.0", "wheel", "setuptools_scm"]
+requires = [
+    "setuptools == 80.9.0",
+    "wheel == 0.45.1",
+    "setuptools_scm == 9.2.2",
+]
 build-backend = "setuptools.build_meta"
