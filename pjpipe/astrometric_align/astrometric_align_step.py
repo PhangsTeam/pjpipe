@@ -18,6 +18,7 @@ except ImportError:
 import numpy as np
 from astropy.table import QTable, Table
 from astropy.wcs import WCS
+from astropy.coordinates import SkyCoord
 from image_registration import cross_correlation_shifts
 from jwst.assign_wcs.util import update_fits_wcsinfo
 from reproject import reproject_interp, reproject_adaptive, reproject_exact
@@ -200,6 +201,7 @@ class AstrometricAlignStep:
         catalogs=None,
         align_mapping_mode="shift",
         align_mapping=None,
+        ref_long_filter=None, # jay 19.11.2025
         tweakreg_parameters=None,
         reproject_func="interp",
         overwrite=False,
@@ -230,6 +232,8 @@ class AstrometricAlignStep:
                 tweakreg solution from the existing file),
                 or "cross-corr" (do some cross-correlation
                 between the images)
+            ref_long_filter: Specify reference NIRCam band
+                if aligning MIRI to NIRCam.
             tweakreg_parameters: Dictionary of parameters
                 to pass to tweakreg for the standard alignment
             reproject_func: Which reproject function to use. Defaults to 'interp',
@@ -245,6 +249,8 @@ class AstrometricAlignStep:
             catalogs = {}
         if align_mapping is None:
             align_mapping = {}
+        if ref_long_filter is None:
+            ref_long_filter = {}
         if tweakreg_parameters is None:
             tweakreg_parameters = {}
 
@@ -260,6 +266,7 @@ class AstrometricAlignStep:
         self.catalogs = catalogs
         self.align_mapping_mode = align_mapping_mode
         self.align_mapping = align_mapping
+        self.ref_long_filter = ref_long_filter
         self.tweakreg_parameters = tweakreg_parameters
         self.reproject_func = reproject_func
         self.overwrite = overwrite
@@ -508,22 +515,66 @@ class AstrometricAlignStep:
             log.warning("astrometric_alignment_table should be set!")
             return True
 
-        log.info("Aligning to external catalog")
+        current_band_type = get_band_type(self.band)
 
-        align_catalog = os.path.join(
-            self.catalog_dir,
-            self.catalogs[self.target],
-        )
+        # test Jay 19.11.2025 -> use agb for nircam, pjpipe cat for miri
+        # TO DO: instead of counting the length of self.catalogs[self.target] use "if ref_long_filter is not None:"
+
+        if len(self.catalogs[self.target]) == 2:      # assumes that there has to be one for miri and one for nircam
+            if self.band in self.ref_long_filter:
+                log.info(f"Aligning to internal catalog from shorter wavelength ({self.ref_long_filter[self.band]})")
+                align_cat_dir = self.in_dir.replace(f"{self.band}", f"{self.ref_long_filter[self.band]}")
+                #align_cat_dir = align_cat_dir.replace(f"{current_band_type}", "nircam")
+                align_catalog = os.path.join(               # when using internal catalog
+                    align_cat_dir,
+                    self.catalogs[self.target][current_band_type]
+                )
+            elif self.band not in self.ref_long_filter:     # only using external catalog
+                log.info("Aligning to external catalog")
+                align_catalog = os.path.join(
+                    self.catalog_dir,
+                    self.catalogs[self.target][current_band_type]
+                )   
+        else: # when only external catalog is used
+            log.info(f"Aligning to external catalog")     
+            align_catalog = os.path.join(
+                self.catalog_dir,
+                self.catalogs[self.target]
+            )   
 
         if not os.path.exists(align_catalog):
             log.warning("Requested astrometric alignment table not found!")
             return True
-
+        else:
+            log.info("Astrometric align table found")
+        
         align_table = QTable.read(align_catalog, format="fits")
         ref_tab = Table()
 
-        ref_tab["RA"] = align_table["ra"]
-        ref_tab["DEC"] = align_table["dec"]
+        if len(self.catalogs[self.target]) == 1: # when only using external AGB catalog
+            ref_tab["RA"] = align_table["ra"]
+            ref_tab["DEC"] = align_table["dec"]
+
+        elif len(self.catalogs[self.target]) > 1: # when using external + internal catalog
+            if self.band in self.ref_long_filter: # miri -> ref long
+                # get wcs from ref_long aligned image
+                ref_long_dir = self.in_dir.replace(f"{self.band}", f"{self.ref_long_filter[self.band]}")
+                ref_long_img = os.path.join(
+                    ref_long_dir,
+                    f"{self.target}_nircam_lv3_{self.ref_long_filter[self.band].lower()}_i2d_align.fits"
+                )
+                with fits.open(ref_long_img) as hdul:
+                    ref_long_wcs = WCS(hdul[1].header)
+
+                # use wcs on reference catalog x, y to get updated ra, dec
+                ref_x, ref_y = np.array(align_table["xcentroid"].data), np.array(align_table["ycentroid"].data)
+                align_coord = ref_long_wcs.pixel_to_world(ref_x, ref_y)
+                ref_tab["RA"] = align_coord.ra.deg
+                ref_tab["DEC"] = align_coord.dec.deg
+
+            if self.band not in self.ref_long_filter: # nircam -> agb
+                ref_tab["RA"] = align_table["ra"]
+                ref_tab["DEC"] = align_table["dec"]
 
         if "xcentroid" in align_table.colnames:
             ref_tab["xcentroid"] = align_table["xcentroid"]

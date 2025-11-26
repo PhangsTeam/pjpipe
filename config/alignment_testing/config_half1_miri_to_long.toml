@@ -1,0 +1,579 @@
+# Original file from Ryan: latest cycle 2 version
+
+# List of targets
+
+# Version for the reprocessing
+#version = 'v2p6_test_cy1_params_cy2_smallbatch' # original name
+version = 'v2p6_cy1_params_cy2_test_alignment'
+# ngc5643
+# ngc4298
+# ngc5248
+# ngc4548
+# ngc2997
+# ngc2903
+# ngc1808
+
+# targets = ['ngc3239']
+# targets = ['ngc1546']
+
+targets = [
+    # 'ngc5530',
+    # 'ngc1808',
+    # 'ngc1068'
+    # 'ngc5530', # -- was WOPR in v0p3, but obs done in June 2025
+    # 'ngc5248',  # Eva's, but not yet done # NEW AGB -- was WOPR in v0p3, but obs done in June 2025
+    # 'ngc1317', # AGB
+    # # 'ngc5643', # Eva's, done (2025-06-18) NEW AGB
+    # 'ngc4951', # NEW AGB
+    # 'ngc4654', # NEW AGB
+    # 'ngc4689', # NEW AGB
+    # 'ngc4569', # NEW AGB
+    # # # 'ngc4826', # Jiayi's program # NEW AGB
+    # 'ngc4298', # Eva's, but not yet done # NEW AGB
+    # 'ngc4536', # NEW AGB
+    # 'ngc4424', # NEW AGB  # jay: done # jay: jessica says has very few point sources, try this one
+    # 'ngc3621', # NEW AGB
+    # 'ngc4540',
+    # 'ngc4781',
+    # # # 'ngc6300', # Eva's (done) # NEW AGB
+    # 'ngc5248',  # Eva's, but not yet done # NEW AGB -- will need to re-download data because it's a WOPR (still as of 2 Dec 24)
+    # 'ngc4496a',
+    # 'ngc4548',  # Eva's, but not yet done # NEW AGB
+    # 'ngc4571',  # NEW AGB
+    # 'ngc4579',
+    # 'ngc4731',  # NEW AGB
+    # 'ngc4941',
+    # 'ngc4457',
+    # 'ngc5042',
+    # 'ngc5134',
+    # 'ngc3596', # end half 1
+    # 'ngc3626',  # start half 2. # jay: alignment didn't go through, few gaia sources matched
+    # 'ngc3344',
+    # 'ngc3239',
+    #'ngc3511',      # jay: done
+    # 'ngc3059',  # NEW AGB
+    # 'ngc3137',
+    # 'ngc2997', # Eva's, but not yet done  # NEW AGB
+    # 'ngc2903',  # Eva's, but not yet done # NEW AGB
+    # 'ngc3521',
+    # 'ngc3507',
+    # 'ngc2775',  # NEW AGB
+    # # # 'ngc1792', # agb. Eva's (done)
+    # 'ngc1511',
+    # 'ngc2283',
+    # # # 'ngc1637', # Eva's (done) # NEW AGB
+    # 'ngc1808', # Eva's, not yet done
+    # # # #'ngc1068', # run separately
+    # 'ic5273',
+    # 'ngc7456',
+    # 'ngc1809',
+    #'ngc1546', # jay: done
+    # 'ngc1559', # agb # jay: done
+    # 'ngc2090',
+    # # # 'ngc1097', # agb. Eva's (done)
+    # 'ic1954',  # NEW AGB
+    # 'ngc0685', # has agb 
+    # 'ngc3368',
+    'ngc4694',    # jay: jessica says has very few point sources, try this one
+    # 'ngc2566',  # jay: done
+]
+# Eva's targets: 
+#   Done (25 Oct): 'ngc1512', 'ngc1672', 'ngc1637', 'ngc1792', 'ngc1097', 'ngc6300'
+#   Not done: 'ngc5643', 'ngc1808', 'ngc5248', 'ngc4548', 'ngc4298', 'ngc3627', 'ngc3351', 'ngc2997', 'ngc2903', 'ngc1433'
+
+# 'ngc5643', # NEW AGB
+# 'ngc1808', 
+# 'ngc5248', # NEW AGB
+# 'ngc4548', # NEW AGB
+# 'ngc4298', # NEW AGB
+# 'ngc3627', 
+# 'ngc3351', 
+# 'ngc2997', # NEW AGB
+# 'ngc2903', # NEW AGB
+# 'ngc1433'
+# ngc5643 # NEW AGB
+# ngc1808 # NO AGB
+
+
+# Bands to consider
+bands = [
+    'F150W',
+    'F187N',
+    'F200W',
+    'F300M',
+    'F335M',
+    'F770W',
+    'F2100W',
+    'F770W_bgr',
+    'F2100W_bgr',
+]
+
+# Steps. These can/should be different
+# for NIRCam and MIRI, and we can distinguish them here
+
+steps = [
+    'download',
+    'gaia_query',
+    'lv1',
+    'single_tile_destripe.nircam',
+    'lv2',
+    'get_wcs_adjust',
+    'apply_wcs_adjust',
+    'lyot_mask.miri',
+    # 'level_match',
+    'multi_tile_destripe.nircam',
+    #    'psf_model',  # TODO
+    'lv3',
+    'astrometric_catalog.miri',
+    #'astrometric_catalog', # test jay 19.11.2025
+    'astrometric_align',
+    # 'anchoring',
+    # 'psf_matching',
+    # 'release',
+    # 'regress_against_previous',
+]
+
+# Parameters for downloading data. This just downloads
+# the raw science
+[parameters.download]
+
+prop_id = '3707'
+product_type = ['SCIENCE']
+calib_level = [1]
+
+[parameters.gaia_query]
+
+radius = 20
+
+[parameters.move_raw_obs]
+
+[parameters.move_raw_obs.obs_to_skip]
+
+# ngc3596 = 'jw02107007003_02105_00003*'
+ngc1317 = ['jw03707005*', 'jw03707006*']
+ngc3239 = ['jw03707037*', 'jw03707038*']
+ngc3344 = ['jw03707123*', 'jw03707124*']
+ngc3596 = ['jw03707047*', 'jw03707048*']
+ngc4694 = ['jw03707093*', 'jw03707094*']
+ngc5248 = 'jw03707109003*' # NOTE: PARTIAL REPEAT (ONLY 109:3 FAILED). CAREFUL REDUCING THIS ONE. 
+ngc5530 = 'jw03707111001*' # NOTE: PARTIAL REPEAT (ONLY 111:1 FAILED). CAREFUL REDUCING THIS ONE. 
+
+[parameters.lv1]
+
+jwst_parameters.save_results = true
+
+# Flag snowballs in NIRCam
+#jwst_parameters.jump.expand_large_events.F187N = true
+jwst_parameters.jump.expand_large_events.nircam = true
+
+jwst_parameters.rscd.skip = true
+jwst_parameters.clean_flicker_noise.skip = true
+
+jwst_parameters.ramp_fit.suppress_one_group = false
+jwst_parameters.refpix.use_side_ref_pixels = true
+
+[parameters.lv2]
+
+bgr_check_type = 'parallel_off'
+bgr_background_name = 'off'
+bgr_observation_types = ['miri']
+
+jwst_parameters.save_results = true
+jwst_parameters.bkg_subtract.save_combined_background = true
+jwst_parameters.bkg_subtract.sigma = 1.5
+
+[parameters.get_wcs_adjust]
+
+method.nircam = "tweakreg"
+method.miri = "tweakreg"
+
+bands = ['F300M', 'F770W']
+
+group_dithers = ['nircam', 'miri']
+
+[parameters.get_wcs_adjust.tweakreg_parameters]
+
+# align_to_gaia = false # no longer a tweakreg parameter
+starfinder = 'iraf'
+brightest = 500
+snr_threshold = 3
+expand_refcat = true
+fitgeometry = 'shift'
+minobj = 3
+peakmax.nircam = 20
+roundlo.nircam = -0.5
+roundhi.nircam = 0.5
+
+# Parameters to get wcs_adjust shifts
+searchrad = 2
+separation.miri = 1
+tolerance.miri = 0.7
+separation.nircam = 2
+tolerance.nircam = 1
+use2dhist = true
+nclip = 5
+
+# Tweak boxsize, so we detect objects in diffuse emission
+bkg_boxsize.nircam_short = 100
+bkg_boxsize.nircam_long = 100
+bkg_boxsize.miri = 25
+enforce_user_order = true
+
+[parameters.lyot_mask]
+method = 'mask'
+
+[parameters.single_tile_destripe]
+quadrants = true
+vertical_subtraction = true
+filter_diffuse = true
+dilate_size = 7
+destriping_method = 'median_filter'
+vertical_destriping_method = 'row_median'
+filter_extend_mode = "reflect"
+filter_scales = [3, 7, 15, 31, 63, 127, 255, 511]
+
+[parameters.multi_tile_destripe]
+quadrants = true
+sigma = 3
+weight_type = 'ivm'
+do_large_scale = true
+large_scale_filter_extend_mode = "reflect"
+
+[parameters.level_match]
+do_sigma_clip = false
+weight_method = 'rms'
+
+# fit_type_dithers = "level"
+# fit_type_recombine_lyot = "level+slope"
+# fit_type_mosaic_tiles.nircam = "level"
+# fit_type_mosaic_tiles.miri = "level+slope"
+# recombine_lyot = true
+# combine_nircam_short = true
+
+[parameters.lv3]
+
+tweakreg_group_dithers = ['nircam_short', 'nircam_long', 'miri']
+skymatch_degroup_dithers = ['miri', 'nircam_short', 'nircam_long']
+
+bgr_check_type = 'parallel_off'
+
+[parameters.lv3.jwst_parameters]
+save_results = true
+
+[parameters.lv3.jwst_parameters.tweakreg]
+
+# Skip MIRI wavelengths, since we have already
+# solved for this
+skip.F770W = true
+skip.F2100W = true
+
+# align_to_gaia = false # no longer a tweakreg parameter
+starfinder = 'iraf'
+brightest.nircam_short = 125
+brightest.nircam_long = 500
+brightest.miri = 500
+snr_threshold = 3
+expand_refcat = true
+fitgeometry = 'shift'
+minobj = 3
+peakmax.nircam = 20
+roundlo.nircam = -0.3#-0.5 # jay: 26.11
+roundhi.nircam = 0.3#0.5  # jay: 26.11
+
+# Take relatively tight tolerances since we've already shifted
+# close to the correct solution
+separation.miri = 1
+separation.nircam = 2
+tolerance.nircam_short = 0.3
+tolerance.nircam_long = 0.3
+tolerance.miri = 1
+use2dhist = false
+
+# Tweak boxsize, so we detect objects in diffuse emission
+bkg_boxsize.nircam_short = 100
+bkg_boxsize.nircam_long = 100
+bkg_boxsize.miri = 25
+enforce_user_order = true
+
+[parameters.lv3.jwst_parameters.skymatch]
+
+# Turn off matching since we've done it already
+skymethod = 'local'
+subtract = true
+skystat = 'median'
+nclip.nircam = 20
+nclip.miri = 10
+lsigma.nircam = 3
+lsigma.miri = 1.5
+usigma.nircam = 3
+usigma.miri = 1.5
+
+[parameters.lv3.jwst_parameters.outlier_detection]
+in_memory = true
+
+[parameters.lv3.jwst_parameters.resample]
+rotation = 0.0
+in_memory = true
+
+[parameters.lv3.jwst_parameters.source_catalog]
+snr_threshold = 2
+npixels = 5
+bkg_boxsize = 25
+deblend = true
+
+[parameters.astrometric_catalog]
+snr = 10
+starfind_method = "iraf"
+
+# [parameters.astrometric_catalog.dao_parameters]
+[parameters.astrometric_catalog.starfind_parameters]
+
+sharplo = 0.2
+sharphi = 1.0
+roundlo = -0.5
+roundhi = 0.5
+
+[parameters.astrometric_align]
+
+overwrite = true
+
+[parameters.astrometric_align.align_mapping]
+# Map F2100W to F770W
+F2100W = 'F770W'
+F2100W_bgr = 'F770W_bgr'
+
+# F150W = 'F300M'
+# F187N = 'F335M'
+
+[parameters.astrometric_align.ref_long_filter]  # Jay 19.11.2025
+F770W = 'F335M' # set to F1000W to F300M for cycle 1 
+
+[parameters.astrometric_align.catalogs]
+# Ones w/ AGB catalogs
+# NEW
+ic5273 = 'ic5273_agb_cat.fits'
+ngc1511 = 'ngc1511_agb_cat.fits'
+
+ngc1546.nircam = 'ngc1546_agb_cat.fits'
+ngc1546.miri = 'ngc1546_nircam_lv3_f335m_cat.fits'
+
+ngc1559.nircam = 'ngc1559_agb_cat.fits'
+ngc1559.miri = 'ngc1559_nircam_lv3_f335m_cat.fits' # test jay 19.11.2025
+
+# ngc1637 = 'ngc1637_agb_cat.fits'
+# ngc1792 = 'ngc1792_agb_cat.fits'
+ngc1808 = 'ngc1808_agb_cat.fits'
+ngc1809 = 'ngc1809_agb_cat.fits'
+ngc2090 = 'ngc2090_agb_cat.fits'
+# ngc2566 = 'ngc2566_agb_cat.fits'
+# ngc2775 = 'ngc2775_agb_cat.fits'
+# ngc2903 = 'ngc2903_agb_cat.fits'
+ngc2997 = ['ngc2997e_agb_cat.fits', 'ngc2997w_agb_cat.fits']
+# ngc2997w = 'ngc2997w_agb_cat.fits'
+# ngc3059 = 'ngc3059_agb_cat.fits'
+ngc3507 = 'ngc3507_agb_cat.fits'
+
+ngc3511.nircam = 'ngc3511_agb_cat.fits'
+ngc3511.miri = "ngc3511_nircam_lv3_f335m_cat.fits"
+
+ngc3521s = 'ngc3521s_agb_cat.fits'
+ngc3596 = 'ngc3596_agb_cat.fits'
+# ngc3621 = 'ngc3621_agb_cat.fits'
+# ngc4298 = 'ngc4298_agb_cat.fits'
+# ngc4424 = 'ngc4424_agb_cat.fits'   
+ngc4496a = 'ngc4496a_agb_cat.fits'
+# ngc4536 = 'ngc4536_agb_cat.fits'
+# ngc4548 = 'ngc4548_agb_cat.fits'
+# ngc4569 = 'ngc4569_agb_cat.fits'
+# ngc4571 = 'ngc4571_agb_cat.fits'
+# ngc4654 = 'ngc4654_agb_cat.fits'
+# ngc4689 = 'ngc4689_agb_cat.fits'
+# ngc4694 = 'ngc4694_agb_cat.fits'    # jay: jessica says has very few point sources, try this one
+# ngc4731 = 'ngc4731_agb_cat.fits'
+# ngc4826 = 'ngc4826_agb_cat.fits'
+ngc4941 = 'ngc4941_agb_cat.fits'
+# ngc4951 = 'ngc4951_agb_cat.fits'
+ngc5042 = 'ngc5042_agb_cat.fits'
+# ngc5248 = 'ngc5248_agb_cat.fits'
+ngc5530 = 'ngc5530_agb_cat.fits'
+# ngc5643 = 'ngc5643_agb_cat.fits'
+# ngc6300 = 'ngc6300_agb_cat.fits'
+ngc7456 = 'ngc7456_agb_cat.fits'
+
+# OLD 
+
+ic1954 = 'ic1954_agb_cat.fits'
+ngc0685 = 'ngc0685_agb_cat.fits'
+ngc1097 = 'ngc1097_agb_cat.fits'
+ngc1317 = 'ngc1317_agb_cat.fits'
+#ngc1559 = 'ngc1559_agb_cat.fits'
+ngc1792 = 'ngc1792_agb_cat.fits'
+ngc2775 = 'ngc2775_agb_cat.fits'
+ngc2903 = 'ngc2903_agb_cat.fits'
+ngc3621 = 'ngc3621_agb_cat.fits'
+ngc4298 = 'ngc4298_agb_cat.fits'
+ngc4536 = 'ngc4536_agb_cat.fits'
+ngc4548 = 'ngc4548_agb_cat.fits'
+ngc4569 = 'ngc4569_agb_cat.fits'
+ngc4571 = 'ngc4571_agb_cat.fits'
+ngc4654 = 'ngc4654_agb_cat.fits'
+ngc4689 = 'ngc4689_agb_cat.fits'
+ngc4826 = 'ngc4826_agb_cat.fits'
+ngc5248 = 'ngc5248_agb_cat.fits'
+ngc5643 = 'ngc5643_agb_cat.fits'
+ngc4951 = 'ngc4951_agb_cat.fits'
+
+ngc4424.nircam = 'ngc4424_agb_cat.fits'
+ngc4424.miri = 'ngc4424_nircam_lv3_f335m_cat.fits'
+
+ngc6300 = 'ngc6300_agb_cat.fits'
+ngc4731 = 'ngc4731_agb_cat.fits'
+ngc3059 = 'ngc3059_agb_cat.fits'
+# ngc2997 = 'ngc2997e_agb_cat.fits' # NOTE: the "e" means we have PSF photometry for the East pointing only (from Hwi Kim)
+# ngc2903 = 'ngc2903_agb_cat.fits'
+# ngc2775 = 'ngc2775_agb_cat.fits'
+ngc1637 = 'ngc1637_agb_cat.fits'
+
+ngc4694.nircam = 'ngc4694_agb_cat.fits'
+ngc4694.miri = 'ngc4694_nircam_lv3_f335m_cat.fits'
+
+ngc1068 = 'ngc1068_agb_cat.fits'
+
+ngc2566.nircam = 'ngc2566_agb_cat.fits'
+ngc2566.miri = 'ngc2566_nircam_lv3_f335m_cat.fits'
+
+# Ones w/o AGB catalogs
+# ngc5530 = 'Gaia_DR3_ngc5530.fits'
+ngc3368 = 'Gaia_DR3_ngc3368.fits'
+# ngc6300 = 'Gaia_DR3_ngc6300.fits'
+# ngc5643 = 'Gaia_DR3_ngc5643.fits'
+# ngc4951 = 'Gaia_DR3_ngc4951.fits'
+# ngc4654 = 'Gaia_DR3_ngc4654.fits'
+# ngc4689 = 'Gaia_DR3_ngc4689.fits'
+# ngc4569 = 'Gaia_DR3_ngc4569.fits'
+# ngc4826 = 'Gaia_DR3_ngc4826.fits'
+# ngc4298 = 'Gaia_DR3_ngc4298.fits'
+ngc4540 = 'Gaia_DR3_ngc4540.fits'
+# ngc4496a = 'Gaia_DR3_ngc4496a.fits'
+# ngc4548 = 'Gaia_DR3_ngc4548.fits'
+# ngc4571 = 'Gaia_DR3_ngc4571.fits'
+ngc4579 = 'Gaia_DR3_ngc4579.fits'
+# ngc4731 = 'Gaia_DR3_ngc4731.fits'
+# ngc4941 = 'Gaia_DR3_ngc4941.fits'
+ngc4457 = 'Gaia_DR3_ngc4457.fits'
+# ngc4694 = 'Gaia_DR3_ngc4694.fits'
+ngc4781 = 'Gaia_DR3_ngc4781.fits'
+# ngc5248 = 'Gaia_DR3_ngc5248.fits'
+# ngc4536 = 'Gaia_DR3_ngc4536.fits'
+# ngc4424 = 'Gaia_DR3_ngc4424.fits'
+# ngc3621 = 'Gaia_DR3_ngc3621.fits'
+
+# ngc5042 = 'Gaia_DR3_ngc5042.fits'
+ngc5134 = 'Gaia_DR3_ngc5134.fits'
+# ngc3596 = 'Gaia_DR3_ngc3596.fits'
+
+ngc3626.nircam = 'Gaia_DR3_ngc3626.fits'
+ngc3626.miri = 'ngc3626_nircam_lv3_f335m_cat.fits' # test jay 19.11.2025
+#ngc3626 = 'Gaia_DR3_ngc3626.fits'
+
+ngc3344 = 'Gaia_DR3_ngc3344.fits'
+# ngc3511 = 'Gaia_DR3_ngc3511.fits'
+# ngc3059 = 'Gaia_DR3_ngc3059.fits'
+ngc3137 = 'Gaia_DR3_ngc3137.fits'
+# ngc2997 = 'Gaia_DR3_ngc2997.fits'
+ngc3521 = 'Gaia_DR3_ngc3521.fits'
+# ngc2903 = 'Gaia_DR3_ngc2903.fits'
+# ngc3507 = 'Gaia_DR3_ngc3507.fits'
+ngc3239 = 'Gaia_DR3_ngc3239.fits'
+# ngc2775 = 'Gaia_DR3_ngc2775.fits'
+# ngc2566 = 'Gaia_DR3_ngc2566.fits'
+# ic5273 = 'Gaia_DR3_ic5273.fits'
+# ngc7456 = 'Gaia_DR3_ngc7456.fits'
+# ngc1809 = 'Gaia_DR3_ngc1809.fits'
+# ngc1546 = 'Gaia_DR3_ngc1546.fits'
+# ngc1511 = 'Gaia_DR3_ngc1511.fits'
+# ngc2090 = 'Gaia_DR3_ngc2090.fits'
+# ngc1068 = 'Gaia_DR3_ngc1068.fits'
+# ngc1808 = 'Gaia_DR3_ngc1808.fits'
+# ngc1637 = 'Gaia_DR3_ngc1637.fits'
+ngc2283 = 'Gaia_DR3_ngc2283.fits'
+
+# Cycle 1 targets
+ic5332 = 'ic5332_agb_cat.fits'
+ngc0628 = 'ngc0628_agb_cat.fits'
+ngc1087 = 'ngc1087_agb_cat.fits'
+ngc1300 = 'ngc1300_agb_cat.fits'
+ngc1365 = 'ngc1365_agb_cat.fits'
+ngc1385 = 'ngc1385_agb_cat.fits'
+ngc1433 = 'ngc1433_agb_cat.fits'
+ngc1512 = 'ngc1512_agb_cat.fits'
+ngc1566 = 'ngc1566_agb_cat.fits'
+ngc1672 = 'ngc1672_agb_cat.fits'
+ngc2835 = 'ngc2835_agb_cat.fits'
+ngc3351 = 'ngc3351_agb_cat.fits'
+ngc3627 = 'ngc3627_agb_cat.fits'
+ngc4254 = 'ngc4254_agb_cat.fits'
+ngc4303 = 'ngc4303_agb_cat.fits'
+ngc4321 = 'ngc4321_agb_cat.fits'
+ngc4535 = 'ngc4535_agb_cat.fits'
+ngc5068 = 'ngc5068_agb_cat.fits'
+ngc7496 = 'ngc7496_agb_cat.fits'
+
+
+# Initial pass to get decent shifts for absolute astrometry
+[parameters.astrometric_align.tweakreg_parameters.iteration1]
+
+# Set quite a large search radius
+searchrad.miri = 10         # trying larger radius (was 10 arcsec before) -- 7 May 24
+searchrad.nircam_long = 20
+searchrad.nircam_short = 40
+separation = 1
+tolerance = 2 # 14 Jul 25 -- default was 1. Tom's initial config had 2 for NGC 3627. 
+# tolerance = 1
+use2dhist = true           # Changed to true on 13 Feb 24 -- to remove catastrophic fails
+fitgeom = 'shift'
+nclip = 5
+sigma = 3
+
+# Second iteration with tightened up parameters to figure out any residual shifts left
+[parameters.astrometric_align.tweakreg_parameters.iteration2]
+searchrad = 2
+separation = 1
+tolerance = 0.5
+use2dhist = false
+fitgeom = 'rshift'
+nclip = 5
+sigma = 3
+
+
+[parameters.anchoring]
+overwrite = true # true
+internal_conv_band = 'F2100W'
+
+[parameters.anchoring.ref_band]
+miri = 'F770W'
+nircam = 'F300M'
+
+# List external bands in preference order
+[parameters.anchoring.external_bands]
+# miri = ['irac4_atgauss4', 'w3_atgauss15']
+# nircam = ['irac1_atgauss4', 'w1_atgauss7p5', 'irac2_atgauss4', 'w2_atgauss7p5']
+miri = ['w3_atgauss15', 'irac4_atgauss4']
+nircam = ['w1_atgauss7p5', 'w2_atgauss7p5', 'irac1_atgauss4', 'irac2_atgauss4']
+
+[parameters.psf_matching]
+skip_if_missing_kernels = true
+target_bands = ['F770W', "gauss0p35", "gauss0p85"]
+reproject_func = "interp"
+overwrite = true
+
+
+[parameters.release]
+overwrite = true
+move_tweakback = true
+move_backgrounds = true
+move_psf_matched = true
+move_diagnostic_plots = true
+
+[parameters.regress_against_previous]
+prev_version = 'v0p3'
