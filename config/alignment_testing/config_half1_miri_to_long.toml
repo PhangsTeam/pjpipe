@@ -124,13 +124,12 @@ steps = [
     'multi_tile_destripe.nircam',
     #    'psf_model',  # TODO
     'lv3',
-    'astrometric_catalog.miri',
-    #'astrometric_catalog', # test jay 19.11.2025
+    'astrometric_catalog',
     'astrometric_align',
-    # 'anchoring',
-    # 'psf_matching',
-    # 'release',
-    # 'regress_against_previous',
+    'anchoring',
+    'psf_matching',
+    'release',
+    'regress_against_previous',
 ]
 
 # Parameters for downloading data. This just downloads
@@ -334,8 +333,6 @@ roundlo = -0.5
 roundhi = 0.5
 
 [parameters.astrometric_align]
-
-overwrite = true
 
 [parameters.astrometric_align.align_mapping]
 # Map F2100W to F770W
