@@ -4,7 +4,7 @@
 
 # Version for the reprocessing
 #version = 'v2p6_test_cy1_params_cy2_smallbatch' # original name
-version = 'v2p6_cy1_params_cy2_test_alignment'
+version = 'v2p6_cy1_params_cy2_test_alignment_ngc4694_stable-version'
 # ngc5643
 # ngc4298
 # ngc5248
@@ -31,7 +31,7 @@ targets = [
     # # # 'ngc4826', # Jiayi's program # NEW AGB
     # 'ngc4298', # Eva's, but not yet done # NEW AGB
     # 'ngc4536', # NEW AGB
-    # 'ngc4424', # NEW AGB  # jay: done # jay: jessica says has very few point sources, try this one
+    # 'ngc4424', # NEW AGB  # jay: done 
     # 'ngc3621', # NEW AGB
     # 'ngc4540',
     # 'ngc4781',
@@ -74,7 +74,7 @@ targets = [
     # 'ic1954',  # NEW AGB
     # 'ngc0685', # has agb 
     # 'ngc3368',
-    'ngc4694',    # jay: jessica says has very few point sources, try this one
+    'ngc4694',    # jay: jessica says has very few point sources, try this one. indeed agb cat alignment fails
     # 'ngc2566',  # jay: done
 ]
 # Eva's targets: 
@@ -277,8 +277,8 @@ expand_refcat = true
 fitgeometry = 'shift'
 minobj = 3
 peakmax.nircam = 20
-roundlo.nircam = -0.3#-0.5 # jay: 26.11
-roundhi.nircam = 0.3#0.5  # jay: 26.11
+roundlo.nircam = -0.5 
+roundhi.nircam = 0.5  
 
 # Take relatively tight tolerances since we've already shifted
 # close to the correct solution
@@ -353,13 +353,8 @@ F770W = 'F335M' # set to F1000W to F300M for cycle 1
 # NEW
 ic5273 = 'ic5273_agb_cat.fits'
 ngc1511 = 'ngc1511_agb_cat.fits'
-
-ngc1546.nircam = 'ngc1546_agb_cat.fits'
-ngc1546.miri = 'ngc1546_nircam_lv3_f335m_cat.fits'
-
-ngc1559.nircam = 'ngc1559_agb_cat.fits'
-ngc1559.miri = 'ngc1559_nircam_lv3_f335m_cat.fits' # test jay 19.11.2025
-
+ngc1546 = 'ngc1546_agb_cat.fits'
+ngc1559 = 'ngc1559_agb_cat.fits'
 # ngc1637 = 'ngc1637_agb_cat.fits'
 # ngc1792 = 'ngc1792_agb_cat.fits'
 ngc1808 = 'ngc1808_agb_cat.fits'
@@ -372,10 +367,7 @@ ngc2997 = ['ngc2997e_agb_cat.fits', 'ngc2997w_agb_cat.fits']
 # ngc2997w = 'ngc2997w_agb_cat.fits'
 # ngc3059 = 'ngc3059_agb_cat.fits'
 ngc3507 = 'ngc3507_agb_cat.fits'
-
-ngc3511.nircam = 'ngc3511_agb_cat.fits'
-ngc3511.miri = "ngc3511_nircam_lv3_f335m_cat.fits"
-
+ngc3511 = 'ngc3511_agb_cat.fits'
 ngc3521s = 'ngc3521s_agb_cat.fits'
 ngc3596 = 'ngc3596_agb_cat.fits'
 # ngc3621 = 'ngc3621_agb_cat.fits'
@@ -388,7 +380,7 @@ ngc4496a = 'ngc4496a_agb_cat.fits'
 # ngc4571 = 'ngc4571_agb_cat.fits'
 # ngc4654 = 'ngc4654_agb_cat.fits'
 # ngc4689 = 'ngc4689_agb_cat.fits'
-# ngc4694 = 'ngc4694_agb_cat.fits'    # jay: jessica says has very few point sources, try this one
+# ngc4694 = 'ngc4694_agb_cat.fits'    
 # ngc4731 = 'ngc4731_agb_cat.fits'
 # ngc4826 = 'ngc4826_agb_cat.fits'
 ngc4941 = 'ngc4941_agb_cat.fits'
@@ -422,9 +414,7 @@ ngc4826 = 'ngc4826_agb_cat.fits'
 ngc5248 = 'ngc5248_agb_cat.fits'
 ngc5643 = 'ngc5643_agb_cat.fits'
 ngc4951 = 'ngc4951_agb_cat.fits'
-
-ngc4424.nircam = 'ngc4424_agb_cat.fits'
-ngc4424.miri = 'ngc4424_nircam_lv3_f335m_cat.fits'
+ngc4424 = 'ngc4424_agb_cat.fits'
 
 ngc6300 = 'ngc6300_agb_cat.fits'
 ngc4731 = 'ngc4731_agb_cat.fits'
@@ -433,14 +423,9 @@ ngc3059 = 'ngc3059_agb_cat.fits'
 # ngc2903 = 'ngc2903_agb_cat.fits'
 # ngc2775 = 'ngc2775_agb_cat.fits'
 ngc1637 = 'ngc1637_agb_cat.fits'
-
-ngc4694.nircam = 'ngc4694_agb_cat.fits'
-ngc4694.miri = 'ngc4694_nircam_lv3_f335m_cat.fits'
-
+ngc4694 = 'ngc4694_agb_cat.fits'
 ngc1068 = 'ngc1068_agb_cat.fits'
-
-ngc2566.nircam = 'ngc2566_agb_cat.fits'
-ngc2566.miri = 'ngc2566_nircam_lv3_f335m_cat.fits'
+ngc2566 = 'ngc2566_agb_cat.fits'
 
 # Ones w/o AGB catalogs
 # ngc5530 = 'Gaia_DR3_ngc5530.fits'
@@ -467,15 +452,10 @@ ngc4781 = 'Gaia_DR3_ngc4781.fits'
 # ngc4536 = 'Gaia_DR3_ngc4536.fits'
 # ngc4424 = 'Gaia_DR3_ngc4424.fits'
 # ngc3621 = 'Gaia_DR3_ngc3621.fits'
-
 # ngc5042 = 'Gaia_DR3_ngc5042.fits'
 ngc5134 = 'Gaia_DR3_ngc5134.fits'
 # ngc3596 = 'Gaia_DR3_ngc3596.fits'
-
-ngc3626.nircam = 'Gaia_DR3_ngc3626.fits'
-ngc3626.miri = 'ngc3626_nircam_lv3_f335m_cat.fits' # test jay 19.11.2025
-#ngc3626 = 'Gaia_DR3_ngc3626.fits'
-
+ngc3626 = 'Gaia_DR3_ngc3626.fits'
 ngc3344 = 'Gaia_DR3_ngc3344.fits'
 # ngc3511 = 'Gaia_DR3_ngc3511.fits'
 # ngc3059 = 'Gaia_DR3_ngc3059.fits'

@@ -249,8 +249,6 @@ class AstrometricAlignStep:
             catalogs = {}
         if align_mapping is None:
             align_mapping = {}
-        if ref_long_filter is None:
-            ref_long_filter = {}
         if tweakreg_parameters is None:
             tweakreg_parameters = {}
 
@@ -515,27 +513,26 @@ class AstrometricAlignStep:
             log.warning("astrometric_alignment_table should be set!")
             return True
 
-        current_band_type = get_band_type(self.band)
-
-        # test Jay 19.11.2025 -> use agb for nircam, pjpipe cat for miri
-        # TO DO: instead of counting the length of self.catalogs[self.target] use "if ref_long_filter is not None:"
-
-        if len(self.catalogs[self.target]) == 2:      # assumes that there has to be one for miri and one for nircam
-            if self.band in self.ref_long_filter:
+        # test Jay 19.11.2025 -> use external (agb/gaia) for nircam, internal cat for miri
+        # when using internal catalog
+        if self.ref_long_filter is not None:
+            if self.band in self.ref_long_filter:          
                 log.info(f"Aligning to internal catalog from shorter wavelength ({self.ref_long_filter[self.band]})")
                 align_cat_dir = self.in_dir.replace(f"{self.band}", f"{self.ref_long_filter[self.band]}")
-                #align_cat_dir = align_cat_dir.replace(f"{current_band_type}", "nircam")
-                align_catalog = os.path.join(               # when using internal catalog
+                align_cat_fn = f"{self.target}_nircam_lv3_{self.ref_long_filter[self.band].lower()}_cat.fits"
+                align_catalog = os.path.join(               
                     align_cat_dir,
-                    self.catalogs[self.target][current_band_type]
+                    align_cat_fn
                 )
-            elif self.band not in self.ref_long_filter:     # only using external catalog
+            # using external catalog
+            elif self.band not in self.ref_long_filter:     
                 log.info("Aligning to external catalog")
                 align_catalog = os.path.join(
                     self.catalog_dir,
-                    self.catalogs[self.target][current_band_type]
+                    self.catalogs[self.target]
                 )   
-        else: # when only external catalog is used
+        # when only external catalog is used for both
+        else: 
             log.info(f"Aligning to external catalog")     
             align_catalog = os.path.join(
                 self.catalog_dir,
@@ -551,12 +548,14 @@ class AstrometricAlignStep:
         align_table = QTable.read(align_catalog, format="fits")
         ref_tab = Table()
 
-        if len(self.catalogs[self.target]) == 1: # when only using external AGB catalog
+        # when only using external AGB catalog
+        if self.ref_long_filter is None:                
             ref_tab["RA"] = align_table["ra"]
             ref_tab["DEC"] = align_table["dec"]
-
-        elif len(self.catalogs[self.target]) > 1: # when using external + internal catalog
-            if self.band in self.ref_long_filter: # miri -> ref long
+        # when using external + internal catalog
+        elif self.ref_long_filter is not None:          
+            # miri -> ref long
+            if self.band in self.ref_long_filter: 
                 # get wcs from ref_long aligned image
                 ref_long_dir = self.in_dir.replace(f"{self.band}", f"{self.ref_long_filter[self.band]}")
                 ref_long_img = os.path.join(
@@ -571,8 +570,8 @@ class AstrometricAlignStep:
                 align_coord = ref_long_wcs.pixel_to_world(ref_x, ref_y)
                 ref_tab["RA"] = align_coord.ra.deg
                 ref_tab["DEC"] = align_coord.dec.deg
-
-            if self.band not in self.ref_long_filter: # nircam -> agb
+            # nircam -> agb
+            elif self.band not in self.ref_long_filter: 
                 ref_tab["RA"] = align_table["ra"]
                 ref_tab["DEC"] = align_table["dec"]
 
