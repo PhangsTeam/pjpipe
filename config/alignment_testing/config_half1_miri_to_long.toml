@@ -4,7 +4,7 @@
 
 # Version for the reprocessing
 #version = 'v2p6_test_cy1_params_cy2_smallbatch' # original name
-version = 'v2p6_cy1_params_cy2_test_alignment_ngc4694_stable-version'
+version = 'v2p6_cy1_params_cy2_test_alignment'
 # ngc5643
 # ngc4298
 # ngc5248
@@ -47,7 +47,7 @@ targets = [
     # 'ngc5042',
     # 'ngc5134',
     # 'ngc3596', # end half 1
-    # 'ngc3626',  # start half 2. # jay: alignment didn't go through, few gaia sources matched
+    # 'ngc3626',  # start half 2. # jay: alignment for nircam fails, few gaia sources matched
     # 'ngc3344',
     # 'ngc3239',
     #'ngc3511',      # jay: done
@@ -74,7 +74,7 @@ targets = [
     # 'ic1954',  # NEW AGB
     # 'ngc0685', # has agb 
     # 'ngc3368',
-    'ngc4694',    # jay: jessica says has very few point sources, try this one. indeed agb cat alignment fails
+    'ngc4694',    # jay: jessica mentions has very few point sources. indeed agb cat alignment fails for nircam
     # 'ngc2566',  # jay: done
 ]
 # Eva's targets: 
@@ -343,7 +343,7 @@ F2100W_bgr = 'F770W_bgr'
 # F187N = 'F335M'
 
 [parameters.astrometric_align.ref_long_filter]  # Jay 19.11.2025
-F770W = 'F335M' # set to F1000W to F300M for cycle 1 
+F770W = 'F335M' # set to F1000W = 'F300M' for cycle 1 
 
 [parameters.astrometric_align.catalogs]
 # Ones w/ AGB catalogs
