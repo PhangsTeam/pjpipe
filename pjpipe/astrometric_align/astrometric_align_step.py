@@ -201,7 +201,7 @@ class AstrometricAlignStep:
         catalogs=None,
         align_mapping_mode="shift",
         align_mapping=None,
-        ref_long_filter=None, # jay 19.11.2025
+        ref_long_filter=None, 
         tweakreg_parameters=None,
         reproject_func="interp",
         overwrite=False,
@@ -513,9 +513,9 @@ class AstrometricAlignStep:
             log.warning("astrometric_alignment_table should be set!")
             return True
 
-        # test Jay 19.11.2025 -> use external (agb/gaia) for nircam, internal cat for miri
-        # when using internal catalog
+        # use external catalog for nircam, internal catalog for miri
         if self.ref_long_filter is not None:
+            # when using internal catalog
             if self.band in self.ref_long_filter:          
                 log.info(f"Aligning to internal catalog from shorter wavelength ({self.ref_long_filter[self.band]})")
                 align_cat_dir = self.in_dir.replace(f"{self.band}", f"{self.ref_long_filter[self.band]}")
@@ -548,7 +548,7 @@ class AstrometricAlignStep:
         align_table = QTable.read(align_catalog, format="fits")
         ref_tab = Table()
 
-        # when only using external AGB catalog
+        # when only using external catalog
         if self.ref_long_filter is None:                
             ref_tab["RA"] = align_table["ra"]
             ref_tab["DEC"] = align_table["dec"]
@@ -570,7 +570,7 @@ class AstrometricAlignStep:
                 align_coord = ref_long_wcs.pixel_to_world(ref_x, ref_y)
                 ref_tab["RA"] = align_coord.ra.deg
                 ref_tab["DEC"] = align_coord.dec.deg
-            # nircam -> agb
+            # nircam -> external
             elif self.band not in self.ref_long_filter: 
                 ref_tab["RA"] = align_table["ra"]
                 ref_tab["DEC"] = align_table["dec"]
