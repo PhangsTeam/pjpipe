@@ -5,8 +5,8 @@ import pjpipe
 
 this_dir = os.path.dirname(os.path.realpath(__file__))
 
-config_file = os.path.join(this_dir, "config_half1_miri_to_long.toml")
-local_file = os.path.join(this_dir, "astronode_dirs.toml")
+config_file = os.path.join(this_dir, "config_eva_4793_miri_to_long.toml")
+local_file = os.path.join(this_dir, "astronode_dirs_cy1.toml")
 
 # We need to set CRDS path
 local = pjpipe.load_toml(local_file)

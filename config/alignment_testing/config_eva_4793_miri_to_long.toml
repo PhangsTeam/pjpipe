@@ -1,107 +1,49 @@
-# Original file from Ryan: latest cycle 2 version
-
 # List of targets
 
-# Version for the reprocessing
-#version = 'v2p6_test_cy1_params_cy2_smallbatch' # original name
-version = 'v2p6_cy1_params_cy2_test_alignment'
-# ngc5643
-# ngc4298
-# ngc5248
-# ngc4548
-# ngc2997
-# ngc2903
-# ngc1808
-
-# targets = ['ngc3239']
-# targets = ['ngc1546']
-
 targets = [
-    # 'ic1954',  # NEW AGB # start with paschen alpha
-    # 'ic5273',
-    # 'ngc0685', # has agb 
-    # # # #'ngc1068', # run separately
-    # # # 'ngc1097', # agb. Eva's (done)
-    # 'ngc1511',
-    #'ngc1546', 
-    # 'ngc1559', # agb 
-    # # # 'ngc1637', # Eva's (done) # NEW AGB
-    # # # 'ngc1792', # agb. Eva's (done)
-    # 'ngc1808', # Eva's, not yet done
-    # 'ngc1809',
-    # 'ngc2090',
-    # 'ngc2283',
-    # 'ngc2775',  # NEW AGB
-    # 'ngc2903',  # Eva's, but not yet done # NEW AGB
-    # 'ngc2997', # Eva's, but not yet done  # NEW AGB
-    # 'ngc3059',  # NEW AGB
-    # 'ngc3137',
-    # 'ngc3239',
-    # 'ngc3344',
-    # 'ngc3368',
-    # 'ngc3507',
-    # 'ngc3511',      
-    # 'ngc3521',
-    # 'ngc3596', # end half 1
-    # 'ngc3621', # NEW AGB
-    # 'ngc4298', # Eva's, but not yet done # NEW AGB
-    # 'ngc4424', # NEW AGB  
-    # 'ngc4457',
-    # 'ngc4540',
-    # 'ngc4548',  # Eva's, but not yet done # NEW AGB
-    # 'ngc4569', # NEW AGB
-    # 'ngc4571',  # NEW AGB
-    # 'ngc4654', # NEW AGB
-    # 'ngc4694',    
-    # 'ngc4781',
-    # # # 'ngc4826', # Jiayi's program # NEW AGB
-    # 'ngc4941',
-    # 'ngc4951', # NEW AGB
-    # 'ngc5042',
-    # 'ngc5248',  # Eva's, but not yet done # NEW AGB -- was WOPR in v0p3, but obs done in June 2025
-    # 'ngc5530',
-    # # 'ngc5643', # Eva's, done (2025-06-18) NEW AGB
-    # # # 'ngc6300', # Eva's (done) # NEW AGB
-    # 'ngc7456',    # end with paschen alpha
-    # 'ngc1317', # AGB      # start without paschen alpha
-    # 'ngc2566',  
-    # 'ngc3626',  # start half 2. 
-    # 'ngc4496a',
-    # 'ngc4536', # NEW AGB
-    # 'ngc4579',
-    # 'ngc4689', # NEW AGB
-    # 'ngc4731',  # NEW AGB
-    # 'ngc5134',   
+    # 'ngc1097',
+    # 'ngc1433',
+    # 'ngc1512',
+    # 'ngc1637',
+    'ngc1672', 
+    # 'ngc1792',
+    # 'ngc1808', # Doeesn't have 10um or 11.3um
+    # 'ngc2903',
+    # 'ngc2997',
+    # 'ngc3351',
+    # 'ngc3627',
+    # 'ngc4298',
+    # 'ngc4548',
+    # 'ngc5248',
+    # 'ngc5643'
+    # 'ngc6300',
 ]
-# Eva's targets: 
-#   Done (25 Oct): 'ngc1512', 'ngc1672', 'ngc1637', 'ngc1792', 'ngc1097', 'ngc6300'
-#   Not done: 'ngc5643', 'ngc1808', 'ngc5248', 'ngc4548', 'ngc4298', 'ngc3627', 'ngc3351', 'ngc2997', 'ngc2903', 'ngc1433'
 
-# 'ngc5643', # NEW AGB
-# 'ngc1808', 
-# 'ngc5248', # NEW AGB
-# 'ngc4548', # NEW AGB
-# 'ngc4298', # NEW AGB
-# 'ngc3627', 
-# 'ngc3351', 
-# 'ngc2997', # NEW AGB
-# 'ngc2903', # NEW AGB
-# 'ngc1433'
-# ngc5643 # NEW AGB
-# ngc1808 # NO AGB
-
+# Version for the reprocessing
+version = 'v4p0_alignment_testing'
 
 # Bands to consider
 bands = [
+    #'F164N',
+    #'F212N',
+    #'F277W',
+    #'F360M',
+    #'F335M',
+    #'F444W',
     'F150W',
     'F187N',
     'F200W',
     'F300M',
-    'F335M',
-    'F770W',
-    'F2100W',
-    'F770W_bgr',
-    'F2100W_bgr',
+    #'F405N',
+    #'F430M',
+    #'F1130W',
+    #'F1000W',
+    #'F1000W_bgr',
+    #'F1130W_bgr',
+    #'F770W',
+    #'F2100W',
+    #'F770W_bgr',
+    #'F2100W_bgr',
 ]
 
 # Steps. These can/should be different
@@ -120,7 +62,7 @@ steps = [
     'multi_tile_destripe.nircam',
     #    'psf_model',  # TODO
     'lv3',
-    'astrometric_catalog',
+    'astrometric_catalog.miri',
     'astrometric_align',
     'anchoring',
     'psf_matching',
@@ -132,7 +74,7 @@ steps = [
 # the raw science
 [parameters.download]
 
-prop_id = '3707'
+prop_id = ['4793', '3707', '2107']
 product_type = ['SCIENCE']
 calib_level = [1]
 
@@ -150,8 +92,11 @@ ngc3239 = ['jw03707037*', 'jw03707038*']
 ngc3344 = ['jw03707123*', 'jw03707124*']
 ngc3596 = ['jw03707047*', 'jw03707048*']
 ngc4694 = ['jw03707093*', 'jw03707094*']
-ngc5248 = 'jw03707109003*' # NOTE: PARTIAL REPEAT (ONLY 109:3 FAILED). CAREFUL REDUCING THIS ONE. 
+ngc1808 = 'jw04793007*' # had to repeat
+ngc5643 = 'jw04793015*'
+ngc5248 = 'jw03707109003*' # PARTIAL REPEAT (ONLY 109:3 FAILED). CAREFUL REDUCING THIS ONE. 
 ngc5530 = 'jw03707111001*' # NOTE: PARTIAL REPEAT (ONLY 111:1 FAILED). CAREFUL REDUCING THIS ONE. 
+
 
 [parameters.lv1]
 
@@ -161,11 +106,11 @@ jwst_parameters.save_results = true
 #jwst_parameters.jump.expand_large_events.F187N = true
 jwst_parameters.jump.expand_large_events.nircam = true
 
-jwst_parameters.rscd.skip = true
-jwst_parameters.clean_flicker_noise.skip = true
-
 jwst_parameters.ramp_fit.suppress_one_group = false
 jwst_parameters.refpix.use_side_ref_pixels = true
+
+jwst_parameters.rscd.skip = true
+jwst_parameters.clean_flicker_noise.skip = true
 
 [parameters.lv2]
 
@@ -259,6 +204,8 @@ save_results = true
 
 # Skip MIRI wavelengths, since we have already
 # solved for this
+skip.F1000W = true
+skip.F1130W = true
 skip.F770W = true
 skip.F2100W = true
 
@@ -272,8 +219,8 @@ expand_refcat = true
 fitgeometry = 'shift'
 minobj = 3
 peakmax.nircam = 20
-roundlo.nircam = -0.5 
-roundhi.nircam = 0.5  
+roundlo.nircam = -0.5
+roundhi.nircam = 0.5
 
 # Take relatively tight tolerances since we've already shifted
 # close to the correct solution
@@ -291,17 +238,29 @@ bkg_boxsize.miri = 25
 enforce_user_order = true
 
 [parameters.lv3.jwst_parameters.skymatch]
-
+# skip = true
 # Turn off matching since we've done it already
 skymethod = 'local'
+# match_down = false
 subtract = true
 skystat = 'median'
 nclip.nircam = 20
-nclip.miri = 10
+# nclip.miri = 10
 lsigma.nircam = 3
-lsigma.miri = 1.5
+# lsigma.miri = 1.5
 usigma.nircam = 3
-usigma.miri = 1.5
+# usigma.miri = 1.5
+# # in_memory = true
+# # Turn off matching since we've done it already
+# skymethod = 'global'
+# subtract = true
+# skystat = 'median'
+# nclip.nircam = 20
+# nclip.miri = 10
+# lsigma.nircam = 3
+# lsigma.miri = 1.5
+# usigma.nircam = 3
+# usigma.miri = 1.5
 
 [parameters.lv3.jwst_parameters.outlier_detection]
 in_memory = true
@@ -329,18 +288,23 @@ roundlo = -0.5
 roundhi = 0.5
 
 [parameters.astrometric_align]
+overwrite = false
 
 [parameters.astrometric_align.align_mapping]
 # Map F2100W to F770W
+# F1130W = 'F1000W'
+# F1130W_bgr = 'F1000W_bgr'
 F2100W = 'F770W'
 F2100W_bgr = 'F770W_bgr'
+# F1130W = 'F1000W'
+# F1130W_bgr = 'F1000W_bgr'
 
 # F150W = 'F300M'
 # F187N = 'F335M'
 
-[parameters.astrometric_align.ref_long_filter]
+[parameters.astrometric_align.ref_long_filter]  
 # select reference nircam long filter to match miri internal catalogs
-F770W = 'F335M' 
+F1000W = 'F300M' 
 
 [parameters.astrometric_align.catalogs]
 # Ones w/ AGB catalogs
@@ -348,7 +312,7 @@ F770W = 'F335M'
 ic5273 = 'ic5273_agb_cat.fits'
 ngc1511 = 'ngc1511_agb_cat.fits'
 ngc1546 = 'ngc1546_agb_cat.fits'
-ngc1559 = 'ngc1559_agb_cat.fits'
+# ngc1559 = 'ngc1559_agb_cat.fits'
 # ngc1637 = 'ngc1637_agb_cat.fits'
 # ngc1792 = 'ngc1792_agb_cat.fits'
 ngc1808 = 'ngc1808_agb_cat.fits'
@@ -357,8 +321,8 @@ ngc2090 = 'ngc2090_agb_cat.fits'
 # ngc2566 = 'ngc2566_agb_cat.fits'
 # ngc2775 = 'ngc2775_agb_cat.fits'
 # ngc2903 = 'ngc2903_agb_cat.fits'
-ngc2997 = ['ngc2997e_agb_cat.fits', 'ngc2997w_agb_cat.fits']
-# ngc2997w = 'ngc2997w_agb_cat.fits'
+ngc2997e = 'ngc2997e_agb_cat.fits'
+ngc2997w = 'ngc2997w_agb_cat.fits'
 # ngc3059 = 'ngc3059_agb_cat.fits'
 ngc3507 = 'ngc3507_agb_cat.fits'
 ngc3511 = 'ngc3511_agb_cat.fits'
@@ -366,7 +330,7 @@ ngc3521s = 'ngc3521s_agb_cat.fits'
 ngc3596 = 'ngc3596_agb_cat.fits'
 # ngc3621 = 'ngc3621_agb_cat.fits'
 # ngc4298 = 'ngc4298_agb_cat.fits'
-# ngc4424 = 'ngc4424_agb_cat.fits'   
+# ngc4424 = 'ngc4424_agb_cat.fits'
 ngc4496a = 'ngc4496a_agb_cat.fits'
 # ngc4536 = 'ngc4536_agb_cat.fits'
 # ngc4548 = 'ngc4548_agb_cat.fits'
@@ -374,7 +338,7 @@ ngc4496a = 'ngc4496a_agb_cat.fits'
 # ngc4571 = 'ngc4571_agb_cat.fits'
 # ngc4654 = 'ngc4654_agb_cat.fits'
 # ngc4689 = 'ngc4689_agb_cat.fits'
-# ngc4694 = 'ngc4694_agb_cat.fits'    
+# ngc4694 = 'ngc4694_agb_cat.fits'
 # ngc4731 = 'ngc4731_agb_cat.fits'
 # ngc4826 = 'ngc4826_agb_cat.fits'
 ngc4941 = 'ngc4941_agb_cat.fits'
@@ -392,7 +356,7 @@ ic1954 = 'ic1954_agb_cat.fits'
 ngc0685 = 'ngc0685_agb_cat.fits'
 ngc1097 = 'ngc1097_agb_cat.fits'
 ngc1317 = 'ngc1317_agb_cat.fits'
-#ngc1559 = 'ngc1559_agb_cat.fits'
+ngc1559 = 'ngc1559_agb_cat.fits'
 ngc1792 = 'ngc1792_agb_cat.fits'
 ngc2775 = 'ngc2775_agb_cat.fits'
 ngc2903 = 'ngc2903_agb_cat.fits'
@@ -409,11 +373,10 @@ ngc5248 = 'ngc5248_agb_cat.fits'
 ngc5643 = 'ngc5643_agb_cat.fits'
 ngc4951 = 'ngc4951_agb_cat.fits'
 ngc4424 = 'ngc4424_agb_cat.fits'
-
 ngc6300 = 'ngc6300_agb_cat.fits'
 ngc4731 = 'ngc4731_agb_cat.fits'
 ngc3059 = 'ngc3059_agb_cat.fits'
-# ngc2997 = 'ngc2997e_agb_cat.fits' # NOTE: the "e" means we have PSF photometry for the East pointing only (from Hwi Kim)
+ngc2997 = 'ngc2997e_agb_cat.fits' # NOTE: the "e" means we have PSF photometry for the East pointing only (from Hwi Kim)
 # ngc2903 = 'ngc2903_agb_cat.fits'
 # ngc2775 = 'ngc2775_agb_cat.fits'
 ngc1637 = 'ngc1637_agb_cat.fits'
@@ -422,6 +385,7 @@ ngc1068 = 'ngc1068_agb_cat.fits'
 ngc2566 = 'ngc2566_agb_cat.fits'
 
 # Ones w/o AGB catalogs
+#ngc1672 = 'Gaia_DR3_ngc1672.fits'
 # ngc5530 = 'Gaia_DR3_ngc5530.fits'
 ngc3368 = 'Gaia_DR3_ngc3368.fits'
 # ngc6300 = 'Gaia_DR3_ngc6300.fits'
@@ -446,6 +410,7 @@ ngc4781 = 'Gaia_DR3_ngc4781.fits'
 # ngc4536 = 'Gaia_DR3_ngc4536.fits'
 # ngc4424 = 'Gaia_DR3_ngc4424.fits'
 # ngc3621 = 'Gaia_DR3_ngc3621.fits'
+
 # ngc5042 = 'Gaia_DR3_ngc5042.fits'
 ngc5134 = 'Gaia_DR3_ngc5134.fits'
 # ngc3596 = 'Gaia_DR3_ngc3596.fits'
@@ -482,7 +447,7 @@ ngc1385 = 'ngc1385_agb_cat.fits'
 ngc1433 = 'ngc1433_agb_cat.fits'
 ngc1512 = 'ngc1512_agb_cat.fits'
 ngc1566 = 'ngc1566_agb_cat.fits'
-ngc1672 = 'ngc1672_agb_cat.fits'
+ngc1672 = 'ngc1672_agb_cat.fits' 
 ngc2835 = 'ngc2835_agb_cat.fits'
 ngc3351 = 'ngc3351_agb_cat.fits'
 ngc3627 = 'ngc3627_agb_cat.fits'
@@ -521,7 +486,8 @@ sigma = 3
 
 
 [parameters.anchoring]
-#overwrite = false # true
+# band to use as reference for resolution
+overwrite =  false # true
 internal_conv_band = 'F2100W'
 
 [parameters.anchoring.ref_band]
@@ -537,17 +503,18 @@ nircam = ['w1_atgauss7p5', 'w2_atgauss7p5', 'irac1_atgauss4', 'irac2_atgauss4']
 
 [parameters.psf_matching]
 #skip_if_missing_kernels = true
-overwrite = true
-target_bands = ['F200W', 'F300M', 'F770W', "gauss0p35", "gauss0p85"]
+#target_bands = ['F200W', 'F300M', 'F770W', "gauss0p35", "gauss0p85"]
+target_bands = ["gauss0p14", "gauss0p12"] # using safe gaussians of F300M from Williams+24 Table2
 reproject_func = "interp"
-
+overwrite = true
 
 [parameters.release]
-overwrite = true
+overwrite=true
 move_tweakback = true
 move_backgrounds = true
 move_psf_matched = true
 move_diagnostic_plots = true
 
 [parameters.regress_against_previous]
-prev_version = 'v0p3'
+overwrite = true
+prev_version = 'v3p0'
