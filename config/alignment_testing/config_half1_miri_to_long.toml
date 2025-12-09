@@ -31,7 +31,7 @@ targets = [
     # # # 'ngc4826', # Jiayi's program # NEW AGB
     # 'ngc4298', # Eva's, but not yet done # NEW AGB
     # 'ngc4536', # NEW AGB
-    # 'ngc4424', # NEW AGB  # jay: done 
+    # 'ngc4424', # NEW AGB  
     # 'ngc3621', # NEW AGB
     # 'ngc4540',
     # 'ngc4781',
@@ -47,10 +47,10 @@ targets = [
     # 'ngc5042',
     # 'ngc5134',
     # 'ngc3596', # end half 1
-    # 'ngc3626',  # start half 2. # jay: alignment for nircam fails, few gaia sources matched
+    # 'ngc3626',  # start half 2.
     # 'ngc3344',
     # 'ngc3239',
-    #'ngc3511',      # jay: done
+    #'ngc3511', 
     # 'ngc3059',  # NEW AGB
     # 'ngc3137',
     # 'ngc2997', # Eva's, but not yet done  # NEW AGB
@@ -67,15 +67,15 @@ targets = [
     # 'ic5273',
     # 'ngc7456',
     # 'ngc1809',
-    #'ngc1546', # jay: done
-    # 'ngc1559', # agb # jay: done
+    #'ngc1546', 
+    # 'ngc1559', # agb 
     # 'ngc2090',
     # # # 'ngc1097', # agb. Eva's (done)
     # 'ic1954',  # NEW AGB
     # 'ngc0685', # has agb 
     # 'ngc3368',
-    'ngc4694',    # jay: jessica mentions has very few point sources. indeed agb cat alignment fails for nircam
-    # 'ngc2566',  # jay: done
+    'ngc4694',    
+    # 'ngc2566',  
 ]
 # Eva's targets: 
 #   Done (25 Oct): 'ngc1512', 'ngc1672', 'ngc1637', 'ngc1792', 'ngc1097', 'ngc6300'
@@ -342,8 +342,9 @@ F2100W_bgr = 'F770W_bgr'
 # F150W = 'F300M'
 # F187N = 'F335M'
 
-[parameters.astrometric_align.ref_long_filter]  # Jay 19.11.2025
-F770W = 'F335M' # set to F1000W = 'F300M' for cycle 1 
+[parameters.astrometric_align.ref_long_filter]  
+# select reference nircam long filter to match miri internal catalogs
+F770W = 'F335M' 
 
 [parameters.astrometric_align.catalogs]
 # Ones w/ AGB catalogs
