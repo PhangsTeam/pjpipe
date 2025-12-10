@@ -45,8 +45,9 @@ targets = [
     # 'ngc3596', # end half 1
     # 'ngc3621', # NEW AGB
     # 'ngc4298', # Eva's, but not yet done # NEW AGB
+    # 'ngc4536', # NEW AGB
     # 'ngc4424', # NEW AGB  
-    # 'ngc4457',
+    # 'ngc3621', # NEW AGB
     # 'ngc4540',
     # 'ngc4548',  # Eva's, but not yet done # NEW AGB
     # 'ngc4569', # NEW AGB
@@ -71,7 +72,40 @@ targets = [
     # 'ngc4579',
     # 'ngc4689', # NEW AGB
     # 'ngc4731',  # NEW AGB
-    # 'ngc5134',   
+    # 'ngc4941',
+    # 'ngc4457',
+    # 'ngc5042',
+    # 'ngc5134',
+    # 'ngc3596', # end half 1
+    # 'ngc3626',  # start half 2.
+    # 'ngc3344',
+    # 'ngc3239',
+    #'ngc3511', 
+    # 'ngc3059',  # NEW AGB
+    # 'ngc3137',
+    # 'ngc2997', # Eva's, but not yet done  # NEW AGB
+    # 'ngc2903',  # Eva's, but not yet done # NEW AGB
+    # 'ngc3521',
+    # 'ngc3507',
+    # 'ngc2775',  # NEW AGB
+    # # # 'ngc1792', # agb. Eva's (done)
+    # 'ngc1511',
+    # 'ngc2283',
+    # # # 'ngc1637', # Eva's (done) # NEW AGB
+    # 'ngc1808', # Eva's, not yet done
+    # # # #'ngc1068', # run separately
+    # 'ic5273',
+    # 'ngc7456',
+    # 'ngc1809',
+    #'ngc1546', 
+    # 'ngc1559', # agb 
+    # 'ngc2090',
+    # # # 'ngc1097', # agb. Eva's (done)
+    # 'ic1954',  # NEW AGB
+    # 'ngc0685', # has agb 
+    # 'ngc3368',
+    'ngc4694',    
+    # 'ngc2566',  
 ]
 # Eva's targets: 
 #   Done (25 Oct): 'ngc1512', 'ngc1672', 'ngc1637', 'ngc1792', 'ngc1097', 'ngc6300'
@@ -338,7 +372,7 @@ F2100W_bgr = 'F770W_bgr'
 # F150W = 'F300M'
 # F187N = 'F335M'
 
-[parameters.astrometric_align.ref_long_filter]
+[parameters.astrometric_align.ref_long_filter]  
 # select reference nircam long filter to match miri internal catalogs
 F770W = 'F335M' 
 
