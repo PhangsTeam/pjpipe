@@ -1,0 +1,7 @@
+crds_path = '/nexus/posix0/MIA-astro-env/eschinner/jgonzalez/jwst_pipeline/crds_cache/jwst_ops'
+raw_dir = '/nexus/posix0/MIA-astro-env/eschinner/jgonzalez/phangs/jwst_raw/3707'
+reprocess_dir = '/nexus/posix0/MIA-astro-env/eschinner/jgonzalez/phangs/jwst_phangs_reprocessed'
+alignment_dir = '/nexus/posix0/MIA-astro-env/eschinner/jgonzalez/pjpipe-dev/pjpipe/config/alignment_testing/alignment'
+kernel_dir = '/nexus/posix0/MIA-astro-env/eschinner/jgonzalez/jwst_pipeline/kernels'
+webb_psf_data = '/nexus/posix0/MIA-astro-env/eschinner/jgonzalez/jwst_pipeline/webbpsf-data'
+processors = 20
