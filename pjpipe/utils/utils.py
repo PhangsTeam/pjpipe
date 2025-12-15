@@ -1002,6 +1002,9 @@ def do_jwst_convolution(
         image_hdu["ERR"].data = conv_err
 
         if output_grid is None:
+            dirpath = os.path.dirname(file_out)
+            if dirpath:
+                os.makedirs(dirpath, exist_ok=True)
             image_hdu.writeto(file_out, overwrite=True)
         else:
             # Reprojection to target wcs grid define in output_grid
@@ -1030,6 +1033,9 @@ def do_jwst_convolution(
             header = image_hdu["ERR"].header
             hdulist_out.append(fits.ImageHDU(data=repr_err, header=header, name="ERR"))
 
+            dirpath = os.path.dirname(file_out)
+            if dirpath:
+                os.makedirs(dirpath, exist_ok=True)
             hdulist_out.writeto(file_out, overwrite=True)
 
 
