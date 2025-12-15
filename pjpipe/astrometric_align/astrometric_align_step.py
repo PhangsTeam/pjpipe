@@ -26,12 +26,16 @@ from stdatamodels.jwst import datamodels
 from tqdm import tqdm
 from tweakwcs import fit_wcs, XYXYMatch
 from tweakwcs.correctors import FITSWCSCorrector, JWSTWCSCorrector
+import matplotlib.pyplot as plt 
+import astropy.units as u
 
 from ..utils import (
     get_band_type,
     parse_parameter_dict,
     recursive_setattr,
     get_default_args,
+    fwhms_pix,
+    jwst_pixel_scales,
 )
 
 ALLOWED_REPROJECT_FUNCS = [
@@ -205,6 +209,7 @@ class AstrometricAlignStep:
         tweakreg_parameters=None,
         reproject_func="interp",
         overwrite=False,
+        qa_plots=False,
     ):
         """Perform absolute astrometric alignment
 
@@ -240,6 +245,8 @@ class AstrometricAlignStep:
                 but can also be 'exact' or 'adaptive'
             overwrite: Whether to overwrite or not. Defaults
                 to False
+            qa_plots: Whether to create Quality Assurance plots to assess the 
+                level of mismatch in astrometry.
         """
 
         if reproject_func not in ALLOWED_REPROJECT_FUNCS:
@@ -268,6 +275,7 @@ class AstrometricAlignStep:
         self.tweakreg_parameters = tweakreg_parameters
         self.reproject_func = reproject_func
         self.overwrite = overwrite
+        self.qa_plots = qa_plots
 
     def do_step(self):
         """Run absolute astrometric alignment"""
@@ -677,6 +685,116 @@ class AstrometricAlignStep:
                     target_tab,
                     tp_units="pix",
                 )
+
+                # --------
+                # QA plots
+                # --------
+                if self.qa_plots:
+                    import matplotlib as mpl
+                    from matplotlib.patches import Circle
+                    mpl.rcParams.update({
+                        "axes.labelsize": 14,
+                        "axes.titlesize": 14,
+                        "xtick.labelsize": 12,
+                        "ytick.labelsize": 12,
+                        "legend.fontsize": 12,
+                        "font.family": "sans-serif",
+                        "font.size": 14,
+                        "savefig.dpi": 150,
+                        "figure.dpi": 150,
+                        "lines.linewidth": 1.2,
+                        "xtick.direction": "in",
+                        "ytick.direction": "in",
+                        "xtick.major.size": 5,
+                        "ytick.major.size": 5, 
+                        "axes.linewidth": 0.6,
+                    })
+
+                    qa_outdir = os.path.join(self.in_dir, "qa_alignment")
+                    os.makedirs(qa_outdir, exist_ok=True) 
+                    log.info(f"Saving alignment QA plots in {qa_outdir}")
+                
+                    band_type, short_long = get_band_type(self.band, short_long_nircam=True)
+                    pixscale_band = jwst_pixel_scales[short_long]
+                    fwhm_pix_band = fwhms_pix[self.band]
+                    fwhm_asec_band = fwhm_pix_band * pixscale_band
+
+                    # read all coordinates from catalogs 
+                    ref_ra_all = ref_tab['RA'].data
+                    ref_dec_all = ref_tab['DEC'].data
+                    tgt_ra_all = target_tab['ra'].data
+                    tgt_dec_all = target_tab['dec'].data 
+
+                    # read only matched pairs
+                    if len(ref_idx) > 0 and len(target_idx) > 0: 
+                        # get all, and matched coordinates
+                        ref_ra_matched = ref_ra_all[ref_idx]
+                        ref_dec_matched = ref_dec_all[ref_idx]
+                        tgt_ra_matched = tgt_ra_all[target_idx]
+                        tgt_dec_matched = tgt_dec_all[target_idx]
+
+                        # compute projected separation between matched pairs 
+                        skycoord_ref = SkyCoord(ra=ref_ra_matched * u.deg, dec=ref_dec_matched * u.deg)
+                        skycoord_tgt = SkyCoord(ra=tgt_ra_matched * u.deg, dec=tgt_dec_matched * u.deg)
+                        sep_arcsec = skycoord_ref.separation(skycoord_tgt).to(u.arcsec)
+
+                        # compute ra-dec offsets between matched pairs
+                        delta_ra, delta_dec = skycoord_ref.spherical_offsets_to(skycoord_tgt)
+                        delta_ra_asec, delta_dec_asec = delta_ra.to(u.arcsec), delta_dec.to(u.arcsec)
+                        median_delta_ra, median_delta_dec = np.nanmedian(delta_ra_asec.value), np.nanmedian(delta_dec_asec.value)
+
+                        # plot all reference coordinates and matched target sources
+                        fig, ax = plt.subplots(figsize=(8, 6))
+                        fig.suptitle(f"{self.target}: Matched coordinates in {self.band} to {align_catalog.split('/')[-1]}")
+                        ax.scatter(ref_ra_all, ref_dec_all, edgecolor='black', facecolor='none', marker='o', s=1.5, label="ref coords")
+                        ax.scatter(tgt_ra_matched, tgt_dec_matched, color='red', marker='o', s=1, label="matched sources")
+                        ax.set_xlabel("RA (deg)")
+                        ax.set_ylabel("Dec (deg)")
+                        ax.legend()
+                        fig.tight_layout()
+                        fig.savefig(os.path.join(qa_outdir, f"{self.target}_{self.band}_catalog_compare.png"), dpi=150)
+                        plt.close(fig)
+
+                        # plot ra-dec offsets
+                        fig = plt.figure(figsize=(15,5))
+                        fig.suptitle(f"{self.target}: Offsets between {self.band} to {align_catalog.split('/')[-1]}")
+                        ax1 = fig.add_subplot(131)
+                        ax1.hist(delta_ra_asec, edgecolor='black', color='gray')
+                        ax1.axvline(median_delta_ra, color='red', lw=1, label=f'median {median_delta_ra:.4f}')
+                        ax1.set_xlabel("RA offset arcsec")
+                        ax1.set_ylabel("count")
+                        ax1.legend()
+                        ax2 = fig.add_subplot(132)
+                        ax2.hist(delta_dec_asec, edgecolor='black', color='gray')
+                        ax2.axvline(median_delta_dec, color='red', lw=1, label=f'median {median_delta_dec:.4f}')
+                        ax2.set_xlabel("Dec offset arcsec")
+                        ax2.set_ylabel("count")            
+                        ax2.legend()
+                        # for scatterplot include pixel scale and fwhm in arcsec
+                        # from Tom's scatterball plot example
+                        pixelsquare_x = [pixscale_band / 2. , pixscale_band / 2.,
+                                         -1. * pixscale_band / 2., -1. * pixscale_band / 2.,
+                                         pixscale_band / 2.]
+                        pixelsquare_y = [pixscale_band / 2., -1. * pixscale_band / 2.,
+                                        -1. * pixscale_band / 2., pixscale_band / 2.,
+                                        pixscale_band / 2.]
+                        fwhm_circle = Circle((0., 0.), 0.5 * fwhm_asec_band, fill=False, color='red',
+                                             linestyle='dotted')
+                        ax3 = fig.add_subplot(133)
+                        ax3.axvline(0, color='gray', alpha=0.7, ls='--')
+                        ax3.axhline(0, color='gray', alpha=0.7, ls='--')
+                        ax3.plot(pixelsquare_x, pixelsquare_y, c='darkgrey')
+                        ax3.add_patch(fwhm_circle)
+                        ax3.axvline(median_delta_ra, color='red', lw=1)
+                        ax3.axhline(median_delta_dec, color='red')
+                        ax3.scatter(delta_ra_asec, delta_dec_asec, marker='o', edgecolor='black', color='gray', s=1)
+                        ax3.set_xlabel("RA offset arcsec")    
+                        ax3.set_ylabel("Dec offset arcsec")
+                        ax3.set_xlim(-0.05, 0.05)
+                        ax3.set_ylim(-0.05, 0.05)
+                        plt.tight_layout()
+                        plt.savefig(os.path.join(qa_outdir, f"{self.target}_{self.band}_coord_offsets.png"), dpi=150)
+                        plt.close(fig)
 
                 fit_wcs_args = get_default_args(fit_wcs)
 
