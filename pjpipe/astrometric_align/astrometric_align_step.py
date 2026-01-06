@@ -7,8 +7,8 @@ import os
 import warnings
 from functools import partial
 
-from astropy.io import fits
 import gwcs
+from astropy.io import fits
 
 try:
     from gwcs.utils import make_fitswcs_transform
@@ -31,6 +31,7 @@ from ..utils import (
     parse_parameter_dict,
     recursive_setattr,
     get_default_args,
+    get_kws,
 )
 
 ALLOWED_REPROJECT_FUNCS = [
@@ -124,10 +125,10 @@ def lv3_update_fits_wcsinfo(im, hdr):
 
 
 def parallel_tweakback(
-    file,
-    matrix=None,
-    shift=None,
-    ref_tpwcs=None,
+        file,
+        matrix=None,
+        shift=None,
+        ref_tpwcs=None,
 ):
     """Wrapper function to parallelise tweakback routine
 
@@ -187,22 +188,21 @@ def parallel_tweakback(
 
 class AstrometricAlignStep:
     def __init__(
-        self,
-        target,
-        band,
-        target_dir,
-        in_dir,
-        is_bgr,
-        catalog_dir,
-        run_astro_cat,
-        step_ext,
-        procs,
-        catalogs=None,
-        align_mapping_mode="shift",
-        align_mapping=None,
-        tweakreg_parameters=None,
-        reproject_func="interp",
-        overwrite=False,
+            self,
+            target,
+            bands,
+            progress_dict,
+            target_dir,
+            catalog_dir,
+            step_ext,
+            procs,
+            step_parameters,
+            catalogs=None,
+            align_mapping_mode="shift",
+            align_mapping=None,
+            tweakreg_parameters=None,
+            reproject_func="interp",
+            overwrite=False,
     ):
         """Perform absolute astrometric alignment
 
@@ -214,12 +214,8 @@ class AstrometricAlignStep:
 
         Args:
             target: Target to consider
-            band: Band to consider
-            in_dir: Input directory
-            is_bgr: Whether we're processing background observations or not
+            bands: Bands to consider
             catalog_dir: Directory of alignment catalogs
-            run_astro_cat: Whether we've run the astrometric_catalog
-                step for this target/band
             step_ext: .fits extension for the files going
                 into the step
             procs: Number of processes to run in parallel
@@ -238,42 +234,77 @@ class AstrometricAlignStep:
                 to False
         """
 
-        if reproject_func not in ALLOWED_REPROJECT_FUNCS:
-            raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
-
-        if catalogs is None:
-            catalogs = {}
-        if align_mapping is None:
-            align_mapping = {}
-        if tweakreg_parameters is None:
-            tweakreg_parameters = {}
-
         self.target = target
-        self.band = band
+        self.bands = bands
+        self.progress_dict = progress_dict
         self.target_dir = target_dir
-        self.in_dir = in_dir
-        self.is_bgr = is_bgr
-        self.run_astro_cat = run_astro_cat
+        self.catalog_dir = catalog_dir
         self.step_ext = step_ext
         self.procs = procs
-        self.catalog_dir = catalog_dir
-        self.catalogs = catalogs
-        self.align_mapping_mode = align_mapping_mode
-        self.align_mapping = align_mapping
-        self.tweakreg_parameters = tweakreg_parameters
-        self.reproject_func = reproject_func
-        self.overwrite = overwrite
+        self.step_parameters = step_parameters
 
     def do_step(self):
         """Run absolute astrometric alignment"""
 
+        # Pull out to a band order where we do the reference bands first
+
+        align_mappings = self.step_parameters.get("align_mapping", {})
+        reference_bands = np.unique([align_mappings[k] for k in align_mappings])
+        reference_bands = [str(x) for x in reference_bands]
+
+        non_reference_bands = [
+            b for b in self.bands
+            if b not in reference_bands
+        ]
+
+        bands = reference_bands + non_reference_bands
+
+        successes = []
+        for band in bands:
+            success = self.do_step_band(band)
+            successes.append(success)
+
+        if not all(successes):
+            return False
+
+        return True
+
+    def do_step_band(self, band):
+        """Run absolute astrometric alignment per-band
+
+        Args:
+            band: Band to consider
+        """
+
+        in_dir = self.progress_dict[band]["dir"]
+        run_astro_cat = self.progress_dict[band]["run_astro_cat"]
+
+        kws = get_kws(
+            parameters=self.step_parameters,
+            func=AstrometricAlignStep,
+            target=self.target,
+            band=band,
+            max_level=0,
+        )
+
+        catalogs = kws["catalogs"]
+        align_mapping = kws["align_mapping"]
+
+        align_mapping_mode = kws["align_mapping_mode"]
+        tweakreg_parameters = kws["tweakreg_parameters"]
+        reproject_func = kws["reproject_func"]
+        overwrite = kws["overwrite"]
+
+        if reproject_func not in ALLOWED_REPROJECT_FUNCS:
+            raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
+
         step_complete_file = os.path.join(
-            self.in_dir,
+            in_dir,
             "astrometric_align_step_complete.txt",
         )
 
-        if self.overwrite:
-            os.system(f"rm -rf {os.path.join(self.in_dir, '*_align.fits')}")
+        if overwrite:
+            os.system(f"rm -rf {os.path.join(in_dir, '*_align.fits')}")
             os.system(f"rm -rf {step_complete_file}")
 
         # Check if we've already run the step
@@ -282,17 +313,27 @@ class AstrometricAlignStep:
             return True
 
         # If we're matching to pre-aligned image
-        if self.band in self.align_mapping:
-            success = self.align_to_aligned_image()
+        if band in align_mapping:
+            success = self.align_to_aligned_image(band=band,
+                                                  in_dir=in_dir,
+                                                  align_mapping=align_mapping,
+                                                  align_mapping_mode=align_mapping_mode,
+                                                  reproject_func=reproject_func,
+                                                  )
 
         # If we're doing a more traditional tweakreg
         else:
-            if self.run_astro_cat:
+            if run_astro_cat:
                 cat_suffix = "astro_cat.fits"
             else:
                 cat_suffix = "cat.ecsv"
 
-            success = self.tweakreg_align(cat_suffix=cat_suffix)
+            success = self.tweakreg_align(band=band,
+                                          in_dir=in_dir,
+                                          catalogs=catalogs,
+                                          cat_suffix=cat_suffix,
+                                          tweakreg_parameters=tweakreg_parameters,
+                                          )
 
         # If not everything has succeeded, then return a warning
         if not success:
@@ -305,26 +346,46 @@ class AstrometricAlignStep:
         return True
 
     def align_to_aligned_image(
-        self,
+            self,
+            band,
+            in_dir,
+            align_mapping=None,
+            align_mapping_mode="shift",
+            reproject_func="interp",
     ):
         """Align to a pre-aligned image
 
         This will align to a pre-aligned image, either using cross-correlation
         or by pulling out the shift values and matrix from tweakreg (default)
+
+        Args:
+            band: Band to consider
+            in_dir: Input directory
+            align_mapping: Mapping to use to align to
+            align_mapping_mode: If locking to other JWST image,
+                method to use. Option is "shift" (pull the
+                tweakreg solution from the existing file),
+                or "cross-corr" (do some cross-correlation
+                between the images)
+            reproject_func: Which reproject function to use.
+                Defaults to 'interp'
         """
 
-        if self.reproject_func == "interp":
+        if reproject_func == "interp":
             r_func = reproject_interp
-        elif self.reproject_func == "exact":
+        elif reproject_func == "exact":
             r_func = reproject_exact
-        elif self.reproject_func == "adaptive":
+        elif reproject_func == "adaptive":
             r_func = reproject_adaptive
         else:
             raise ValueError(f"reproject_func should be one of {ALLOWED_REPROJECT_FUNCS}")
 
+        if align_mapping is None:
+            raise ValueError("Require an alignment mapping to map to")
+
         files = glob.glob(
             os.path.join(
-                self.in_dir,
+                in_dir,
                 f"*{self.step_ext}.fits",
             ),
         )
@@ -335,7 +396,7 @@ class AstrometricAlignStep:
 
         log.info("Aligning to pre-aligned image")
 
-        ref_band = self.align_mapping[self.band]
+        ref_band = align_mapping[band]
         ref_band_type = get_band_type(ref_band)
 
         ref_hdu_name = os.path.join(
@@ -388,7 +449,7 @@ class AstrometricAlignStep:
                     target_err = copy.deepcopy(target_im.err)
                     target_data[target_data == 0] = np.nan
 
-                    if self.align_mapping_mode == "cross_corr":
+                    if align_mapping_mode == "cross_corr":
                         with warnings.catch_warnings():
                             warnings.simplefilter("ignore")
                             ref_data = r_func(
@@ -435,7 +496,7 @@ class AstrometricAlignStep:
 
                         log.info(f"Found offset of {shift}")
 
-                    elif self.align_mapping_mode == "shift":
+                    elif align_mapping_mode == "shift":
                         # Add in shift metadata
                         target_im.meta.abs_astro_alignment = {
                             "shift": shift,
@@ -460,7 +521,7 @@ class AstrometricAlignStep:
             # Also apply this to each individual crf file
             crf_files = glob.glob(
                 os.path.join(
-                    self.in_dir,
+                    in_dir,
                     "*_crf.fits",
                 )
             )
@@ -482,20 +543,30 @@ class AstrometricAlignStep:
         return True
 
     def tweakreg_align(
-        self,
-        cat_suffix="cat.ecsv",
+            self,
+            band,
+            in_dir,
+            catalogs=None,
+            cat_suffix="cat.ecsv",
+            tweakreg_parameters=None,
     ):
         """Align using tweakreg
 
         Args:
+            band: Band to consider
+            in_dir: Input directory
+            catalogs: Dictionary for the external alignment
+                catalogs
             cat_suffix: extension for the existing
                 catalog. Defaults to "cat.ecsv",
                 which is the pipeline default
+            tweakreg_parameters: Dictionary of parameters
+                to pass to tweakreg for the standard alignment
         """
 
         files = glob.glob(
             os.path.join(
-                self.in_dir,
+                in_dir,
                 f"*{self.step_ext}.fits",
             ),
         )
@@ -504,7 +575,12 @@ class AstrometricAlignStep:
             log.warning("No files found to align")
             return True
 
-        if self.target not in self.catalogs:
+        if catalogs is None:
+            catalogs = {}
+        if tweakreg_parameters is None:
+            tweakreg_parameters = {}
+
+        if self.target not in catalogs:
             log.warning("astrometric_alignment_table should be set!")
             return True
 
@@ -512,7 +588,7 @@ class AstrometricAlignStep:
 
         align_catalog = os.path.join(
             self.catalog_dir,
-            self.catalogs[self.target],
+            catalogs[self.target],
         )
 
         if not os.path.exists(align_catalog):
@@ -580,7 +656,7 @@ class AstrometricAlignStep:
             # multiple homing-in iterations
             multiple_iterations = False
             n_iterations = 0
-            for key in self.tweakreg_parameters.keys():
+            for key in tweakreg_parameters.keys():
                 if "iteration" in key:
                     multiple_iterations = True
                     n_iterations += 1
@@ -599,10 +675,10 @@ class AstrometricAlignStep:
                 target_wcs_corrector = copy.deepcopy(target_wcs_corrector_orig)
 
                 if not multiple_iterations:
-                    astrometry_parameter_dict = copy.deepcopy(self.tweakreg_parameters)
+                    astrometry_parameter_dict = copy.deepcopy(tweakreg_parameters)
                 else:
                     astrometry_parameter_dict = copy.deepcopy(
-                        self.tweakreg_parameters[f"iteration{iteration + 1:d}"]
+                        tweakreg_parameters[f"iteration{iteration + 1:d}"]
                     )
 
                 # Run a match
@@ -614,7 +690,7 @@ class AstrometricAlignStep:
                     value = parse_parameter_dict(
                         astrometry_parameter_dict,
                         key,
-                        self.band,
+                        band,
                         self.target,
                     )
                     if value == "VAL_NOT_FOUND":
@@ -636,7 +712,7 @@ class AstrometricAlignStep:
                         arg_val = parse_parameter_dict(
                             astrometry_parameter_dict,
                             fit_wcs_arg,
-                            self.band,
+                            band,
                             self.target,
                         )
                         if arg_val == "VAL_NOT_FOUND":
@@ -705,7 +781,7 @@ class AstrometricAlignStep:
             # Also apply this to each individual crf file
             crf_files = glob.glob(
                 os.path.join(
-                    self.in_dir,
+                    in_dir,
                     "*_crf.fits",
                 )
             )
@@ -758,11 +834,11 @@ class AstrometricAlignStep:
         return True
 
     def move_tweakback_files(
-        self,
-        files,
-        shift=None,
-        matrix=None,
-        ref_tpwcs=None,
+            self,
+            files,
+            shift=None,
+            matrix=None,
+            ref_tpwcs=None,
     ):
         """Wrapper to parallelise up tweakback
 
@@ -785,18 +861,18 @@ class AstrometricAlignStep:
             successes = []
 
             for success in tqdm(
-                pool.imap_unordered(
-                    partial(
-                        parallel_tweakback,
-                        shift=shift,
-                        matrix=matrix,
-                        ref_tpwcs=ref_tpwcs,
+                    pool.imap_unordered(
+                        partial(
+                            parallel_tweakback,
+                            shift=shift,
+                            matrix=matrix,
+                            ref_tpwcs=ref_tpwcs,
+                        ),
+                        files,
                     ),
-                    files,
-                ),
-                total=len(files),
-                ascii=True,
-                desc="tweakback",
+                    total=len(files),
+                    ascii=True,
+                    desc="tweakback",
             ):
                 successes.append(success)
 

@@ -56,6 +56,7 @@ COMBINED_BAND_STEPS = [
     "download",
     "gaia_query",
     "get_wcs_adjust",
+    "astrometric_align",
     "anchoring",
     "release",
     "regress_against_previous",
@@ -284,6 +285,20 @@ class PJPipeline:
                             **step_parameters,
                         )
                         step_result = get_wcs_adjust.do_step()
+
+                    elif step == "astrometric_align":
+
+                        astrometric_catalog = AstrometricAlignStep(
+                            target=target,
+                            bands=self.bands,
+                            progress_dict=progress_dict[target],
+                            target_dir=target_dir,
+                            catalog_dir=self.alignment_dir,
+                            step_ext=in_step_ext,
+                            procs=self.procs,
+                            step_parameters=step_parameters,
+                        )
+                        step_result = astrometric_catalog.do_step()
 
                     # anchoring is in the part operating for all bands because
                     # we need more control on the sequence (reference nircam and miri bands first)
@@ -687,35 +702,6 @@ class PJPipeline:
                             step_result = astrometric_catalog.do_step()
 
                             progress_dict[target][band_full]["run_astro_cat"] = True
-
-                        elif step == "astrometric_align":
-                            # If we've run the astrometric catalog step, track
-                            # that here
-                            run_astro_cat = copy.deepcopy(
-                                progress_dict[target][band_full]["run_astro_cat"]
-                            )
-
-                            kws = get_kws(
-                                parameters=step_parameters,
-                                func=AstrometricAlignStep,
-                                target=target,
-                                band=band_full,
-                                max_level=0,
-                            )
-
-                            astrometric_catalog = AstrometricAlignStep(
-                                target=target,
-                                band=band_full,
-                                target_dir=target_dir,
-                                in_dir=in_dir,
-                                is_bgr=is_bgr,
-                                catalog_dir=self.alignment_dir,
-                                run_astro_cat=run_astro_cat,
-                                step_ext=in_step_ext,
-                                procs=self.procs,
-                                **kws,
-                            )
-                            step_result = astrometric_catalog.do_step()
 
                         elif step == "mosaic_individual_fields":
                             # Here, the input directory should be level 3
