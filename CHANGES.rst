@@ -1,3 +1,8 @@
+1.3.1 (Unreleased)
+==================
+
+- Updated dependencies, added specific pins, dependabot, and CODEOWNERS
+
 1.3.0 (2025-10-02)
 ==================
 
