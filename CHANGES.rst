@@ -1,6 +1,7 @@
 1.3.1 (Unreleased)
 ==================
 
+- Moved astrometric_align to a combined step, to avoid list ordering issues
 - Updated dependencies, added specific pins, dependabot, and CODEOWNERS
 
 1.3.0 (2025-10-02)
