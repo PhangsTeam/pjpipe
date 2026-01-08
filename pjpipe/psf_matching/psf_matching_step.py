@@ -29,6 +29,7 @@ class PSFMatchingStep:
         target_bands=None,
         reproject_func="interp",
         overwrite=False,
+        skip_if_missing_kernels=False,
     ):
         """Match PSF for all images
 
@@ -48,6 +49,7 @@ class PSFMatchingStep:
             reproject_func: Which reproject function to use. Defaults to 'interp',
                 but can also be 'exact' or 'adaptive'
             overwrite: Whether to overwrite or not
+            skip_if_missing_kernels: Whether to skip if kernels are missing
         """
 
         if kernel_dir is None or not os.path.exists(kernel_dir):
@@ -63,6 +65,7 @@ class PSFMatchingStep:
         self.target_bands = target_bands
         self.reproject_func = reproject_func
         self.overwrite = overwrite
+        self.skip_if_missing_kernels = skip_if_missing_kernels
 
     def do_step(self):
         """Run psf_matching step"""
@@ -164,10 +167,15 @@ class PSFMatchingStep:
         kernel_file = os.path.join(
             self.kernel_dir, f"{current_band.lower()}_to_{target_band.lower()}.fits"
         )
+
         if not os.path.exists(kernel_file):
-            raise FileNotFoundError(
-                f"Kernel file {os.path.split(kernel_file)[-1]} not found"
-            )
+            if self.skip_if_missing_kernels:
+                log.warning(f"Kernel file {os.path.split(kernel_file)[-1]} not found, skipping")
+                return True
+            else:
+                raise FileNotFoundError(
+                    f"Kernel file {os.path.split(kernel_file)[-1]} not found"
+                )
 
         # If this is a JWST band, then we want to reproject to match the pixel grid of that existing
         # image
