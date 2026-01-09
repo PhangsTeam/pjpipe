@@ -125,7 +125,7 @@ def lv3_update_fits_wcsinfo(im, hdr):
 
 
 def parallel_tweakback(
-        file,
+        f,
         matrix=None,
         shift=None,
         ref_tpwcs=None,
@@ -133,7 +133,7 @@ def parallel_tweakback(
     """Wrapper function to parallelise tweakback routine
 
     Args:
-        file: File to tweakback
+        f: File to tweakback
         matrix: rotation/skew matrix. Defaults to None
         shift: [x, y] shift. Defaults to None
         ref_tpwcs: WCS in which shift is defined. Defaults
@@ -148,7 +148,7 @@ def parallel_tweakback(
         if shift is None:
             shift = [0, 0]
 
-        input_im = datamodels.open(file)
+        input_im = datamodels.open(f)
 
         input_wcs = input_im.meta.wcs
         input_wcsinfo = input_im.meta.wcsinfo.instance
@@ -176,7 +176,7 @@ def parallel_tweakback(
             )
             return False
 
-    out_file = file.replace(".fits", "_tweakback.fits")
+    out_file = f.replace(".fits", "_tweakback.fits")
     input_im.save(out_file)
 
     del im
