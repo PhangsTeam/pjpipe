@@ -433,11 +433,17 @@ class PJPipeline:
                             band_dir,
                             out_band_dir,
                         )
-
+                        log.info(f"out_dir: {out_dir}")
                         if not os.path.exists(in_dir):
+                            log.info(f"Making in_dir: {in_dir}")
                             os.makedirs(in_dir)
+                        else:
+                            log.info(f"in_dir exists: {in_dir}")
                         if not os.path.exists(out_dir):
+                            log.info(f"Making out_dir: {out_dir}")
                             os.makedirs(out_dir)
+                        else:
+                            log.info(f"out_dir exists: {out_dir}")
 
                         # Move raw observations
                         if not progress_dict[target][band_full]["data_moved"]:

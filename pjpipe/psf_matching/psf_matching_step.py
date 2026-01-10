@@ -90,7 +90,9 @@ class PSFMatchingStep:
             )
         )
         files.sort()
-
+        # Make the output directory if it doesn't exist
+        if not os.path.exists(self.out_dir):    
+            os.makedirs(self.out_dir)
         # If we don't have anything, warn but succeed
         if len(files) == 0:
             log.warning("No files found, will skip this step")
