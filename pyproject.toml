@@ -29,7 +29,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "astropy == 7.1.1",
+    "astropy == 7.2.0",
     "astropy-healpix == 1.1.2",
     "astroquery == 0.4.11",
     "cmocean == 4.0.3",
