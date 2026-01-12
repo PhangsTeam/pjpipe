@@ -58,7 +58,7 @@ dependencies = [
     "stsci.stimage == 0.3.0",
     "stpsf == 2.1.0",
     "stwcs == 1.7.5",
-    "synphot == 1.6.0",
+    "synphot == 1.6.1",
 #    "spacepylot@git+https://github.com/ejwatkins-astro/spacepylot.git",
     "threadpoolctl == 3.6.0",
     "tomli == 2.3.0",
