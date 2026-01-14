@@ -92,7 +92,7 @@ def get_galaxy_specs(fname_table, galaxy='ngc0628'):
     import pandas as pd
     
     # Read the merged table
-    df = pd.read_csv(fname_table)
+    df = pd.read_csv(fname_table, comment='#')
     
     # Convert galaxy name to lowercase for case-insensitive matching
     galaxy = galaxy.lower()
