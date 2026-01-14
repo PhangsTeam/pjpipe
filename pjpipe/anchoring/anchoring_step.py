@@ -22,6 +22,7 @@ from stdatamodels.jwst import datamodels
 from tqdm import tqdm
 
 from ..utils import do_jwst_convolution, get_band_type
+from .intensity_ranges import get_intensity_range
 
 ALLOWED_REPROJECT_FUNCS = [
     "interp",
@@ -338,6 +339,9 @@ class AnchoringStep:
         reproject_func="interp",
         simplify_labels=True,
         overwrite=False,
+        galaxy_table=None,
+        reff_factor=2.0,
+        percentile_range=None,
     ):
         """Anchor aligned data to the external images
 
@@ -368,6 +372,12 @@ class AnchoringStep:
                 but can also be 'exact' or 'adaptive'
             simplify_labels: If True, will strip any convolution info (_atgaussX) from the labels
             overwrite: Whether to overwrite or not
+            galaxy_table: Path to galaxy properties table (CSV) for dynamic intensity range calculation.
+                If None, uses hard-coded intensity ranges (original behavior). Defaults to None.
+                CSV must have columns: name, ra, dec, posang, inclination, distance_mpc, size_reff
+            reff_factor: Factor to multiply effective radius by for intensity range calculation. Defaults to 2.0
+            percentile_range: [min, max] percentiles to calculate intensity range. Defaults to [15, 60]
+                if None is provided. Only used if galaxy_table is provided.
         """
 
         if kernel_dir is None or not os.path.exists(kernel_dir):
@@ -405,6 +415,20 @@ class AnchoringStep:
         self.reproject_func = reproject_func
         self.simplify_labels = simplify_labels
         self.overwrite = overwrite
+        
+        # Dynamic intensity ranges configuration
+        self.galaxy_table = galaxy_table
+        self.reff_factor = reff_factor
+        # Set default percentile range if not provided
+        self.percentile_range = percentile_range if percentile_range is not None else [15, 60]
+        # Automatically enable dynamic ranges only if galaxy_table is provided
+        self.use_dynamic_iranges = galaxy_table is not None
+        
+        if self.use_dynamic_iranges:
+            log.info(f"Dynamic intensity ranges ENABLED using galaxy table: {galaxy_table}")
+            log.info(f"  Reff factor: {self.reff_factor}, Percentile range: {self.percentile_range}")
+        else:
+            log.info("Dynamic intensity ranges DISABLED - using hard-coded values")
 
     def do_step(self):
         """Run anchoring step"""
@@ -733,7 +757,7 @@ class AnchoringStep:
 
         file_short = os.path.split(file)[-1].split(".fits")[0]
 
-        current_band = "".join(re.findall("(f\d+[mwn])", file_short))
+        current_band = "".join(re.findall(r"(f\d+[mwn])", file_short))
 
         instrument = file_short.split("_")[1]
 
@@ -849,12 +873,34 @@ class AnchoringStep:
         repr_image[~fp] = np.nan
 
         # Calculate intercept (and slope) between image and reference
-        if "w3" in ref_file_clean:
-            xmin = 0.0
-            xmax = 0.8
+        # Use dynamic intensity range calculation if enabled and galaxy_table provided
+        if self.use_dynamic_iranges and self.galaxy_table is not None:
+            try:
+                xmin, xmax = get_intensity_range(
+                    file_conv,
+                    self.galaxy_table,
+                    galaxy=self.target,
+                    reff_factor=self.reff_factor,
+                    percentile_range=self.percentile_range,
+                )
+                log.info(f"Using dynamic intensity range for {current_band}: [{xmin:.3f}, {xmax:.3f}]")
+            except Exception as e:
+                log.warning(f"Failed to calculate dynamic intensity range: {e}. Using fallback values.")
+                # Fallback to hard-coded values
+                if "w3" in ref_file_clean:
+                    xmin = 0.0
+                    xmax = 0.8
+                else:
+                    xmin = 0.25
+                    xmax = 2.0
         else:
-            xmin = 0.25
-            xmax = 2.0
+            # Use hard-coded values (original behavior)
+            if "w3" in ref_file_clean:
+                xmin = 0.0
+                xmax = 0.8
+            else:
+                xmin = 0.25
+                xmax = 2.0
 
         # Pull out a cleaned up name for the plots
         if external:
