@@ -138,6 +138,14 @@ Multi-Tile Destriping
     :members:
     :undoc-members:
 
+===========================
+MIRI Persistence Correction
+===========================
+
+.. autoclass:: pjpipe.PersistenceStep
+    :members:
+    :undoc-members:
+
 ============
 PSF Matching
 ============

@@ -28,6 +28,7 @@ logging.basicConfig(level=logging.INFO,
                     ]
                     )
 
+from .anchoring import AnchoringStep
 from .apply_wcs_adjust import ApplyWCSAdjustStep
 from .astrometric_align import AstrometricAlignStep
 from .astrometric_catalog import AstrometricCatalogStep
@@ -46,11 +47,11 @@ from .multi_tile_destripe import MultiTileDestripeStep
 from .psf_model import PSFModelStep
 from .release import ReleaseStep
 from .regress_against_previous import RegressAgainstPreviousStep
+from .persistence import PersistenceStep
 from .pipeline import PJPipeline
+from .psf_matching import PSFMatchingStep
 from .single_tile_destripe import SingleTileDestripeStep
 from .utils import load_toml
-from .anchoring import AnchoringStep
-from .psf_matching import PSFMatchingStep
 
 __all__ = [
     "AnchoringStep",
@@ -69,6 +70,7 @@ __all__ = [
     "MosaicIndividualFieldsStep",
     "MoveRawObsStep",
     "MultiTileDestripeStep",
+    "PersistenceStep",
     "PJPipeline",
     "PSFMatchingStep",
     "PSFModelStep",
