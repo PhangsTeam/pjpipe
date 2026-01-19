@@ -551,16 +551,20 @@ class ReleaseStep:
                 leave=False,
         ):
             os.system(f"tar -czf {plot_dir}.tar.gz {plot_dir}")
-            # Use shutil.rmtree instead of rm -rf for better reliability
+            # Use shutil.rmtree to remove the directory after archiving
             try:
                 shutil.rmtree(plot_dir)
             except OSError as e:
-                log.warning(f"Could not remove {plot_dir}: {e}")
-                # Try to force remove if first attempt fails
+                # If standard removal fails, try with ignore_errors
+                # This can happen if files are still being written or permission issues
+                log.debug(f"First removal attempt failed for {plot_dir}: {e}, retrying with ignore_errors=True")
                 try:
                     shutil.rmtree(plot_dir, ignore_errors=True)
+                    # Verify it was actually removed
+                    if os.path.exists(plot_dir):
+                        log.warning(f"Could not fully remove {plot_dir}, some files may remain")
                 except Exception as e2:
-                    log.error(f"Failed to remove {plot_dir} even with ignore_errors: {e2}")
+                    log.warning(f"Failed to remove {plot_dir}: {e2}")
 
         os.chdir(orig_dir)
 
