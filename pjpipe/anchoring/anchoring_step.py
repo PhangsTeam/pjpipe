@@ -73,6 +73,10 @@ def iterate_ols(x, y, e_y=None, guess=None, x0=None, s2nclip=3.0, iters=3):
     y = y[fin_ind]
     e_y = e_y[fin_ind]
 
+    # Check if we have enough points to fit
+    if len(x) < 2:
+        raise ValueError(f"Not enough valid data points for fitting: only {len(x)} points available, need at least 2")
+
     slope, intercept, rms = None, None, None
 
     use = np.isfinite(x)
@@ -224,6 +228,19 @@ def solve_for_offset(
     # Solve for the difference and note statistics
     comp_vec = comp_data[overlap]
     ref_vec = ref_data[overlap]
+
+    # Ensure binsize is appropriate for the intensity range
+    # Target at least 5 bins for fitting
+    extent = xmax - xmin
+    min_bins = 5
+    adaptive_binsize = extent / min_bins
+    
+    # Use adaptive binsize if the requested binsize is too large for the range
+    # This ensures we always have enough bins for fitting
+    if extent < binsize * min_bins:
+        binsize = adaptive_binsize
+    
+    log.debug(f"Binning range [{xmin:.3f}, {xmax:.3f}] with binsize {binsize:.4f} (extent: {extent:.3f})")
 
     comp_bins = bin_data(ref_vec, comp_vec, xmin=xmin, xmax=xmax, bin_step=binsize)
     xbins = comp_bins["xmid"]
@@ -877,7 +894,7 @@ class AnchoringStep:
         if self.use_dynamic_iranges and self.galaxy_table is not None:
             try:
                 xmin, xmax = get_intensity_range(
-                    file_conv,
+                    ref_file_conv,
                     self.galaxy_table,
                     galaxy=self.target,
                     reff_factor=self.reff_factor,
@@ -915,17 +932,42 @@ class AnchoringStep:
             self.out_subdir,
             f"{self.target}_{current_band.lower()}_vs_{ref_band_tidy.lower()}_anchoring",
         )
-        slope, intercept = solve_for_offset(
-            comp_data=repr_image,
-            ref_data=image_ref,
-            xmin=xmin,
-            xmax=xmax,
-            binsize=0.1,
-            save_plot=saveplot_filename,
-            comp_band=current_band,
-            ref_band=ref_band_tidy,
-            units="MJy/sr",
-            simplify_labels=self.simplify_labels,
-        )
+        
+        # Try to solve for offset with the calculated intensity range
+        try:
+            slope, intercept = solve_for_offset(
+                comp_data=repr_image,
+                ref_data=image_ref,
+                xmin=xmin,
+                xmax=xmax,
+                binsize=0.1,
+                save_plot=saveplot_filename,
+                comp_band=current_band,
+                ref_band=ref_band_tidy,
+                units="MJy/sr",
+                simplify_labels=self.simplify_labels,
+            )
+        except (ValueError, TypeError) as e:
+            # If fitting fails (not enough data points), fall back to hard-coded ranges
+            log.warning(f"Fitting failed with intensity range [{xmin:.3f}, {xmax:.3f}]: {e}")
+            if "w3" in ref_file_clean:
+                xmin_fallback = 0.0
+                xmax_fallback = 0.8
+            else:
+                xmin_fallback = 0.25
+                xmax_fallback = 2.0
+            log.warning(f"Retrying with fallback intensity range [{xmin_fallback:.3f}, {xmax_fallback:.3f}]")
+            slope, intercept = solve_for_offset(
+                comp_data=repr_image,
+                ref_data=image_ref,
+                xmin=xmin_fallback,
+                xmax=xmax_fallback,
+                binsize=0.1,
+                save_plot=saveplot_filename,
+                comp_band=current_band,
+                ref_band=ref_band_tidy,
+                units="MJy/sr",
+                simplify_labels=self.simplify_labels,
+            )
 
         return self.target, ref_file_clean, file_short, current_band, slope, intercept
