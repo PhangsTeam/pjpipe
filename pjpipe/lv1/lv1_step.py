@@ -21,6 +21,20 @@ log = logging.getLogger(__name__)
 cv.setNumThreads(1)
 
 
+def get_sci_dir(d):
+    """Replace _bgr in a directory structure for getting at science directory"""
+
+    trailing_slash = d[0] == os.path.sep
+    sci_dir_split = d.split(os.path.sep)
+    sci_dir_split[-2] = sci_dir_split[-2].replace("_bgr", "")
+
+    sci_dir = ""
+    if trailing_slash:
+        sci_dir += os.path.sep
+    sci_dir += os.path.join(*sci_dir_split)
+
+    return sci_dir
+
 class Lv1Step:
     def __init__(
         self,
@@ -87,27 +101,31 @@ class Lv1Step:
             return True
 
         # If we're operating on background observations and
-        # the science has already been processed, we can just
-        # copy the fits files over here to save time
+        # the science has already been processed for the same files,
+        # we can just copy the fits files over here to save time
 
-        # Account for whether there's a '/' at the start
-        trailing_slash = self.out_dir[0] == os.path.sep
-        sci_dir_split = self.out_dir.split(os.path.sep)
-        sci_dir_split[-2] = sci_dir_split[-2].replace("_bgr", "")
+        sci_in_dir = get_sci_dir(self.in_dir)
+        sci_out_dir = get_sci_dir(self.out_dir)
 
-        sci_dir = ""
-        if trailing_slash:
-            sci_dir += os.path.sep
-        sci_dir += os.path.join(*sci_dir_split)
+        just_copy = False
+        if self.is_bgr and os.path.exists(sci_out_dir):
 
-        if self.is_bgr and os.path.exists(sci_dir):
+            sci_in_files = glob.glob(os.path.join(sci_in_dir, "*.fits"))
+            sci_in_files.sort()
+            bgr_in_files = glob.glob(os.path.join(self.in_dir, "*.fits"))
+            bgr_in_files.sort()
 
-            log.info("These are background observations and science level 1 has already been run. "
+            if sci_in_files == bgr_in_files:
+                just_copy = True
+
+        if just_copy:
+
+            log.info("These are background observations and science level 1 has already been run on the same files. "
                      "Will just copy those files to the output directory"
                      )
 
             # Only copy over fits files
-            files = glob.glob(os.path.join(sci_dir, "*.fits"))
+            files = glob.glob(os.path.join(sci_out_dir, "*.fits"))
 
             for f in tqdm(files,
                           ascii=True,
