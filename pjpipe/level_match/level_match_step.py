@@ -148,6 +148,17 @@ def apply_subtraction(im,
 
     im.data[zero_idx] = 0
 
+    # Save level match coefficients to FITS header
+    if im.extra_fits.PRIMARY is None:
+        im.extra_fits.PRIMARY = []
+    
+    if fit_type == "level":
+        im.extra_fits.PRIMARY.append(('LVLMATCH', delta[0], 'Level match DC offset (MJy/sr)'))
+    elif fit_type == "level+slope":
+        im.extra_fits.PRIMARY.append(('LVLM_A', delta[0], 'Level match x-slope coeff'))
+        im.extra_fits.PRIMARY.append(('LVLM_B', delta[1], 'Level match y-slope coeff'))
+        im.extra_fits.PRIMARY.append(('LVLM_C', delta[2], 'Level match DC offset (MJy/sr)'))
+
     return im
 
 
