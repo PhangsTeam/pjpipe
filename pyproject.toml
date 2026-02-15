@@ -56,7 +56,7 @@ dependencies = [
     "stdatamodels == 4.1.0",
     "stsci.imagestats == 1.8.4",
     "stsci.stimage == 0.3.0",
-    "stpsf == 2.1.0",
+    "stpsf == 2.2.0",
     "stwcs == 1.7.5",
     "synphot == 1.6.1",
 #    "spacepylot@git+https://github.com/ejwatkins-astro/spacepylot.git",
