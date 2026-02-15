@@ -61,7 +61,7 @@ dependencies = [
     "synphot == 1.6.1",
 #    "spacepylot@git+https://github.com/ejwatkins-astro/spacepylot.git",
     "threadpoolctl == 3.6.0",
-    "tomli == 2.3.0",
+    "tomli == 2.4.0",
     "tqdm == 4.67.3",
     "tweakwcs == 0.8.12",
 ]
