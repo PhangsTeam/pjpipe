@@ -403,11 +403,11 @@ class AstrometricAlignStep:
             self.target_dir,
             ref_band,
             "lv3",
-            f"{self.target}_{ref_band_type}_lv3_{ref_band.lower()}_i2d_align.fits",
+            f"{self.target.lower()}_{ref_band_type}_lv3_{ref_band.lower()}_i2d_align.fits",
         )
 
         if not os.path.exists(ref_hdu_name):
-            log.warning("reference HDU to align not found. Will just rename files")
+            log.warning(f"reference HDU {ref_hdu_name} not found. Will just rename files")
 
         for file in files:
             log.info(f"Aligning {os.path.split(file)[-1]}")
