@@ -148,18 +148,32 @@ def apply_subtraction(im,
 
     im.data[zero_idx] = 0
 
-    # Save level match coefficients to FITS header
-    if im.extra_fits.PRIMARY is None:
-        im.extra_fits.PRIMARY = []
-    
-    if fit_type == "level":
-        im.extra_fits.PRIMARY.append(('LVLMATCH', delta[0], 'Level match DC offset (MJy/sr)'))
-    elif fit_type == "level+slope":
-        im.extra_fits.PRIMARY.append(('LVLM_A', delta[0], 'Level match x-slope coeff'))
-        im.extra_fits.PRIMARY.append(('LVLM_B', delta[1], 'Level match y-slope coeff'))
-        im.extra_fits.PRIMARY.append(('LVLM_C', delta[2], 'Level match DC offset (MJy/sr)'))
-
     return im
+
+
+def write_lvlmatch_meta(im, delta, fit_type):
+    """Write level match coefficients to the ASDF metadata.
+
+    Must be called before im.save().
+
+    Args:
+        im: Open JWST datamodel
+        delta: Coefficients that were subtracted
+        fit_type: Type of fitting. 'level' or 'level+slope'
+    """
+
+    if fit_type == "level":
+        im.meta.level_match = {
+            "fit_type": fit_type,
+            "offset": float(delta[0]),
+        }
+    elif fit_type == "level+slope":
+        im.meta.level_match = {
+            "fit_type": fit_type,
+            "x_slope": float(delta[0]),
+            "y_slope": float(delta[1]),
+            "offset": float(delta[2]),
+        }
 
 
 def plane(x, y, params):
@@ -635,6 +649,7 @@ class LevelMatchStep:
                                            ref_wcs=optimal_wcs,
                                            ref_shape=optimal_shape,
                                            )
+                    write_lvlmatch_meta(im, delta, fit_type)
                     im.save(out_file)
                 del im
 
@@ -909,6 +924,7 @@ class LevelMatchStep:
                                            ref_wcs=optimal_wcs,
                                            ref_shape=optimal_shape,
                                            )
+                    write_lvlmatch_meta(im, delta, fit_type)
                     im.save(dither_file)
                 del im
 
@@ -1183,6 +1199,7 @@ class LevelMatchStep:
                 sci_im.dq[LYOT_I, LYOT_J] = lyot_im.dq[LYOT_I, LYOT_J]
 
                 # Save
+                write_lvlmatch_meta(sci_im, lyot_delta, fit_type)
                 sci_im.save(out_file)
 
                 del sci_im, lyot_im
@@ -1262,6 +1279,7 @@ class LevelMatchStep:
                                            ref_wcs=optimal_wcs,
                                            ref_shape=optimal_shape,
                                            )
+                    write_lvlmatch_meta(im, delta, fit_type)
                     im.save(dither_file)
                 del im
 
