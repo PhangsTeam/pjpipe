@@ -7,8 +7,10 @@ import os
 import shutil
 import time
 
+import asdf
 import jwst
 from jwst.datamodels import ModelContainer
+from jwst.resample import ResampleStep
 
 # FIXME For newer JWST versions, import ModelLibrary
 try:
@@ -604,6 +606,52 @@ class Lv3Step:
         del im3
         del asn_file
         gc.collect()
+
+        # Drizzle individual frames to the common mosaic WCS
+        i2d_files = glob.glob(os.path.join(self.out_dir, "*_i2d.fits"))
+        crf_files = sorted(glob.glob(os.path.join(self.out_dir, "*_crf.fits")))
+
+        if i2d_files and crf_files:
+            ref_wcs_file = os.path.join(self.out_dir, "resample_refwcs.asdf")
+            with datamodels.open(i2d_files[0]) as i2d_model:
+                asdf.AsdfFile({
+                    "wcs": i2d_model.meta.wcs,
+                    "array_shape": i2d_model.data.shape,
+                }).write_to(ref_wcs_file)
+
+            resample_single = ResampleStep()
+            resample_single.single = True
+            resample_single.suffix = "single_i2d" # so drizzled frames have suffix "_single_i2d.fits"
+            resample_single.save_results = True
+            resample_single.output_dir = self.out_dir
+            resample_single.output_wcs = ref_wcs_file
+
+            try:
+                resample_params = self.jwst_parameters["resample"]
+            except KeyError:
+                resample_params = {}
+
+            wcs_keys = {
+                "output_wcs", "crval", "crpix", "rotation",
+                "pixel_scale", "pixel_scale_ratio", "output_shape",
+            }
+            for resample_key in resample_params:
+                if resample_key in wcs_keys:
+                    continue
+                value = parse_parameter_dict(
+                    parameters=resample_params,
+                    key=resample_key,
+                    band=self.band,
+                    target=self.target,
+                )
+                if value == "VAL_NOT_FOUND":
+                    continue
+                recursive_setattr(resample_single, resample_key, value)
+
+            resample_single.run(ModelContainer(crf_files))
+
+            del resample_single
+            gc.collect()
 
         return True
 
