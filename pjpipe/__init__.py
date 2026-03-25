@@ -12,7 +12,7 @@ if sys.version_info < (3, 11):
     raise ImportError("JWST requires Python 3.11 and above.")
 
 # Get the version
-__version__ = version(__name__)
+__version__ = version("pjpipe")
 
 # Set up the logger
 log = logging.getLogger(__name__)
