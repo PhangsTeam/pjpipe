@@ -621,7 +621,7 @@ class Lv3Step:
 
             resample_single = ResampleStep()
             resample_single.single = True
-            resample_single.suffix = "single_i2d" # so drizzled frames have suffix "_single_i2d.fits"
+            resample_single.output_use_model = True
             resample_single.save_results = True
             resample_single.output_dir = self.out_dir
             resample_single.output_wcs = ref_wcs_file
@@ -648,10 +648,18 @@ class Lv3Step:
                     continue
                 recursive_setattr(resample_single, resample_key, value)
 
-            resample_single.run(ModelContainer(crf_files))
+            resample_single.run(crf_files)
 
             del resample_single
             gc.collect()
+
+            # Notes:
+            #   - ResampleImage.resample_many_to_many() adds _outlier_resamplestep.fits
+            #   to the file names, but it's not an outlier image, so let's rename it. 
+            #   - We'd have to edit ResampleStep for a proper fix.
+            #   - Can't have suffix ending in _i2d.fits, messes with anchoring pattern matching.
+            for f in glob.glob(os.path.join(self.out_dir, "*_outlier_resamplestep.fits")):
+                os.rename(f, f.replace("_outlier_resamplestep.fits", "_i2d_single.fits"))
 
         return True
 
