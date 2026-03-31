@@ -8,9 +8,12 @@ import shutil
 import time
 
 import asdf
+import numpy as np
 import jwst
 from jwst.datamodels import ModelContainer
 from jwst.resample import ResampleStep
+from jwst.resample.resample import compute_image_pixel_area
+from stcal.outlier_detection.utils import gwcs_blot
 
 # FIXME For newer JWST versions, import ModelLibrary
 try:
@@ -66,6 +69,10 @@ class Lv3Step:
             bgr_background_name="off",
             process_bgr_like_science=False,
             jwst_parameters=None,
+            do_drizzle=False,
+            do_drizzle_and_blot=False,
+            blot_ref_index=0,
+            blot_fillval=np.nan,
             overwrite=False,
     ):
         """Wrapper around the level 3 JWST pipeline
@@ -113,6 +120,20 @@ class Lv3Step:
             jwst_parameters: Parameter dictionary to pass to
                 the level 2 pipeline. Defaults to None,
                 which will run the observatory defaults
+            do_drizzle: If True, drizzle individual frames
+                to the i2d mosaic WCS after the main
+                pipeline run. Note: creates a lot of files. 
+                Defaults to False. 
+            do_drizzle_and_blot: If True, drizzle individual
+                frames to the i2d mosaic WCS and then blot each resampled exposure
+                back to a reference detector frame. Implies
+                do_drizzle. Note: creates a lot of files. 
+                Defaults to False. 
+            blot_ref_index: Index into the alphabetically sorted CRF file list of
+                the reference exposure whose detector frame
+                is used for blotting. Defaults to 0. 
+            blot_fillval: Fill value for pixels outside the
+                blotted footprint. Defaults to np.nan
             overwrite: Whether to overwrite or not. Defaults
                 to False
         """
@@ -152,6 +173,10 @@ class Lv3Step:
         self.bgr_background_name = bgr_background_name
         self.process_bgr_like_science = process_bgr_like_science
         self.jwst_parameters = jwst_parameters
+        self.do_drizzle = do_drizzle
+        self.do_drizzle_and_blot = do_drizzle_and_blot
+        self.blot_ref_index = blot_ref_index
+        self.blot_fillval = blot_fillval
         self.overwrite = overwrite
 
         self.band_type = get_band_type(self.band)
@@ -608,60 +633,145 @@ class Lv3Step:
         gc.collect()
 
         # Drizzle individual frames to the common mosaic WCS
-        i2d_files = glob.glob(os.path.join(self.out_dir, "*_i2d.fits"))
-        crf_files = sorted(glob.glob(os.path.join(self.out_dir, "*_crf.fits")))
+        do_drizzle = self.do_drizzle or self.do_drizzle_and_blot
 
-        if i2d_files and crf_files:
-            ref_wcs_file = os.path.join(self.out_dir, "resample_refwcs.asdf")
-            with datamodels.open(i2d_files[0]) as i2d_model:
-                asdf.AsdfFile({
-                    "wcs": i2d_model.meta.wcs,
-                    "array_shape": i2d_model.data.shape,
-                }).write_to(ref_wcs_file)
+        if do_drizzle:
+            i2d_files = glob.glob(os.path.join(self.out_dir, "*_i2d.fits"))
+            crf_files = sorted(glob.glob(os.path.join(self.out_dir, "*_crf.fits")))
 
-            resample_single = ResampleStep()
-            resample_single.single = True
-            resample_single.output_use_model = True
-            resample_single.save_results = True
-            resample_single.output_dir = self.out_dir
-            resample_single.output_wcs = ref_wcs_file
+            if i2d_files and crf_files:
+                ref_wcs_file = os.path.join(self.out_dir, "resample_refwcs.asdf")
+                with datamodels.open(i2d_files[0]) as i2d_model:
+                    asdf.AsdfFile({
+                        "wcs": i2d_model.meta.wcs,
+                        "array_shape": i2d_model.data.shape,
+                    }).write_to(ref_wcs_file)
 
-            try:
-                resample_params = self.jwst_parameters["resample"]
-            except KeyError:
-                resample_params = {}
+                resample_single = ResampleStep()
+                resample_single.single = True
+                resample_single.output_use_model = True
+                resample_single.save_results = True
+                resample_single.output_dir = self.out_dir
+                resample_single.output_wcs = ref_wcs_file
 
-            wcs_keys = {
-                "output_wcs", "crval", "crpix", "rotation",
-                "pixel_scale", "pixel_scale_ratio", "output_shape",
-            }
-            for resample_key in resample_params:
-                if resample_key in wcs_keys:
-                    continue
-                value = parse_parameter_dict(
-                    parameters=resample_params,
-                    key=resample_key,
-                    band=self.band,
-                    target=self.target,
-                )
-                if value == "VAL_NOT_FOUND":
-                    continue
-                recursive_setattr(resample_single, resample_key, value)
+                try:
+                    resample_params = self.jwst_parameters["resample"]
+                except KeyError:
+                    resample_params = {}
 
-            resample_single.run(crf_files)
+                wcs_keys = {
+                    "output_wcs", "crval", "crpix", "rotation",
+                    "pixel_scale", "pixel_scale_ratio", "output_shape",
+                }
+                for resample_key in resample_params:
+                    if resample_key in wcs_keys:
+                        continue
+                    value = parse_parameter_dict(
+                        parameters=resample_params,
+                        key=resample_key,
+                        band=self.band,
+                        target=self.target,
+                    )
+                    if value == "VAL_NOT_FOUND":
+                        continue
+                    recursive_setattr(resample_single, resample_key, value)
 
-            del resample_single
-            gc.collect()
+                resample_single.run(crf_files)
 
-            # Notes:
-            #   - ResampleImage.resample_many_to_many() adds _outlier_resamplestep.fits
-            #   to the file names, but it's not an outlier image, so let's rename it. 
-            #   - We'd have to edit ResampleStep for a proper fix.
-            #   - Can't have suffix ending in _i2d.fits, messes with anchoring pattern matching.
-            for f in glob.glob(os.path.join(self.out_dir, "*_outlier_resamplestep.fits")):
-                os.rename(f, f.replace("_outlier_resamplestep.fits", "_i2d_single.fits"))
+                del resample_single
+                gc.collect()
+
+                # Notes:
+                #   - ResampleImage.resample_many_to_many() adds _outlier_resamplestep.fits
+                #   to the file names, but it's not an outlier image, so let's rename it.
+                #   - We'd have to edit ResampleStep for a proper fix.
+                #   - Can't have suffix ending in _i2d.fits, messes with anchoring pattern matching.
+                for f in glob.glob(os.path.join(self.out_dir, "*_outlier_resamplestep.fits")):
+                    os.rename(f, f.replace("_outlier_resamplestep.fits", "_i2d_single.fits"))
+
+                if self.do_drizzle_and_blot:
+                    self._blot_to_detector_frame(
+                        crf_files=crf_files,
+                        ref_index=self.blot_ref_index,
+                    )
+            else:
+                log.warning("do_drizzle is set but no i2d/crf files found")
 
         return True
+
+    def _blot_to_detector_frame(
+            self,
+            crf_files,
+            ref_index=0,
+    ):
+        """Blot resampled single-exposure images back to a detector frame.
+
+        Each ``*_i2d_single.fits`` file (one per exposure, on the common
+        i2d WCS grid) is blotted onto the detector frame of the chosen
+        reference exposure.  The output files are written as
+        ``*_blot_det.fits`` alongside the other lv3 products.
+
+        Args:
+            crf_files: Sorted list of CRF file paths (one per exposure).
+                Used to obtain the detector-frame GWCS and shape.
+            ref_index: Index into *crf_files* of the reference exposure
+                whose detector frame will be adopted.  Defaults to 0
+                (the first exposure).
+        """
+
+        single_files = sorted(
+            glob.glob(os.path.join(self.out_dir, "*_i2d_single.fits"))
+        )
+        if not single_files:
+            log.warning("_blot_to_detector_frame: no *_i2d_single.fits files found")
+            return
+
+        if ref_index >= len(crf_files):
+            log.warning(
+                "_blot_to_detector_frame: ref_index %d out of range (%d exposures)",
+                ref_index, len(crf_files),
+            )
+            return
+
+        log.info(
+            "Blotting %d resampled exposures to detector frame of %s",
+            len(single_files), os.path.basename(crf_files[ref_index]),
+        )
+
+        with datamodels.open(crf_files[ref_index]) as ref_model:
+            blot_wcs = ref_model.meta.wcs
+            blot_shape = ref_model.data.shape
+
+            ref_pixflux_area = ref_model.meta.photometry.pixelarea_steradians
+            blot_wcs.array_shape = blot_shape
+            ref_pixel_area = compute_image_pixel_area(blot_wcs)
+            pix_ratio = np.sqrt(ref_pixflux_area / ref_pixel_area)
+
+            for single_file in single_files:
+                with datamodels.open(single_file) as single_model:
+                    blotted = gwcs_blot(
+                        median_data=single_model.data.astype(np.float32),
+                        median_wcs=single_model.meta.wcs,
+                        blot_shape=blot_shape,
+                        blot_wcs=blot_wcs,
+                        pix_ratio=pix_ratio,
+                        fillval=self.blot_fillval,
+                    )
+
+                out_name = single_file.replace("_i2d_single.fits", "_blot_det.fits")
+                blot_model = datamodels.ImageModel(data=blotted)
+                blot_model.update(ref_model)
+                blot_model.meta.wcs = copy.deepcopy(blot_wcs)
+                save_file(blot_model, out_name=out_name, dr_version=self.dr_version)
+                blot_model.close()
+
+                log.info(
+                    "  %s -> %s",
+                    os.path.basename(single_file),
+                    os.path.basename(out_name),
+                )
+
+        gc.collect()
 
     def propagate_metadata(self,
                            files):
