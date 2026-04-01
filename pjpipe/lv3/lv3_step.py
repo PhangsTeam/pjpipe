@@ -69,8 +69,8 @@ class Lv3Step:
             bgr_background_name="off",
             process_bgr_like_science=False,
             jwst_parameters=None,
-            do_drizzle=False,
-            do_drizzle_and_blot=False,
+            do_drizzle=None,
+            do_blot=False,
             blot_ref_index=0,
             blot_fillval=np.nan,
             overwrite=False,
@@ -122,13 +122,15 @@ class Lv3Step:
                 which will run the observatory defaults
             do_drizzle: If True, drizzle individual frames
                 to the i2d mosaic WCS after the main
-                pipeline run. Note: creates a lot of files. 
-                Defaults to False. 
-            do_drizzle_and_blot: If True, drizzle individual
-                frames to the i2d mosaic WCS and then blot each resampled exposure
-                back to a reference detector frame. Implies
-                do_drizzle. Note: creates a lot of files. 
-                Defaults to False. 
+                pipeline run. Note: creates a lot of files.
+                If not set (None) and do_blot is True,
+                do_drizzle is automatically enabled. If
+                explicitly set to False while do_blot is
+                True, a ValueError is raised. Defaults to
+                None.
+            do_blot: If True, blot each resampled exposure
+                back to a reference detector frame (requires
+                drizzling). Defaults to False.
             blot_ref_index: Index into the alphabetically sorted CRF file list of
                 the reference exposure whose detector frame
                 is used for blotting. Defaults to 0. 
@@ -173,8 +175,16 @@ class Lv3Step:
         self.bgr_background_name = bgr_background_name
         self.process_bgr_like_science = process_bgr_like_science
         self.jwst_parameters = jwst_parameters
+        if do_drizzle is False and do_blot:
+            raise ValueError(
+                "do_drizzle was explicitly set to False, but do_blot "
+                "was set to True. Either set (do_drizzle, do_blot) to "
+                "(True, True) or (True, False), or (None, True)."
+            )
+        if do_drizzle is None:
+            do_drizzle = bool(do_blot)
         self.do_drizzle = do_drizzle
-        self.do_drizzle_and_blot = do_drizzle_and_blot
+        self.do_blot = do_blot
         self.blot_ref_index = blot_ref_index
         self.blot_fillval = blot_fillval
         self.overwrite = overwrite
@@ -633,9 +643,7 @@ class Lv3Step:
         gc.collect()
 
         # Drizzle individual frames to the common mosaic WCS
-        do_drizzle = self.do_drizzle or self.do_drizzle_and_blot
-
-        if do_drizzle:
+        if self.do_drizzle:
             i2d_files = glob.glob(os.path.join(self.out_dir, "*_i2d.fits"))
             crf_files = sorted(glob.glob(os.path.join(self.out_dir, "*_crf.fits")))
 
@@ -689,7 +697,7 @@ class Lv3Step:
                 for f in glob.glob(os.path.join(self.out_dir, "*_outlier_resamplestep.fits")):
                     os.rename(f, f.replace("_outlier_resamplestep.fits", "_i2d_single.fits"))
 
-                if self.do_drizzle_and_blot:
+                if self.do_blot:
                     self._blot_to_detector_frame(
                         crf_files=crf_files,
                         ref_index=self.blot_ref_index,
