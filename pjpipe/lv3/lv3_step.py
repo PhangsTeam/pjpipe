@@ -69,9 +69,8 @@ class Lv3Step:
             bgr_background_name="off",
             process_bgr_like_science=False,
             jwst_parameters=None,
-            do_drizzle=None,
+            do_drizzle=False,
             do_blot=False,
-            blot_ref_index=0,
             blot_fillval=np.nan,
             overwrite=False,
     ):
@@ -123,17 +122,12 @@ class Lv3Step:
             do_drizzle: If True, drizzle individual frames
                 to the i2d mosaic WCS after the main
                 pipeline run. Note: creates a lot of files.
-                If not set (None) and do_blot is True,
-                do_drizzle is automatically enabled. If
-                explicitly set to False while do_blot is
-                True, a ValueError is raised. Defaults to
-                None.
-            do_blot: If True, blot each resampled exposure
-                back to a reference detector frame (requires
-                drizzling). Defaults to False.
-            blot_ref_index: Index into the alphabetically sorted CRF file list of
-                the reference exposure whose detector frame
-                is used for blotting. Defaults to 0. 
+                Defaults to False.
+            do_blot: If True, blot the final i2d mosaic to
+                the detector frame of each exposure,
+                producing one ``*_i2d_blot.fits`` file per
+                exposure. Independent of do_drizzle.
+                Defaults to False.
             blot_fillval: Fill value for pixels outside the
                 blotted footprint. Defaults to np.nan
             overwrite: Whether to overwrite or not. Defaults
@@ -175,18 +169,9 @@ class Lv3Step:
         self.bgr_background_name = bgr_background_name
         self.process_bgr_like_science = process_bgr_like_science
         self.jwst_parameters = jwst_parameters
-        if do_drizzle is False and do_blot:
-            raise ValueError(
-                "do_drizzle was explicitly set to False, but do_blot "
-                "was set to True. Either set (do_drizzle, do_blot) to "
-                "(True, True) or (True, False), or (None, True)."
-            )
-        if do_drizzle is None:
-            do_drizzle = bool(do_blot)
         self.do_drizzle = do_drizzle
         self.do_blot = do_blot
-        self.blot_ref_index = blot_ref_index
-        self.blot_fillval = blot_fillval
+        self.blot_fillval = float(blot_fillval)
         self.overwrite = overwrite
 
         self.band_type = get_band_type(self.band)
@@ -696,88 +681,85 @@ class Lv3Step:
                 #   - Can't have suffix ending in _i2d.fits, messes with anchoring pattern matching.
                 for f in glob.glob(os.path.join(self.out_dir, "*_outlier_resamplestep.fits")):
                     os.rename(f, f.replace("_outlier_resamplestep.fits", "_i2d_single.fits"))
-
-                if self.do_blot:
-                    self._blot_to_detector_frame(
-                        crf_files=crf_files,
-                        ref_index=self.blot_ref_index,
-                    )
             else:
                 log.warning("do_drizzle is set but no i2d/crf files found")
+
+        if self.do_blot:
+            i2d_files = glob.glob(os.path.join(self.out_dir, "*_i2d.fits"))
+            crf_files = sorted(glob.glob(os.path.join(self.out_dir, "*_crf.fits")))
+            if i2d_files and crf_files:
+                self._blot_to_detector_frame(crf_files=crf_files)
+            else:
+                log.warning("do_blot is set but no i2d/crf files found")
 
         return True
 
     def _blot_to_detector_frame(
             self,
             crf_files,
-            ref_index=0,
     ):
-        """Blot resampled single-exposure images back to a detector frame.
+        """Blot the final i2d mosaic to each exposure's detector frame.
 
-        Each ``*_i2d_single.fits`` file (one per exposure, on the common
-        i2d WCS grid) is blotted onto the detector frame of the chosen
-        reference exposure.  The output files are written as
-        ``*_blot_det.fits`` alongside the other lv3 products.
+        The ``*_i2d.fits`` mosaic is blotted onto the detector frame of
+        every CRF exposure, producing one ``*_i2d_blot.fits`` file per
+        exposure alongside the other lv3 products.
 
         Args:
             crf_files: Sorted list of CRF file paths (one per exposure).
-                Used to obtain the detector-frame GWCS and shape.
-            ref_index: Index into *crf_files* of the reference exposure
-                whose detector frame will be adopted.  Defaults to 0
-                (the first exposure).
+                Each CRF provides the detector-frame GWCS and shape that
+                the mosaic is blotted onto.
         """
 
-        single_files = sorted(
-            glob.glob(os.path.join(self.out_dir, "*_i2d_single.fits"))
-        )
-        if not single_files:
-            log.warning("_blot_to_detector_frame: no *_i2d_single.fits files found")
+        i2d_files = glob.glob(os.path.join(self.out_dir, "*_i2d.fits"))
+        if not i2d_files:
+            log.warning("_blot_to_detector_frame: no *_i2d.fits mosaic found")
             return
 
-        if ref_index >= len(crf_files):
+        if len(i2d_files) > 1:
             log.warning(
-                "_blot_to_detector_frame: ref_index %d out of range (%d exposures)",
-                ref_index, len(crf_files),
+                "_blot_to_detector_frame: found %d i2d files, using %s",
+                len(i2d_files), os.path.basename(i2d_files[0]),
             )
-            return
 
         log.info(
-            "Blotting %d resampled exposures to detector frame of %s",
-            len(single_files), os.path.basename(crf_files[ref_index]),
+            "Blotting i2d mosaic to %d exposure detector frames",
+            len(crf_files),
         )
 
-        with datamodels.open(crf_files[ref_index]) as ref_model:
-            blot_wcs = ref_model.meta.wcs
-            blot_shape = ref_model.data.shape
+        with datamodels.open(i2d_files[0]) as i2d_model:
+            mosaic_data = i2d_model.data.astype(np.float32)
+            mosaic_wcs = i2d_model.meta.wcs
 
-            ref_pixflux_area = ref_model.meta.photometry.pixelarea_steradians
-            blot_wcs.array_shape = blot_shape
-            ref_pixel_area = compute_image_pixel_area(blot_wcs)
-            pix_ratio = np.sqrt(ref_pixflux_area / ref_pixel_area)
+            for crf_file in crf_files:
+                with datamodels.open(crf_file) as crf_model:
+                    blot_wcs = crf_model.meta.wcs
+                    blot_shape = crf_model.data.shape
 
-            for single_file in single_files:
-                with datamodels.open(single_file) as single_model:
+                    pixflux_area = crf_model.meta.photometry.pixelarea_steradians
+                    blot_wcs.array_shape = blot_shape
+                    pixel_area = compute_image_pixel_area(blot_wcs)
+                    pix_ratio = np.sqrt(pixflux_area / pixel_area)
+
                     blotted = gwcs_blot(
-                        median_data=single_model.data.astype(np.float32),
-                        median_wcs=single_model.meta.wcs,
+                        median_data=mosaic_data,
+                        median_wcs=mosaic_wcs,
                         blot_shape=blot_shape,
                         blot_wcs=blot_wcs,
                         pix_ratio=pix_ratio,
                         fillval=self.blot_fillval,
                     )
 
-                out_name = single_file.replace("_i2d_single.fits", "_blot_det.fits")
-                blot_model = datamodels.ImageModel(data=blotted)
-                blot_model.update(ref_model)
-                blot_model.meta.wcs = copy.deepcopy(blot_wcs)
-                save_file(blot_model, out_name=out_name, dr_version=self.dr_version)
-                blot_model.close()
+                    out_name = crf_file.replace("_crf.fits", "_i2d_blot.fits")
+                    blot_model = datamodels.ImageModel(data=blotted)
+                    blot_model.update(crf_model)
+                    blot_model.meta.wcs = copy.deepcopy(blot_wcs)
+                    save_file(blot_model, out_name=out_name, dr_version=self.dr_version)
+                    blot_model.close()
 
-                log.info(
-                    "  %s -> %s",
-                    os.path.basename(single_file),
-                    os.path.basename(out_name),
-                )
+                    log.info(
+                        "  mosaic -> %s",
+                        os.path.basename(out_name),
+                    )
 
         gc.collect()
 
