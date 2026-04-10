@@ -1,6 +1,7 @@
 1.3.1 (Unreleased)
 ==================
 
+- Add option to smooth data in ``level_match_step``
 - Fix occasional all-NaN issue in ``single_tile_destripe``
 - Fix backgrounds being wrongly moved in ``lv1_step``
 - Moved ``astrometric_align`` to a combined step, to avoid list ordering issues
