@@ -1,6 +1,7 @@
 1.3.1 (Unreleased)
 ==================
 
+- Fix occasional all-NaN issue in ``single_tile_destripe``
 - Fix backgrounds being wrongly moved in ``lv1_step``
 - Moved ``astrometric_align`` to a combined step, to avoid list ordering issues
 - Updated dependencies, added specific pins, dependabot, and CODEOWNERS
