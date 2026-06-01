@@ -4,11 +4,13 @@ import os
 import shutil
 import multiprocessing as mp
 
+from .anchoring import AnchoringStep
 from .apply_wcs_adjust import ApplyWCSAdjustStep
 from .astrometric_align import AstrometricAlignStep
 from .astrometric_catalog import AstrometricCatalogStep
 from .download import DownloadStep
 from .gaia_query import GaiaQueryStep
+from .get_wcs_adjust import GetWCSAdjustStep
 from .level_match import LevelMatchStep
 from .lv1 import Lv1Step
 from .lv2 import Lv2Step
@@ -18,13 +20,12 @@ from .lyot_separate import LyotSeparateStep
 from .mosaic_individual_fields import MosaicIndividualFieldsStep
 from .move_raw_obs import MoveRawObsStep
 from .multi_tile_destripe import MultiTileDestripeStep
-from .single_tile_destripe import SingleTileDestripeStep
-from .get_wcs_adjust import GetWCSAdjustStep
-from .anchoring import AnchoringStep
+from .persistence import PersistenceStep
 from .psf_matching import PSFMatchingStep
 from .psf_model import PSFModelStep
 from .release import ReleaseStep
 from .regress_against_previous import RegressAgainstPreviousStep
+from .single_tile_destripe import SingleTileDestripeStep
 from .utils import *
 
 # All possible steps
@@ -33,6 +34,7 @@ ALLOWED_STEPS = [
     "gaia_query",
     "lv1",
     "lv2",
+    "persistence",
     "single_tile_destripe",
     "get_wcs_adjust",
     "apply_wcs_adjust",
@@ -538,6 +540,31 @@ class PJPipeline:
                                 **kws,
                             )
                             step_result = lv2.do_step()
+
+                        elif step == "persistence":
+
+                            # If we're going from lv1, then this will be a rate file,
+                            # otherwise a cal
+                            if os.path.split(in_dir)[-1] == "lv1":
+                                in_step_ext = "rate"
+
+                            kws = get_kws(
+                                parameters=step_parameters,
+                                func=PersistenceStep,
+                                target=target,
+                                band=band_full,
+                                max_level=0,
+                            )
+
+                            persist = PersistenceStep(
+                                band=band_full,
+                                in_dir=in_dir,
+                                out_dir=out_dir,
+                                step_ext=in_step_ext,
+                                procs=self.procs,
+                                **kws,
+                            )
+                            step_result = persist.do_step()
 
                         elif step == "single_tile_destripe":
                             kws = get_kws(

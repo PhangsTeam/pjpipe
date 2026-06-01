@@ -24,6 +24,7 @@ However, we highly recommend running these are part of the integrated pipeline.
     steps/lv1.rst
     steps/single_tile_destripe.rst
     steps/lv2.rst
+    steps/persistence.rst
     steps/get_wcs_adjust.rst
     steps/apply_wcs_adjust.rst
     steps/lyot_separate.rst
