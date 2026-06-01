@@ -1645,7 +1645,10 @@ class SingleTileDestripeStep:
             sigclip_iters=self.max_iters,
         )
 
-        mask = mask_pos | mask_neg | dq_mask
+        # And any non-finite values that might have crept in
+        non_finite_idx = ~np.isfinite(data)
+
+        mask = mask_pos | mask_neg | dq_mask | non_finite_idx
 
         return data, mask
 
