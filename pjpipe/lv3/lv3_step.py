@@ -12,8 +12,8 @@ import numpy as np
 import jwst
 from jwst.datamodels import ModelContainer
 from jwst.resample import ResampleStep
-from jwst.resample.resample import compute_image_pixel_area
 from stcal.outlier_detection.utils import gwcs_blot
+from stcal.resample.utils import compute_mean_pixel_area
 
 # FIXME For newer JWST versions, import ModelLibrary
 try:
