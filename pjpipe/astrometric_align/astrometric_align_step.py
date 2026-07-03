@@ -516,7 +516,7 @@ class AstrometricAlignStep:
                     # Update WCS info
                     updated_im = lv3_update_fits_wcsinfo(im=target_im, hdr=target_hdr)
 
-                    updated_im.write(aligned_file)
+                    updated_im.save(aligned_file)
 
             # Also apply this to each individual crf file
             crf_files = glob.glob(
@@ -776,7 +776,7 @@ class AstrometricAlignStep:
                 hdr=target_hdr,
             )
 
-            target_im.write(aligned_file)
+            target_im.save(aligned_file)
 
             # Also apply this to each individual crf file
             crf_files = glob.glob(
