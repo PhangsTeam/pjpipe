@@ -737,7 +737,7 @@ class Lv3Step:
 
                     pixflux_area = crf_model.meta.photometry.pixelarea_steradians
                     blot_wcs.array_shape = blot_shape
-                    pixel_area = compute_image_pixel_area(blot_wcs)
+                    pixel_area = compute_mean_pixel_area(blot_wcs)
                     pix_ratio = np.sqrt(pixflux_area / pixel_area)
 
                     blotted = gwcs_blot(
