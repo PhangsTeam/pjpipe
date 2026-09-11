@@ -6,8 +6,9 @@ import logging
 import os
 import warnings
 
+import astropy.units as u
 import numpy as np
-from astropy.convolution import convolve_fft
+from astropy.convolution import convolve_fft, Gaussian2DKernel
 from astropy.io import fits
 from astropy.nddata.bitmask import interpret_bit_flags, bitfield_to_boolean_mask
 from astropy.stats import sigma_clipped_stats, SigmaClip
@@ -19,6 +20,7 @@ from reproject import reproject_interp, reproject_adaptive, reproject_exact
 from reproject.mosaicking import find_optimal_celestial_wcs, reproject_and_coadd
 from reproject.mosaicking.subset_array import ReprojectedArraySubset
 from scipy.interpolate import RegularGridInterpolator
+from scipy.ndimage import binary_dilation
 from stdatamodels import util
 from stdatamodels.jwst import datamodels
 from stdatamodels.jwst.datamodels.dqflags import pixel
@@ -695,6 +697,7 @@ def reproject_image(
         optimal_wcs,
         optimal_shape,
         hdu_type="data",
+        smooth_fwhm=None,
         do_sigma_clip=False,
         stacked_image=False,
         do_level_data=False,
@@ -707,6 +710,9 @@ def reproject_image(
         optimal_wcs: Optimal WCS for input image stack
         optimal_shape: Optimal shape for input image stack
         hdu_type: Type of HDU. Can either be 'data', 'err', or 'var_rnoise'
+        smooth_fwhm: FWHM for the Gaussian kernel to smooth the data. Can
+            be specified either in astropy units or just a number, which will
+            be pixels
         do_sigma_clip: Whether to perform sigma-clipping or not.
             Defaults to False
         stacked_image: Stacked image or not? Defaults to False
@@ -833,6 +839,69 @@ def reproject_image(
             order="nearest-neighbor",
         )
         data_reproj_small[dq_reproj_small == 1] = np.nan
+
+    # If we're smoothing, do that here
+    if smooth_fwhm is not None:
+
+        # Build the smoothing kernel. Need a FWHM in pixels
+        if isinstance(smooth_fwhm, u.Quantity):
+            pix_scale = w_in.proj_plane_pixel_scales()[0].to(u.arcsec)
+            smooth_fwhm_pix = smooth_fwhm / pix_scale
+        else:
+            smooth_fwhm_pix = smooth_fwhm
+
+        smooth_sig_pix = smooth_fwhm_pix / 2.355
+
+        # Make the kernel, remember we're going FWHM->sigma
+        k = Gaussian2DKernel(smooth_sig_pix)
+
+        # Because we need to square this sometimes, just get the array out
+        # and normalise
+        k = k.array
+
+        # For error and variance, we use the square of the kernel
+        if hdu_type in ["err", "var_rnoise"]:
+            k = k ** 2
+
+        k /= np.sum(k)
+
+        # We also want to build a dilation kernel for later, and keep track
+        # of non-valid values
+        dilate_struct = np.ones([int(smooth_sig_pix), int(smooth_sig_pix)])
+        valid_value_mask = np.logical_or(data_reproj_small == 0, ~np.isfinite(data_reproj_small))
+
+        # Do the convolution. This is different depending on the HDU type
+
+        # For data and variance, we can just do the straight convolution
+        if hdu_type in ["data", "var_rnoise"]:
+            data_reproj_small = convolve_fft(data_reproj_small,
+                                             kernel=k,
+                                             allow_huge=True,
+                                             preserve_nan=True,
+                                             fill_value=np.nan,
+                                             )
+
+        # For the error, we need the square of the error (and sqrt after)
+        elif hdu_type == "err":
+            data_reproj_small = np.sqrt(
+                convolve_fft(data_reproj_small ** 2,
+                             kernel=k,
+                             allow_huge=True,
+                             preserve_nan=True,
+                             fill_value=np.nan,
+                             )
+            )
+
+        else:
+            raise Warning(f"Unsure how to deal with hdu_type {hdu_type}")
+
+        # Finally, dilate the valid value mask by the sigma of the smoothing kernel and
+        # apply that as a mask
+        valid_value_dilate = binary_dilation(valid_value_mask,
+                                           structure=dilate_struct,
+                                           )
+
+        data_reproj_small[valid_value_dilate == 1] = np.nan
 
     # If we're sigma-clipping, reproject the mask. This needs to use
     # reproject_interp, so we can keep whole numbers
@@ -1060,11 +1129,11 @@ def level_data(
 
     for i in range(3):
         quad_1 = data[:, i * quadrant_size: (i + 1) * quadrant_size][
-                 :, quadrant_size - 20:
-                 ]
+            :, quadrant_size - 20:
+        ]
         dq_1 = dq_mask[:, i * quadrant_size: (i + 1) * quadrant_size][
-               :, quadrant_size - 20:
-               ]
+            :, quadrant_size - 20:
+        ]
         quad_2 = data[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size][:, :20]
         dq_2 = dq_mask[:, (i + 1) * quadrant_size: (i + 2) * quadrant_size][:, :20]
 

@@ -333,6 +333,7 @@ class LevelMatchStep:
             recombine_lyot=False,
             combine_nircam_short=False,
             do_local_subtraction=True,
+            smooth_fwhm=None,
             sigma=3,
             npixels=3,
             dilate_size=7,
@@ -387,6 +388,11 @@ class LevelMatchStep:
                 chips before matching in a mosaic. Defaults to False
             do_local_subtraction: Whether to do a sigma-clipped local median
                 subtraction. Defaults to True
+            smooth_fwhm: By setting this, you can smooth the data with a Gaussian
+                kernel with FWHM of this value before doing
+                the level matching. Can be specified either as a raw number of
+                pixels (just pass a number) or in arcsec (pass [int]arcsec).
+                Defaults to None, which will not smooth
             sigma: Sigma for sigma-clipping. Defaults to 3
             npixels: Pixels to grow for masking. Defaults to 5
             dilate_size: make_source_mask dilation size. Defaults to 7
@@ -424,6 +430,18 @@ class LevelMatchStep:
             log.warning("Cannot do local subtraction for methods beyond simple offset. Switching off")
             do_local_subtraction = False
 
+        # If we've passed the FWHM as a string, parse that now
+        if smooth_fwhm is not None:
+            if isinstance(smooth_fwhm, str):
+
+                # Case 1: we have arcsec in there, so convert to astropy units
+                if "arcsec" in smooth_fwhm:
+                    smooth_fwhm = float(smooth_fwhm.replace("arcsec", "")) * u.arcsec
+
+                # Otherwise, just parse as pixels
+                else:
+                    smooth_fwhm = float(smooth_fwhm)
+
         self.in_dir = in_dir
         self.out_dir = out_dir
         self.step_ext = step_ext
@@ -436,6 +454,7 @@ class LevelMatchStep:
         self.recombine_lyot = recombine_lyot
         self.combine_nircam_short = combine_nircam_short
         self.do_local_subtraction = do_local_subtraction
+        self.smooth_fwhm = smooth_fwhm
         self.sigma = sigma
         self.npixels = npixels
         self.dilate_size = dilate_size
@@ -2296,6 +2315,7 @@ class LevelMatchStep:
                     do_sigma_clip=self.do_sigma_clip,
                     stacked_image=stacked_image,
                     reproject_func=self.reproject_func,
+                    smooth_fwhm=self.smooth_fwhm,
                 ),
                     "err": reproject_image(
                         i,
@@ -2305,6 +2325,7 @@ class LevelMatchStep:
                         do_sigma_clip=self.do_sigma_clip,
                         stacked_image=stacked_image,
                         reproject_func=self.reproject_func,
+                        smooth_fwhm=self.smooth_fwhm,
                     ),
                 }
                 for i in file
@@ -2318,6 +2339,7 @@ class LevelMatchStep:
                     do_sigma_clip=self.do_sigma_clip,
                     stacked_image=stacked_image,
                     reproject_func=self.reproject_func,
+                    smooth_fwhm=self.smooth_fwhm,
                 ),
                 "err": reproject_image(
                     file,
@@ -2327,6 +2349,7 @@ class LevelMatchStep:
                     do_sigma_clip=self.do_sigma_clip,
                     stacked_image=stacked_image,
                     reproject_func=self.reproject_func,
+                    smooth_fwhm=self.smooth_fwhm,
                 ),
             }
 
